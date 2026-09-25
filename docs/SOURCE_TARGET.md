@@ -26,27 +26,32 @@ Later gates must name this commit, or a newer pin recorded here, before copying 
 
 ## Present in this repository
 
-Architecture documents only:
+Architecture documents:
 
 - `MASTER_BLUEPRINT.md` — execution plan for this repository
 - `docs/CODEME_CODE_OSS_MIGRATION.md` — matches the donor file at the commit above
 - `docs/AGENT_LOOP_HARDENING_SEQUENCE.md` — copied from that commit
 - `docs/CODEME_STRATEGY_ENGINE.md` — copied from that commit
 - `docs/SOURCE_TARGET.md` — this boundary
+- `docs/GATE_1_BASELINE.md` — Code - OSS pin and the still-open verification list
+
+Code - OSS baseline, unmodified, as a submodule:
+
+| Field | Value |
+|---|---|
+| Path | `code-oss/` |
+| Upstream | https://github.com/microsoft/vscode.git |
+| Release | `1.139.1` |
+| Commit | `04c0d99f4fb0d8afe6ce4f0c58e31e183ac3e4b1` |
 
 ## Not present
 
 - Donor application source (`src/`, `desktop/`, `packages/`, tests, and the rest of the donor tree)
 - Other donor documents (server, desktop, n8n, ADRs). They stay in the donor until a later gate names them.
-- Code - OSS. Bringing in and proving that baseline is Gate 1, which has not started.
+- Any CodeMe branding, Composer, or agent code on top of Code - OSS
 
 ## Gate
 
-This commit is the Gate 0 checkpoint:
+Gate 0 is committed on `migration/code-oss` (`cb486bd`). `main` has no application tree.
 
-- architecture docs listed above are in the tree;
-- the donor repository, branch, and commit are pinned;
-- no donor application source is present;
-- the work is on `migration/code-oss`, and `main` has no application tree.
-
-Gate 1 (clean Code - OSS baseline) starts only after this checkpoint. Code - OSS is still not in the repository.
+Gate 1 has the Code - OSS pin recorded and the tree checked out. The desktop build and the workflow checks in `docs/GATE_1_BASELINE.md` are not done.
