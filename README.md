@@ -15,6 +15,8 @@ Cursor or any coding agent working in this repository must read these files befo
 
 ## Current state
 
-This repository intentionally starts clean. Do **not** copy the old CodeMe IDE wholesale into this repository. The existing `LarixAi/code-companion-pro` repository is the donor/reference implementation.
+This repository intentionally starts clean. Do **not** copy the old CodeMe IDE wholesale into this repository.
 
-Implementation begins with a clean Code - OSS foundation and progresses through the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
+Donor, pin, and what is allowed in this tree are recorded in `docs/SOURCE_TARGET.md`. Work continues on `migration/code-oss`. `main` stays free of migration experiments.
+
+Current gate: **Gate 0 checkpoint** is recorded in `docs/SOURCE_TARGET.md` on `migration/code-oss`. Next is Gate 1, a clean Code - OSS baseline, which has not started. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
