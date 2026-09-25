@@ -13,11 +13,11 @@ async function decomposeGoal(body, complete) {
       stream: false,
       think: false,
       format: "json",
-      options: { temperature: 0 },
+      options: { temperature: 0, num_predict: 500 },
       messages: [
         {
           role: "system",
-          content: "Split one software goal into a dependency-ordered task graph for a small coding model. Return JSON only with project and tasks. Each task has id, title, dependsOn, objective, and doneWhen. Use at most 8 tasks. Each objective is one bounded change. Do not write code.",
+          content: "Split one software goal into a dependency-ordered task graph for a small coding model. Return JSON only with project and tasks. Each task has id, title, dependsOn, objective, and doneWhen. Use at most 4 tasks. Keep every field short. Do not write code.",
         },
         { role: "user", content: goal },
       ],

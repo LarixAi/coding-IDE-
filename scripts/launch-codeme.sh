@@ -30,8 +30,18 @@ if [ -f "$icon_src" ] && [ -f "$icon_dest" ] && ! cmp -s "$icon_src" "$icon_dest
 	touch "$app_bundle"
 fi
 
+ext_dir="$root/.tools/codeme-extensions"
+mkdir -p "$ext_dir"
+ln -sfn "$root/extensions/codeme-shell" "$ext_dir/codeme.codeme-shell-0.1.0"
+
+export NODE_ENV=development
+export VSCODE_DEV=1
+export VSCODE_CLI=1
 cd "$root/code-oss"
-exec ./scripts/code.sh \
-	--extensionDevelopmentPath="$root/extensions/codeme-shell" \
+# The leading "." is the Electron app path in dev. Code - OSS strips it
+# and does not open that folder as the workspace.
+exec "$app_bundle/Contents/MacOS/Code - OSS" . \
+	--extensions-dir="$ext_dir" \
+	--disable-extension=vscode.vscode-api-tests \
 	--user-data-dir="$user_data" \
 	"$@"

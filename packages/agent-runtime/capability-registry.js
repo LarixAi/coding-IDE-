@@ -68,7 +68,7 @@ const OPERATIONAL_DEFAULTS = {
     description: "Split a large goal into a bounded task graph.",
     inputSchema: { type: "object", properties: { goal: { type: "string" }, problem: { type: "string" } }, required: [] },
     outputSchema: { type: "object", properties: { project: { type: "string" } }, required: [] },
-    timeout: 30000,
+    timeout: 75000,
   }),
 };
 
@@ -137,7 +137,7 @@ function normalizeRecord(raw) {
   if (source.version !== undefined && source.version !== 1 && source.version !== "1") {
     return fail("malformed_schema", "version is unsupported");
   }
-  if (source.timeout !== undefined && (!Number.isFinite(source.timeout) || source.timeout < 1 || source.timeout > 30000)) {
+  if (source.timeout !== undefined && (!Number.isFinite(source.timeout) || source.timeout < 1 || source.timeout > 90000)) {
     return fail("malformed_schema", "timeout is outside the allowed range");
   }
 

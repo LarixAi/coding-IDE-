@@ -33,10 +33,24 @@ async function researchProblem(body, httpRequest) {
 }
 
 async function collectWeb(problem, httpRequest) {
-  const payload = await httpRequest({
-    url: `https://api.duckduckgo.com/?q=${encodeURIComponent(problem)}&format=json&no_html=1&skip_disambig=1`,
-  });
+  let payload = null;
+  for (const query of candidateQueries(problem)) {
+    payload = await httpRequest({
+      url: `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+    });
+    const page = payload && payload.AbstractURL;
+    if (payload && (payload.AbstractText || (typeof page === "string" && /wikipedia\.org\/wiki\//i.test(page)))) break;
+  }
   const found = [];
+  const page = payload && payload.AbstractURL;
+  if (typeof page === "string" && /wikipedia\.org\/wiki\//i.test(page)) {
+    try {
+      const procedure = await wikipediaProcedure(page, httpRequest);
+      if (procedure) found.push(procedure);
+    } catch (_error) {
+      // The abstract remains available when the page extract cannot be fetched.
+    }
+  }
   if (payload && payload.AbstractText) {
     const item = evidenceItem(payload.Heading || "Web result", payload.AbstractURL, payload.AbstractText, "web");
     if (item) found.push(item);
@@ -48,6 +62,35 @@ async function collectWeb(problem, httpRequest) {
     if (item) found.push(item);
   }
   return found.slice(0, 3);
+}
+
+async function wikipediaProcedure(pageUrl, httpRequest) {
+  const title = decodeURIComponent(String(pageUrl).split("/wiki/")[1] || "").split(/[?#]/)[0];
+  if (!title) return null;
+  const payload = await httpRequest({
+    url: `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&redirects=1&format=json&titles=${encodeURIComponent(title)}`,
+    headers: { "User-Agent": "CodeMe" },
+  });
+  const pages = payload && payload.query && payload.query.pages;
+  const page = pages && Object.values(pages)[0];
+  const excerpt = procedureExcerpt(page && page.extract);
+  if (!excerpt) return null;
+  return evidenceItem((page && page.title) || title.replace(/_/g, " "), pageUrl, excerpt, "wikipedia");
+}
+
+function procedureExcerpt(extract) {
+  let text = String(extract || "");
+  text = text.replace(/\{\\displaystyle[\s\S]*?\}/g, " ");
+  text = text.replace(/==+[^=]+==+/g, " ");
+  text = text.replace(/\s+/g, " ").trim();
+  const lower = text.toLowerCase();
+  let at = -1;
+  for (const marker of ["the check digit is computed", "computed as follows", "as follows:"]) {
+    const found = lower.indexOf(marker);
+    if (found >= 0 && (at < 0 || found < at)) at = found;
+  }
+  const slice = (at >= 0 ? text.slice(at) : text).slice(0, 500);
+  return slice.length >= 80 ? slice : "";
 }
 
 async function collectIssues(problem, httpRequest) {
@@ -66,6 +109,19 @@ async function collectAnswers(problem, httpRequest) {
   return (payload && payload.items || []).slice(0, 3).map((item) => evidenceItem(item.title, item.link, item.title, "stackoverflow")).filter(Boolean);
 }
 
+function candidateQueries(problem) {
+  const queries = [];
+  const add = (value) => {
+    const query = clip(value, 120);
+    if (query.length >= 4 && !queries.some((item) => item.toLowerCase() === query.toLowerCase())) queries.push(query);
+  };
+  add(problem);
+  const named = String(problem).match(/\b[A-Z][A-Za-z0-9.+#-]{2,}(?:\s+[A-Za-z][A-Za-z0-9.+#-]*)?/g) || [];
+  for (const phrase of named) add(phrase);
+  add(String(problem).split(/\b(?:which|how|what|when|where|why)\b/i)[0]);
+  return queries.slice(0, 3);
+}
+
 function flattenTopics(topics, out) {
   for (const topic of topics || []) {
     if (out.length >= 3) return;
@@ -82,8 +138,9 @@ function evidenceItem(title, url, excerpt, source) {
   return {
     title: cleanTitle,
     url: cleanUrl,
-    excerpt: clip(excerpt, 400),
+    excerpt: clip(excerpt, 500),
     source,
+    provenance: { provider: source, url: cleanUrl, title: cleanTitle },
   };
 }
 

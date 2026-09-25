@@ -201,7 +201,7 @@ function validateRequest(request) {
   }
   if (!request.input || typeof request.input !== "object" || Array.isArray(request.input)) return { code: "invalid_request", message: "input must be an object" };
   if (!request.context || typeof request.context !== "object" || Array.isArray(request.context)) return { code: "invalid_request", message: "context must be an object" };
-  if (typeof request.timeout !== "number" || request.timeout < 1 || request.timeout > 30000) return { code: "invalid_request", message: "timeout is outside the allowed range" };
+  if (typeof request.timeout !== "number" || request.timeout < 1 || request.timeout > 90000) return { code: "invalid_request", message: "timeout is outside the allowed range" };
   return null;
 }
 

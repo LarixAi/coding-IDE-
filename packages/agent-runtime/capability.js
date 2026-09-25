@@ -69,7 +69,12 @@ class ExternalCapabilityProvider {
 }
 
 function capabilityToolDefinitions(names) {
-  const available = Array.isArray(names) && names.length ? ` Available now: ${names.join(", ")}.` : "";
+  const records = (Array.isArray(names) ? names : []).map((item) => (
+    typeof item === "string" ? { name: item, description: "" } : { name: item && item.name, description: item && item.description || "" }
+  )).filter((item) => item.name);
+  const available = records.length
+    ? ` Available now: ${records.map((item) => item.description ? `${item.name} (${item.description})` : item.name).join("; ")}.`
+    : "";
   return [
     {
       name: "capability.list",
@@ -107,9 +112,9 @@ async function loadCapabilityRegistry(provider) {
 
 async function availableCapabilityTools(provider) {
   const registry = await loadCapabilityRegistry(provider);
-  const names = registry.list().map((item) => item.name);
-  if (!names.length) return [];
-  return capabilityToolDefinitions(names);
+  const listed = registry.list();
+  if (!listed.length) return [];
+  return capabilityToolDefinitions(listed);
 }
 
 function buildRequest({ runId, capability, input, context, timeout }) {
@@ -124,7 +129,7 @@ function buildRequest({ runId, capability, input, context, timeout }) {
   const boundedContext = boundContext(context);
   if (boundedContext.error) return { ok: false, error: boundedContext.error };
   const timeoutMs = Number.isFinite(timeout) ? timeout : 10000;
-  if (timeoutMs < 1 || timeoutMs > 30000) {
+  if (timeoutMs < 1 || timeoutMs > 90000) {
     return { ok: false, error: { code: "invalid_request", message: "timeout is outside the allowed range" } };
   }
   return {

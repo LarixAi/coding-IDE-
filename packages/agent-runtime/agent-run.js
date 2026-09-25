@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
+const { createProgressState, recommendCapability, applyIteration } = require("./progress");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 
@@ -26,6 +27,8 @@ function createRun(options) {
     repairs: [],
     transitions: [],
     filesChanged: [],
+    events: [],
+    progress: createProgressState(options),
     verification: { status: "pending", summary: "", evidence: [] },
     verificationHistory: [],
     outcome: null,
@@ -105,8 +108,15 @@ async function executeRun(run, options) {
   }
   store.save(run);
   const capabilityRegistry = await loadCapabilityRegistry(options.capabilities);
-  const capabilityNames = capabilityRegistry.list().map((item) => item.name);
-  const capabilityTools = capabilityNames.length ? capabilityToolDefinitions(capabilityNames) : [];
+  const capabilityRecords = capabilityRegistry.list();
+  const capabilityTools = capabilityRecords.length ? capabilityToolDefinitions(capabilityRecords) : [];
+  if (!run.progress) run.progress = createProgressState(options);
+  const recommended = recommendCapability(capabilityRecords);
+  if (recommended) {
+    run.progress.recommendedName = recommended.name;
+    run.progress.recommendedDescription = recommended.description || "";
+    run.progress.recommendedFields = (recommended.inputSchema && recommended.inputSchema.required) || [];
+  }
   if (capabilityTools.length) {
     const system = run.messages.find((message) => message.role === "system");
     if (system && !system.content.includes("untrusted evidence")) {
@@ -144,7 +154,13 @@ async function executeRun(run, options) {
     run.iteration += 1;
     const text = decision.text || "";
     const calls = decision.toolCalls || [];
-    run.decisions.push({ iteration: run.iteration, text, toolCalls: calls, at: new Date().toISOString() });
+    run.decisions.push({
+      iteration: run.iteration,
+      text,
+      toolCalls: calls,
+      usage: decision.usage || null,
+      at: new Date().toISOString(),
+    });
     run.messages.push({ role: "assistant", content: text, toolCalls: calls });
     store.save(run);
 
@@ -165,9 +181,12 @@ async function executeRun(run, options) {
       run.verificationHistory.push({ ...verification, at: new Date().toISOString() });
       store.save(run);
       if (verification.status === "passed") return finishCompleted(run, store, text);
+      const outcome = closeIteration(run, capabilityRegistry);
+      store.save(run);
+      if (outcome.stop) return finishFailed(run, store, "stagnation", outcome.stopSummary);
       run.messages.push({
         role: "user",
-        content: `Verification failed: ${verification.summary}. Keep going with tools. A claim of success is not evidence.`,
+        content: outcome.notice || `Verification failed: ${verification.summary}. Keep going with tools. A claim of success is not evidence.`,
       });
       store.save(run);
       continue;
@@ -218,7 +237,21 @@ async function executeRun(run, options) {
         result,
       };
       run.toolCalls.push(record);
-      run.observations.push(observe(call, result));
+      const observation = observe(call, result);
+      run.observations.push(observation);
+      if (observation.type === "capability") {
+        if (!Array.isArray(run.events)) run.events = [];
+        run.events.push({
+          type: "capability",
+          runId: observation.runId || run.id,
+          requestId: observation.requestId,
+          capability: observation.capability,
+          duration: observation.duration,
+          status: observation.status,
+          trusted: false,
+          evidence: observation.evidence,
+        });
+      }
       recordChange(run, call, result);
       if (!result.ok && result.error && result.error.code === "exit_status" && (call.name === "tests.run" || call.name === "terminal.run")) {
         run.verificationHistory.push({
@@ -238,6 +271,14 @@ async function executeRun(run, options) {
         throw Object.assign(new Error("simulated crash after tool observation"), { code: "crash" });
       }
     }
+
+    const outcome = closeIteration(run, capabilityRegistry);
+    store.save(run);
+    if (outcome.stop) return finishFailed(run, store, "stagnation", outcome.stopSummary);
+    if (outcome.notice) {
+      run.messages.push({ role: "user", content: outcome.notice });
+      store.save(run);
+    }
   }
 
   return run;
@@ -255,6 +296,7 @@ function systemPrompt(options) {
       "terminal.run accepts node or node --check on one workspace file.",
       "Commands have no shell. Pipes, redirects, and paths outside the workspace are rejected.",
       "A failing test is an observation. Repair the source and run the test again.",
+      "Describing a file change or a capability call does not perform it. Use the matching tool.",
       "Finish only after a passing test and a git diff that shows the final edit.",
       "A claim of success is not evidence.",
       hub,
@@ -406,6 +448,30 @@ function pathsFromDiff(diff) {
   return paths;
 }
 
+function closeIteration(run, registry) {
+  if (!run.progress) run.progress = createProgressState();
+  if (!run.progress.recommendedName && registry && typeof registry.list === "function") {
+    const recommended = recommendCapability(registry.list());
+    if (recommended) {
+      run.progress.recommendedName = recommended.name;
+      run.progress.recommendedDescription = recommended.description || "";
+      run.progress.recommendedFields = (recommended.inputSchema && recommended.inputSchema.required) || [];
+    }
+  }
+  const decision = run.decisions[run.decisions.length - 1] || { text: "", usage: null };
+  const outcome = applyIteration(run.progress, {
+    iteration: run.iteration,
+    text: decision.text || "",
+    calls: run.toolCalls.filter((call) => call.iteration === run.iteration),
+    requirements: run.requirements || [],
+    usage: decision.usage || null,
+    goal: run.goal,
+  });
+  if (!Array.isArray(run.events)) run.events = [];
+  for (const event of outcome.events) run.events.push({ ...event, runId: run.id });
+  return outcome;
+}
+
 function cancelled(run, signal) {
   return Boolean(run.cancelRequested || (signal && signal.aborted));
 }
@@ -419,7 +485,11 @@ function observe(call, result) {
     return {
       type: "capability",
       tool: call.name,
+      capability: result.capability || (call.args && call.args.capability) || call.name,
       ok: Boolean(result.ok),
+      status: result.status || null,
+      duration: typeof result.duration === "number" ? result.duration : null,
+      evidence: boundEvidence(result),
       summary: summarize(result),
       trusted: false,
       requestId: result.requestId || null,
@@ -433,6 +503,45 @@ function observe(call, result) {
     summary: summarize(result),
     trusted: true,
   };
+}
+
+function boundEvidence(result) {
+  const data = result && result.data && typeof result.data === "object" ? result.data : null;
+  if (data && Array.isArray(data.evidence)) return data.evidence.slice(0, 4).map(boundEvidenceItem);
+  if (data && Array.isArray(data.capabilities)) {
+    return data.capabilities.slice(0, 8).map((item) => ({
+      title: clipText(item && item.name, 80),
+      url: "",
+      source: "registry",
+      excerpt: clipText(item && item.description, 160),
+      provenance: null,
+    }));
+  }
+  return [];
+}
+
+function boundEvidenceItem(item) {
+  if (!item || typeof item !== "object") {
+    return { title: "", url: "", source: "", excerpt: "", provenance: null };
+  }
+  const provenance = item.provenance && typeof item.provenance === "object"
+    ? {
+      provider: clipText(item.provenance.provider, 40),
+      url: clipText(item.provenance.url, 200),
+      title: clipText(item.provenance.title, 120),
+    }
+    : null;
+  return {
+    title: clipText(item.title, 120),
+    url: clipText(item.url, 200),
+    source: clipText(item.source, 40),
+    excerpt: clipText(item.excerpt, 500),
+    provenance,
+  };
+}
+
+function clipText(value, limit) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
 function summarize(result) {

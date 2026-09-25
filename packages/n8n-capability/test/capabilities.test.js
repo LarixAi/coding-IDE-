@@ -44,7 +44,58 @@ async function main() {
     assert.strictEqual(result.data.recommended_fix, null);
     assert.strictEqual(result.data.confidence, "medium");
     assert.strictEqual(result.data.evidence.length, 3);
+    assert.ok(result.data.evidence.every((item) => item.provenance && item.provenance.provider === item.source && item.provenance.url === item.url));
+    assert.strictEqual(result.data.evidence[0].provenance.url, "https://docs.example.com/webhooks");
     assert.ok(calls.every((url) => url.startsWith("https://api.duckduckgo.com/") || url.startsWith("https://api.github.com/") || url.startsWith("https://api.stackexchange.com/")));
+  });
+
+  await test("a wikipedia abstract adds a bounded procedure excerpt", async () => {
+    const calls = [];
+    const httpRequest = async (options) => {
+      calls.push(options.url);
+      if (options.url.includes("duckduckgo")) {
+        return { Heading: "Luhn algorithm", AbstractText: "A checksum formula.", AbstractURL: "https://en.wikipedia.org/wiki/Luhn_algorithm", RelatedTopics: [] };
+      }
+      if (options.url.includes("wikipedia.org")) {
+        return { query: { pages: { "1": { title: "Luhn algorithm", extract: "A checksum. The check digit is computed as follows: double every second digit from the right. If a doubled digit exceeds 9, subtract 9 from it, then sum the digits." } } } };
+      }
+      if (options.url.includes("api.github.com")) return { items: [] };
+      if (options.url.includes("stackexchange.com")) return { items: [] };
+      throw new Error(`unexpected url ${options.url}`);
+    };
+    const result = await researchProblem(body("research.problem", { problem: "Luhn algorithm" }), httpRequest);
+    const procedure = result.data.evidence.find((item) => item.source === "wikipedia");
+    assert.ok(procedure);
+    assert.ok(procedure.excerpt.includes("subtract 9"));
+    assert.ok(procedure.excerpt.length <= 500);
+    assert.strictEqual(procedure.provenance.provider, "wikipedia");
+    assert.ok(procedure.provenance.url.includes("wikipedia.org/wiki/"));
+    assert.ok(calls.some((url) => url.startsWith("https://en.wikipedia.org/")));
+  });
+
+  await test("a long question falls back to the named subject", async () => {
+    const calls = [];
+    const httpRequest = async (options) => {
+      calls.push(options.url);
+      if (options.url.includes("duckduckgo")) {
+        const query = decodeURIComponent(options.url.split("q=")[1].split("&")[0]);
+        if (query === "Luhn algorithm") {
+          return { Heading: "Luhn algorithm", AbstractText: "A checksum.", AbstractURL: "https://en.wikipedia.org/wiki/Luhn_algorithm", RelatedTopics: [] };
+        }
+        return { Heading: "", AbstractText: "", AbstractURL: "", RelatedTopics: [] };
+      }
+      if (options.url.includes("wikipedia.org")) {
+        return { query: { pages: { "1": { title: "Luhn algorithm", extract: "The check digit is computed as follows: double every second digit from the right. If a doubled digit exceeds 9, subtract 9 from it before adding it to the sum." } } } };
+      }
+      if (options.url.includes("api.github.com")) return { items: [] };
+      if (options.url.includes("stackexchange.com")) return { items: [] };
+      throw new Error(`unexpected url ${options.url}`);
+    };
+    const result = await researchProblem(body("research.problem", { problem: "Luhn algorithm doubling rule - which digits are doubled and in what order" }), httpRequest);
+    const procedure = result.data.evidence.find((item) => item.source === "wikipedia");
+    assert.ok(procedure);
+    assert.ok(procedure.excerpt.includes("subtract 9"));
+    assert.ok(calls.filter((url) => url.includes("duckduckgo")).length >= 2);
   });
 
   await test("a failed source becomes a warning instead of a fabricated cause", async () => {
@@ -131,7 +182,10 @@ async function main() {
     const code = (workflow) => workflow.nodes.find((node) => node.type === "n8n-nodes-base.code").parameters.jsCode;
     assert.ok(code(research).includes("research.problem"));
     assert.ok(code(research).includes("api.duckduckgo.com"));
+    assert.ok(code(research).includes("wikipedia.org"));
+    assert.ok(code(research).includes("provenance"));
     assert.ok(!code(research).includes("writeFile"));
+    assert.ok(knowledge.id.length > 0 && knowledge.id.length <= 21);
     assert.ok(code(knowledge).includes("knowledge.lookup"));
     assert.ok(code(decompose).includes("task.decompose"));
     assert.ok(code(decompose).includes("host.docker.internal:11434"));

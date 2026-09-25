@@ -1,6 +1,6 @@
 const vscode = require("vscode");
 const cp = require("child_process");
-const { execute } = require("../../packages/agent-tools");
+const { execute, executeReadOnly } = require("../../packages/agent-tools");
 
 function workspaceFolder() {
   const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
@@ -184,4 +184,8 @@ function runTool(tool, args) {
   return execute(host, tool, args);
 }
 
-module.exports = { runTool };
+function readOnly(tool, args) {
+  return executeReadOnly(host, tool, args);
+}
+
+module.exports = { runTool, readOnly };

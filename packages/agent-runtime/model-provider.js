@@ -41,7 +41,17 @@ class OllamaModelProvider extends ModelProvider {
     const signal = AbortSignal.any(signals);
     try {
       const response = await postJson(this.baseUrl, "/api/chat", chatBody(input), signal);
-      return normalizeMessage(response.message || {});
+      const decision = normalizeMessage(response.message || {});
+      const promptTokens = typeof response.prompt_eval_count === "number" ? response.prompt_eval_count : null;
+      const completionTokens = typeof response.eval_count === "number" ? response.eval_count : null;
+      if (promptTokens !== null || completionTokens !== null) {
+        decision.usage = {
+          promptTokens: promptTokens || 0,
+          completionTokens: completionTokens || 0,
+          total: (promptTokens || 0) + (completionTokens || 0),
+        };
+      }
+      return decision;
     } catch (error) {
       if (input.signal && input.signal.aborted) {
         throw Object.assign(new Error("model call cancelled"), { code: "cancelled" });

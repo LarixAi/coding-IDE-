@@ -20,20 +20,20 @@
       }
     ],
     "viewsContainers": {
-      "activitybar": [
+      "secondarySidebar": [
         {
-          "id": "codeme",
-          "title": "CodeMe",
+          "id": "codemeAgent",
+          "title": "CodeMe Agent",
           "icon": "media/codeme.svg"
         }
       ]
     },
     "views": {
-      "codeme": [
+      "codemeAgent": [
         {
           "type": "webview",
-          "id": "codeme.composer",
-          "name": "Composer"
+          "id": "codeme.agent",
+          "name": "CodeMe Agent"
         }
       ]
     },
@@ -46,6 +46,8 @@
     ],
     "configurationDefaults": {
       "workbench.colorTheme": "CodeMe Dark",
+      "workbench.startupEditor": "none",
+      "window.commandCenter": false,
       "window.title": "${dirty}${activeEditorShort}${separator}CodeMe"
     }
   }

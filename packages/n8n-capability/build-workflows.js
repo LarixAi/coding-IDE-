@@ -76,7 +76,7 @@ const header = [
 
 const researchCode = [
   ...header,
-  "const httpRequest = async (options) => $helpers.httpRequest(Object.assign({ method: 'GET', json: true, timeout: 8000 }, options));",
+  "const httpRequest = async (options) => helpers.httpRequest(Object.assign({ method: 'GET', json: true, timeout: 8000 }, options));",
   sourceOf("research.js"),
   ...failureTail("researchProblem(body, httpRequest)"),
 ].join("\n");
@@ -94,7 +94,7 @@ const knowledgeCode = [
 
 const decomposeCode = [
   ...header,
-  "const complete = async (payload) => $helpers.httpRequest({ method: 'POST', url: 'http://host.docker.internal:11434/api/chat', body: payload, json: true, timeout: 25000 });",
+  "const complete = async (payload) => helpers.httpRequest({ method: 'POST', url: 'http://host.docker.internal:11434/api/chat', body: payload, json: true, timeout: 70000 });",
   sourceOf("decompose.js"),
   ...failureTail("decomposeGoal(body, complete)"),
 ].join("\n");
@@ -119,8 +119,8 @@ const files = {
     nodePrefix: "c0de4e01-0003-4000-8000-",
   }),
   "knowledge-lookup.json": workflow({
-    id: "c0de4e01-4444-4000-8000-000000000040",
-    versionId: "c0de4e01-4444-4000-8000-000000000041",
+    id: "codemeKnowledge",
+    versionId: "codemeKnowledgeV1",
     name: "CodeMe knowledge lookup",
     webhookPath: "codeme-knowledge-lookup",
     webhookId: "codeme-knowledge-lookup",
