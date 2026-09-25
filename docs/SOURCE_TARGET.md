@@ -49,6 +49,8 @@ Architecture documents:
 - `docs/GATE_6_CONTROLLED_CODING.md` — controlled coding evidence
 - `packages/feature-qualify/` — disposable multi-file service, requirement checks, and Gate 7 runner
 - `docs/GATE_7_MULTI_FILE_FEATURE.md` — multi-file feature evidence
+- `packages/n8n-capability/` — n8n adapter, health and discovery workflows, and Gate 8 evidence
+- `docs/GATE_8_N8N_FOUNDATION.md` — n8n foundation evidence
 
 Code - OSS baseline, unmodified, as a submodule:
 
@@ -64,10 +66,10 @@ Code - OSS baseline, unmodified, as a submodule:
 - Donor application source (`src/`, `desktop/`, `packages/`, tests, and the rest of the donor tree), including the old Composer implementation
 - Other donor documents (server, desktop, n8n, ADRs). They stay in the donor until a later gate names them.
 - An agent loop inside the Composer view. The durable loop is `packages/agent-runtime`. Writes are limited to the Gate 6 qualification workspace.
-- An n8n client. `ExternalCapabilityProvider` is only the empty boundary.
+- Research, retrieval, specialist review, image generation, and deployment workflows. The n8n adapter implements `hub.health` only. `ExternalCapabilityProvider` stays empty unless a hub is injected.
 
 ## Gate
 
 Gate 0 is committed on `migration/code-oss` (`cb486bd`). `main` has no application tree.
 
-Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. Gate 5 qualification is recorded in `docs/GATE_5_QUALIFICATION.md` with grade `limited_agent`. The durable AgentRun is recorded in `docs/GATE_5_AGENT_RUN.md`. Gate 6 is recorded in `docs/GATE_6_CONTROLLED_CODING.md`. Gate 7 is recorded in `docs/GATE_7_MULTI_FILE_FEATURE.md`. No donor application source has been copied. Gate 8 has not started.
+Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. Gate 5 qualification is recorded in `docs/GATE_5_QUALIFICATION.md` with grade `limited_agent`. The durable AgentRun is recorded in `docs/GATE_5_AGENT_RUN.md`. Gate 6 is recorded in `docs/GATE_6_CONTROLLED_CODING.md`. Gate 7 is recorded in `docs/GATE_7_MULTI_FILE_FEATURE.md`. Gate 8 is recorded in `docs/GATE_8_N8N_FOUNDATION.md`. No donor application source has been copied.

@@ -21,6 +21,8 @@ const PROVIDER_NAMES = {
   "git.diff": "git_diff",
   "diagnostics.run": "diagnostics_run",
   "browser.check": "browser_check",
+  "capability.list": "capability_list",
+  "capability.invoke": "capability_invoke",
 };
 const CONTRACT_NAMES = Object.fromEntries(Object.entries(PROVIDER_NAMES).map(([contract, provider]) => [provider, contract]));
 

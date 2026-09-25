@@ -32,4 +32,4 @@ The model searched the repository, then read `src/app.js`, `src/users/repository
 
 Registration is a `POST /users` handler. A blank name returns 400, an invalid email returns 400, a duplicate email returns 409, and a valid user is stored with `add` on the app's repository. The existing health check still passes. All seven requirements are `satisfied`. The run reached `completed` only after that verification. A file outside the fixture and this repository's git status were unchanged.
 
-Gate 8 has not started.
+Gate 8 is recorded in `docs/GATE_8_N8N_FOUNDATION.md`.

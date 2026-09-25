@@ -1,0 +1,74 @@
+{
+  "id": "c0de4e01-2222-4000-8000-000000000020",
+  "versionId": "c0de4e01-2222-4000-8000-000000000021",
+  "name": "CodeMe capability discovery",
+  "active": false,
+  "nodeGroups": [],
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "codeme-capabilities",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c0de4e01-0002-4000-8000-000000000001",
+      "name": "Discovery webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "webhookId": "codeme-capabilities"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const item = $input.first().json;\nconst body = item.body && item.body.requestId ? item.body : item;\nreturn [{\n  json: {\n    protocolVersion: 1,\n    requestId: body.requestId,\n    status: 'ok',\n    data: { capabilities: [{ name: 'hub.health', description: 'Echo a short token and report hub health' }] },\n    sources: [],\n    warnings: [],\n    error: null,\n    duration: 1\n  }\n}];"
+      },
+      "id": "c0de4e01-0002-4000-8000-000000000002",
+      "name": "Build discovery response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [280, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "c0de4e01-0002-4000-8000-000000000003",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [560, 0]
+    }
+  ],
+  "connections": {
+    "Discovery webhook": {
+      "main": [
+        [
+          {
+            "node": "Build discovery response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build discovery response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
