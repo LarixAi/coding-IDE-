@@ -33,7 +33,8 @@ Architecture documents:
 - `docs/AGENT_LOOP_HARDENING_SEQUENCE.md` — copied from that commit
 - `docs/CODEME_STRATEGY_ENGINE.md` — copied from that commit
 - `docs/SOURCE_TARGET.md` — this boundary
-- `docs/GATE_1_BASELINE.md` — Code - OSS pin and the still-open verification list
+- `docs/GATE_1_BASELINE.md` — Code - OSS pin and baseline evidence
+- `docs/MIGRATION_INVENTORY.md` — Gate 2 keep, transplant, rebuild, replace, and delete decisions
 
 Code - OSS baseline, unmodified, as a submodule:
 
@@ -54,4 +55,4 @@ Code - OSS baseline, unmodified, as a submodule:
 
 Gate 0 is committed on `migration/code-oss` (`cb486bd`). `main` has no application tree.
 
-Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`: install, compile, launch, files, terminal, Git, language services, and workspace restore. Gate 2 has not started.
+Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. No donor application source has been copied. Gate 3 has not started.

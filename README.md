@@ -12,6 +12,7 @@ Cursor or any coding agent working in this repository must read these files befo
 2. `docs/CODEME_CODE_OSS_MIGRATION.md` — detailed Code - OSS migration specification.
 3. `docs/AGENT_LOOP_HARDENING_SEQUENCE.md` — autonomous-agent reliability sequence.
 4. `docs/CODEME_STRATEGY_ENGINE.md` — strategy/model qualification architecture.
+5. `docs/MIGRATION_INVENTORY.md` — Gate 2 decisions for the donor. Do not copy a donor path that is classified REPLACE or DELETE.
 
 ## Current state
 
@@ -19,4 +20,4 @@ This repository intentionally starts clean. Do **not** copy the old CodeMe IDE w
 
 Donor, pin, and what is allowed in this tree are recorded in `docs/SOURCE_TARGET.md`. Work continues on `migration/code-oss`. `main` stays free of migration experiments.
 
-Current gate: **Gate 1 evidence is recorded** for Code - OSS `1.139.1` (`04c0d99f4fb0d8afe6ce4f0c58e31e183ac3e4b1`). See `docs/GATE_1_BASELINE.md`. Gate 2, the donor audit, has not started. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
+Current gate: **Gate 2 inventory is recorded** in `docs/MIGRATION_INVENTORY.md` for donor `ee3f2c27`. The Code - OSS pin remains `1.139.1`. Gate 3, the minimal CodeMe shell, has not started. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
