@@ -29,16 +29,20 @@ npm install
 
 ## Verification
 
-Not run yet. Gate 1 stays open until each item has executable evidence on this pin:
+Run on this machine against the pin above, with Node `v24.18.0` and npm `11.16.0`. Gate 1 stays open until every item has evidence.
 
-- desktop app builds and launches
-- open a real folder
-- create, read, edit, rename, delete, and save real files
-- native terminal starts with the correct cwd, PATH, and environment
-- stdin, stdout, stderr, exit status, and cancellation work
-- a long-running dev server works
-- Git/SCM works
-- language diagnostics and navigation work
-- close and reopen restores the workspace
+| Check | Result |
+|---|---|
+| `npm install` in `code-oss/` | Passed. Exit 0. 1582 packages. |
+| Electron download | Passed. `.build/electron/version` is `43.6.0`. |
+| `node build/lib/preLaunch.ts` compile | Passed. Exit 0. Client compile finished with 0 errors. Built-in extensions downloaded. |
+| Desktop app launches | Passed. `./scripts/code.sh` started `Code - OSS` with a renderer process and opened the `code-oss` folder. The process stayed up. |
+| Create, read, edit, rename, delete, and save real files | Not run |
+| Native terminal: cwd, PATH, environment | Not run |
+| stdin, stdout, stderr, exit status, cancellation | Not run |
+| Long-running dev server | Not run |
+| Git/SCM | Not run |
+| Language diagnostics and navigation | Not run |
+| Close and reopen restores the workspace | Not run |
 
 Failures here are Code - OSS baseline failures. Do not debug them in CodeMe code.

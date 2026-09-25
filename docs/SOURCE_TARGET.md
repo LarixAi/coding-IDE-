@@ -54,4 +54,4 @@ Code - OSS baseline, unmodified, as a submodule:
 
 Gate 0 is committed on `migration/code-oss` (`cb486bd`). `main` has no application tree.
 
-Gate 1 has the Code - OSS pin recorded and the tree checked out. The desktop build and the workflow checks in `docs/GATE_1_BASELINE.md` are not done.
+Gate 1 has the Code - OSS pin checked out. Install, compile, and desktop launch are recorded in `docs/GATE_1_BASELINE.md`. File, terminal, Git, language, and workspace-restore checks are still open.
