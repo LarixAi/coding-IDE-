@@ -38,6 +38,9 @@ Architecture documents:
 - `docs/GATE_3_SHELL.md` — minimal shell launch and evidence
 - `extensions/codeme-shell/` — CodeMe theme, Composer view, and connection status
 - `scripts/launch-codeme.sh` — starts that shell on the Code - OSS pin
+- `packages/agent-tools/` — agent tool contract, independent of Code - OSS
+- `extensions/codeme-shell/code-oss-host.js` — runs that contract on Code - OSS services
+- `docs/GATE_4_TOOLS.md` — tool evidence
 
 Code - OSS baseline, unmodified, as a submodule:
 
@@ -58,4 +61,4 @@ Code - OSS baseline, unmodified, as a submodule:
 
 Gate 0 is committed on `migration/code-oss` (`cb486bd`). `main` has no application tree.
 
-Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`, launched with `scripts/launch-codeme.sh`. No donor application source has been copied. Gate 4 has not started.
+Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. No donor application source has been copied. Gate 5 has not started.
