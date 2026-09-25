@@ -45,4 +45,4 @@ The live record is `packages/n8n-capability/out/foundation.json`.
 
 ## Stopped here
 
-`hub.health` is the only workflow. The blueprint's autonomous-hardening gate has not started.
+Gate 9 is recorded in `docs/GATE_9_CAPABILITY_REGISTRY.md`.

@@ -5,11 +5,14 @@
     "endpoint": "http://127.0.0.1:5678"
   },
   "discovery": [
-    "hub.health"
+    "hub.health",
+    "research.problem",
+    "knowledge.lookup",
+    "task.decompose"
   ],
   "liveCall": {
     "ok": true,
-    "requestId": "req_9cd9700be02bceea",
+    "requestId": "req_478068ac7b52dd35",
     "runId": "run_live_probe",
     "status": "ok",
     "marker": "codeme-hub-ok"
@@ -18,8 +21,8 @@
     "type": "capability",
     "trusted": false,
     "ok": true,
-    "requestId": "req_c2f096413242f93c",
-    "runId": "run_880e0c4a68850748",
+    "requestId": "req_c95749df13a8f304",
+    "runId": "run_0c007ce8f68f3fa3",
     "correlated": true
   },
   "qwen": {
@@ -29,5 +32,5 @@
     "lifecycle": "completed",
     "filesChanged": []
   },
-  "runId": "run_880e0c4a68850748"
+  "runId": "run_0c007ce8f68f3fa3"
 }

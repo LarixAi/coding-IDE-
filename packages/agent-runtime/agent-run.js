@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const { availableCapabilityTools, dispatchCapability } = require("./capability");
+const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 
@@ -104,7 +104,9 @@ async function executeRun(run, options) {
     }
   }
   store.save(run);
-  const capabilityTools = await availableCapabilityTools(options.capabilities);
+  const capabilityRegistry = await loadCapabilityRegistry(options.capabilities);
+  const capabilityNames = capabilityRegistry.list().map((item) => item.name);
+  const capabilityTools = capabilityNames.length ? capabilityToolDefinitions(capabilityNames) : [];
   if (capabilityTools.length) {
     const system = run.messages.find((message) => message.role === "system");
     if (system && !system.content.includes("untrusted evidence")) {
@@ -189,7 +191,7 @@ async function executeRun(run, options) {
       let result;
       try {
         if (call.name === "capability.list" || call.name === "capability.invoke") {
-          result = await dispatchCapability(options.capabilities, run, call, signal);
+          result = await dispatchCapability(options.capabilities, run, call, signal, capabilityRegistry);
         } else {
           result = await registry.call(call.name, call.args || {});
         }

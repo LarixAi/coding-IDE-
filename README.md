@@ -20,6 +20,7 @@ Cursor or any coding agent working in this repository must read these files befo
 10. `docs/GATE_6_CONTROLLED_CODING.md` — controlled coding qualification on a disposable fixture.
 11. `docs/GATE_7_MULTI_FILE_FEATURE.md` — multi-file feature qualification. The user goal does not name files.
 12. `docs/GATE_8_N8N_FOUNDATION.md` — n8n capability hub. The hub cannot edit the workspace.
+13. `docs/GATE_9_CAPABILITY_REGISTRY.md` — capability registry and name routing.
 
 ## Current state
 
@@ -27,4 +28,4 @@ This repository intentionally starts clean. Do **not** copy the old CodeMe IDE w
 
 Donor, pin, and what is allowed in this tree are recorded in `docs/SOURCE_TARGET.md`. Work continues on `migration/code-oss`. `main` stays free of migration experiments.
 
-Current gate: **Gate 8 n8n foundation is recorded** in `docs/GATE_8_N8N_FOUNDATION.md`. CodeMe can discover `hub.health` and read the result as an untrusted AgentRun observation. Run `sh scripts/qualify-n8n.sh`. Ordinary local coding still uses the empty capability provider. The Code - OSS pin remains `1.139.1`. Research, retrieval, and specialist workflows are not implemented. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
+Current gate: **Gate 9 capability registry is recorded** in `docs/GATE_9_CAPABILITY_REGISTRY.md`. AgentRun invokes a capability by name. The n8n adapter resolves that name, and the result returns as an untrusted observation. Run `sh scripts/qualify-registry.sh`. The Code - OSS pin remains `1.139.1`. `research.web`, `code.lookup`, `code.debug`, `code.review`, `browser.inspect`, `image.generate`, and `deploy.verify` are reserved and not implemented. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.

@@ -1,0 +1,83 @@
+{
+  "id": "c0de4e01-3333-4000-8000-000000000030",
+  "versionId": "c0de4e01-3333-4000-8000-000000000031",
+  "name": "CodeMe research problem",
+  "active": false,
+  "nodeGroups": [],
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "codeme-research-problem",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c0de4e01-0003-4000-8000-0001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "codeme-research-problem"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const item = $input.first().json;\nconst body = item.body && item.body.requestId ? item.body : item;\nconst httpRequest = async (options) => $helpers.httpRequest(Object.assign({ method: 'GET', json: true, timeout: 8000 }, options));\nasync function researchProblem(body, httpRequest) {\n  const started = Date.now();\n  if (body.capability && body.capability !== \"research.problem\") {\n    return researchEnvelope(body, \"error\", null, { code: \"capability_unavailable\", message: \"This workflow only serves research.problem\" }, [], [], started);\n  }\n  const problem = clip(body.input && body.input.problem, 1500);\n  if (!problem) {\n    return researchEnvelope(body, \"error\", null, { code: \"invalid_input\", message: \"input.problem is required\" }, [], [], started);\n  }\n\n  const warnings = [];\n  const [web, issues, answers] = await Promise.all([\n    collectWeb(problem, httpRequest).catch((error) => failedSource(warnings, \"web\", error)),\n    collectIssues(problem, httpRequest).catch((error) => failedSource(warnings, \"github\", error)),\n    collectAnswers(problem, httpRequest).catch((error) => failedSource(warnings, \"stackoverflow\", error)),\n  ]);\n  const evidence = [];\n  for (const item of [...web, ...issues, ...answers]) {\n    if (evidence.length >= 6) break;\n    evidence.push(item);\n  }\n  if (!evidence.length) warnings.push(\"No external evidence was returned\");\n  warnings.push(\"This pass returns evidence only. The coding model decides the fix.\");\n  return researchEnvelope(body, \"ok\", {\n    problem,\n    likely_cause: null,\n    recommended_fix: null,\n    evidence,\n    examples: [],\n    confidence: evidence.length >= 3 ? \"medium\" : \"low\",\n    conflicts: [],\n  }, null, evidence.map((item) => ({ title: item.title, url: item.url })), warnings, started);\n}\n\nasync function collectWeb(problem, httpRequest) {\n  const payload = await httpRequest({\n    url: `https://api.duckduckgo.com/?q=${encodeURIComponent(problem)}&format=json&no_html=1&skip_disambig=1`,\n  });\n  const found = [];\n  if (payload && payload.AbstractText) {\n    const item = evidenceItem(payload.Heading || \"Web result\", payload.AbstractURL, payload.AbstractText, \"web\");\n    if (item) found.push(item);\n  }\n  const topics = [];\n  flattenTopics(payload && payload.RelatedTopics, topics);\n  for (const topic of topics) {\n    const item = evidenceItem(topic.Text, topic.FirstURL, topic.Text, \"web\");\n    if (item) found.push(item);\n  }\n  return found.slice(0, 3);\n}\n\nasync function collectIssues(problem, httpRequest) {\n  const payload = await httpRequest({\n    url: `https://api.github.com/search/issues?q=${encodeURIComponent(problem.slice(0, 200))}&per_page=3`,\n    headers: { \"User-Agent\": \"CodeMe\", Accept: \"application/vnd.github+json\" },\n  });\n  return (payload && payload.items || []).slice(0, 3).map((item) => evidenceItem(item.title, item.html_url, item.body, \"github.issues\")).filter(Boolean);\n}\n\nasync function collectAnswers(problem, httpRequest) {\n  const payload = await httpRequest({\n    url: `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&site=stackoverflow&pagesize=3&q=${encodeURIComponent(problem.slice(0, 160))}`,\n    headers: { \"User-Agent\": \"CodeMe\" },\n  });\n  return (payload && payload.items || []).slice(0, 3).map((item) => evidenceItem(item.title, item.link, item.title, \"stackoverflow\")).filter(Boolean);\n}\n\nfunction flattenTopics(topics, out) {\n  for (const topic of topics || []) {\n    if (out.length >= 3) return;\n    if (topic && topic.Topics) flattenTopics(topic.Topics, out);\n    else if (topic) out.push(topic);\n  }\n}\n\nfunction evidenceItem(title, url, excerpt, source) {\n  const cleanUrl = clip(url, 500);\n  if (!/^https?:\\/\\//i.test(cleanUrl)) return null;\n  const cleanTitle = clip(title, 180);\n  if (!cleanTitle) return null;\n  return {\n    title: cleanTitle,\n    url: cleanUrl,\n    excerpt: clip(excerpt, 400),\n    source,\n  };\n}\n\nfunction failedSource(warnings, source, error) {\n  warnings.push(`${source} lookup failed: ${clip(error && error.message, 160) || \"request failed\"}`);\n  return [];\n}\n\nfunction researchEnvelope(body, status, data, error, sources, warnings, started) {\n  return {\n    protocolVersion: 1,\n    requestId: body.requestId,\n    status,\n    data,\n    sources,\n    warnings,\n    error,\n    duration: Date.now() - started,\n  };\n}\n\nfunction clip(value, limit) {\n  return String(value || \"\").replace(/\\s+/g, \" \").trim().slice(0, limit);\n}\ntry {\n  return [{ json: await researchProblem(body, httpRequest) }];\n} catch (error) {\n  return [{ json: { protocolVersion: 1, requestId: body.requestId, status: 'error', data: null, sources: [], warnings: [], error: { code: 'workflow_failed', message: String(error && error.message || error).slice(0, 300) }, duration: 1 } }];\n}"
+      },
+      "id": "c0de4e01-0003-4000-8000-0002",
+      "name": "Build response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "c0de4e01-0003-4000-8000-0003",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        560,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

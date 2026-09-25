@@ -1,9 +1,12 @@
 const http = require("http");
 const https = require("https");
-const { PROTOCOL_VERSION, RESERVED_CAPABILITIES, MAX_RESPONSE_CHARS, buildRequest, acceptResponse } = require("../agent-runtime/capability");
+const { PROTOCOL_VERSION, RESERVED_CAPABILITIES, MAX_RESPONSE_CHARS, buildRequest, acceptResponse, CapabilityRegistry } = require("../agent-runtime/capability");
 
 const ROUTES = {
   "hub.health": "/webhook/codeme-hub-health",
+  "research.problem": "/webhook/codeme-research-problem",
+  "knowledge.lookup": "/webhook/codeme-knowledge-lookup",
+  "task.decompose": "/webhook/codeme-task-decompose",
 };
 const DISCOVERY_PATH = "/webhook/codeme-capabilities";
 
@@ -54,13 +57,15 @@ class N8nCapabilityProvider {
       if (!outcome.ok) return [];
       const accepted = acceptResponse(outcome.body, built.request);
       const listed = accepted.data && Array.isArray(accepted.data.capabilities) ? accepted.data.capabilities : [];
-      return listed
-        .map((item) => (typeof item === "string" ? { name: item } : item))
-        .filter((item) => item && typeof item.name === "string" && Object.prototype.hasOwnProperty.call(ROUTES, item.name))
-        .map((item) => ({
-          name: item.name,
-          description: typeof item.description === "string" ? item.description.slice(0, 200) : "",
-        }));
+      const registry = new CapabilityRegistry();
+      for (const item of listed) {
+        const name = typeof item === "string" ? item : item && item.name;
+        if (!name || !Object.prototype.hasOwnProperty.call(ROUTES, name)) continue;
+        const raw = typeof item === "string" ? { name, provider: "n8n" } : { ...item, provider: item.provider || "n8n" };
+        if (typeof raw.route === "string" && raw.route !== ROUTES[name]) continue;
+        registry.register(raw);
+      }
+      return registry.list();
     } catch {
       return [];
     }

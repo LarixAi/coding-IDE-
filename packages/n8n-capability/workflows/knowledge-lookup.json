@@ -1,0 +1,83 @@
+{
+  "id": "c0de4e01-4444-4000-8000-000000000040",
+  "versionId": "c0de4e01-4444-4000-8000-000000000041",
+  "name": "CodeMe knowledge lookup",
+  "active": false,
+  "nodeGroups": [],
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "codeme-knowledge-lookup",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c0de4e01-0004-4000-8000-0001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "codeme-knowledge-lookup"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const item = $input.first().json;\nconst body = item.body && item.body.requestId ? item.body : item;\nconst store = $getWorkflowStaticData('global');\nconst SEED = [\n  {\n    title: \"CodeMe owns local files\",\n    text: \"The hub must not read or edit the workspace. File, git, terminal, and test tools stay in CodeMe.\",\n    tags: [\"architecture\", \"security\"],\n  },\n  {\n    title: \"Qwen is the coding model\",\n    text: \"Qwen 3.5 9B reasons through CodeMe. The hub returns evidence, prior notes, and task graphs.\",\n    tags: [\"architecture\", \"qwen\"],\n  },\n  {\n    title: \"Completion needs evidence\",\n    text: \"A model claim of success is not completion. Tests, diagnostics, and the diff decide.\",\n    tags: [\"verification\"],\n  },\n];\n\nfunction lookupKnowledge(body, store) {\n  const started = Date.now();\n  if (body.capability && body.capability !== \"knowledge.lookup\") {\n    return knowledgeEnvelope(body, \"error\", null, { code: \"capability_unavailable\", message: \"This workflow only serves knowledge.lookup\" }, started);\n  }\n  if (!store || typeof store !== \"object\") {\n    return knowledgeEnvelope(body, \"error\", null, { code: \"invalid_input\", message: \"knowledge store is missing\" }, started);\n  }\n  if (!Array.isArray(store.entries) || store.entries.length === 0) store.entries = SEED.map((entry) => ({ ...entry }));\n\n  const action = body.input && body.input.action === \"remember\" ? \"remember\" : \"lookup\";\n  if (action === \"remember\") {\n    const saved = remember(store, body.input && body.input.entry);\n    if (saved.error) return knowledgeEnvelope(body, \"error\", null, { code: \"invalid_input\", message: saved.error }, started);\n    return knowledgeEnvelope(body, \"ok\", { action: \"remember\", entry: saved.entry }, null, started);\n  }\n\n  const query = clip(body.input && (body.input.query || body.input.problem), 500);\n  if (!query) return knowledgeEnvelope(body, \"error\", null, { code: \"invalid_input\", message: \"input.query is required\" }, started);\n  const queryTokens = tokens(query);\n  const matches = store.entries\n    .map((entry) => ({\n      title: clip(entry.title, 160),\n      text: clip(entry.text, 1000),\n      tags: Array.isArray(entry.tags) ? entry.tags.map((tag) => clip(tag, 40)).filter(Boolean).slice(0, 8) : [],\n      score: score(entry, queryTokens),\n    }))\n    .filter((entry) => entry.score > 0)\n    .sort((left, right) => right.score - left.score)\n    .slice(0, 5);\n  const warnings = matches.length ? [] : [\"No stored note matched this query\"];\n  return knowledgeEnvelope(body, \"ok\", { action: \"lookup\", query, matches }, null, started, warnings);\n}\n\nfunction remember(store, entry) {\n  if (!entry || typeof entry !== \"object\" || Array.isArray(entry)) return { error: \"entry must be an object\" };\n  const title = clip(entry.title, 160);\n  const text = clip(entry.text, 1000);\n  if (!title || !text) return { error: \"entry title and text are required\" };\n  const tags = Array.isArray(entry.tags) ? entry.tags.map((tag) => clip(tag, 40)).filter(Boolean).slice(0, 8) : [];\n  const kept = store.entries.filter((item) => clip(item.title, 160) !== title);\n  const seeds = kept.filter((item) => !item.remembered);\n  const remembered = kept.filter((item) => item.remembered).concat([{ title, text, tags, remembered: true }]).slice(-30);\n  store.entries = seeds.concat(remembered);\n  return { entry: { title, text, tags } };\n}\n\nfunction score(entry, queryTokens) {\n  const hay = new Set(tokens(`${entry.title || \"\"} ${entry.text || \"\"} ${(entry.tags || []).join(\" \")}`));\n  let count = 0;\n  for (const token of queryTokens) if (hay.has(token)) count += 1;\n  return count;\n}\n\nfunction tokens(value) {\n  return String(value || \"\").toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 2);\n}\n\nfunction knowledgeEnvelope(body, status, data, error, started, warnings) {\n  return {\n    protocolVersion: 1,\n    requestId: body.requestId,\n    status,\n    data,\n    sources: [],\n    warnings: warnings || [],\n    error,\n    duration: Date.now() - started,\n  };\n}\n\nfunction clip(value, limit) {\n  return String(value || \"\").replace(/\\s+/g, \" \").trim().slice(0, limit);\n}\ntry {\n  return [{ json: lookupKnowledge(body, store) }];\n} catch (error) {\n  return [{ json: { protocolVersion: 1, requestId: body.requestId, status: 'error', data: null, sources: [], warnings: [], error: { code: 'workflow_failed', message: String(error && error.message || error).slice(0, 300) }, duration: 1 } }];\n}"
+      },
+      "id": "c0de4e01-0004-4000-8000-0002",
+      "name": "Build response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "c0de4e01-0004-4000-8000-0003",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        560,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
