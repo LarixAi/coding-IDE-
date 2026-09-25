@@ -98,6 +98,37 @@ async function dispatch(host, tool, args) {
 }
 
 const READ_ONLY_TOOLS = ["file.read", "repo.search", "git.status", "git.diff", "diagnostics.run", "browser.check"];
+const CONTROLLED_TOOLS = ["file.read", "file.write", "repo.search", "terminal.run", "diagnostics.run", "tests.run", "git.status", "git.diff"];
+
+function validateCommand(command) {
+  if (typeof command !== "string" || command.length === 0) {
+    return { code: "invalid_args", message: "Command must be a non-empty string" };
+  }
+  if (/[\0\n\r;&|`$<>\\"']/.test(command) || command.includes("(") || command.includes(")")) {
+    return { code: "command_rejected", message: "Command contains shell syntax" };
+  }
+  if (command.includes("..")) {
+    return { code: "path_escape", message: "Command escapes the workspace" };
+  }
+  const parts = command.trim().split(/\s+/);
+  if (parts[0] === "npm") {
+    if (parts.length !== 2 || parts[1] !== "test") {
+      return { code: "command_rejected", message: "npm is limited to npm test" };
+    }
+    return null;
+  }
+  if (parts[0] !== "node") {
+    return { code: "command_rejected", message: "Only node and npm test are allowed" };
+  }
+  const fileArgs = parts.slice(1).filter((part) => part !== "--check");
+  if (fileArgs.length !== 1 || fileArgs[0].startsWith("-")) {
+    return { code: "command_rejected", message: "node must run one workspace file" };
+  }
+  if (path.isAbsolute(fileArgs[0])) {
+    return { code: "absolute_path", message: "Path must stay inside the workspace" };
+  }
+  return validateWorkspacePath(fileArgs[0]);
+}
 
 async function executeReadOnly(host, tool, args) {
   if (TOOLS[tool] && !READ_ONLY_TOOLS.includes(tool)) {
@@ -106,10 +137,25 @@ async function executeReadOnly(host, tool, args) {
   return execute(host, tool, args);
 }
 
+async function executeControlled(host, tool, args) {
+  if (!CONTROLLED_TOOLS.includes(tool)) {
+    return failure(tool, "policy_denied", `${tool} is outside the controlled coding grant`);
+  }
+  const input = args && typeof args === "object" ? args : {};
+  if (tool === "terminal.run" || tool === "tests.run") {
+    const commandError = validateCommand(input.command);
+    if (commandError) return failure(tool, commandError.code, commandError.message);
+  }
+  return execute(host, tool, args);
+}
+
 module.exports = {
   TOOLS: Object.keys(TOOLS),
   READ_ONLY_TOOLS,
+  CONTROLLED_TOOLS,
   execute,
   executeReadOnly,
+  executeControlled,
+  validateCommand,
   validateWorkspacePath,
 };

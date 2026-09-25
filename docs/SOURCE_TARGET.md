@@ -43,6 +43,10 @@ Architecture documents:
 - `docs/GATE_4_TOOLS.md` — tool evidence
 - `packages/qwen-qualify/` — local Qwen read-only qualification runner and fixture
 - `docs/GATE_5_QUALIFICATION.md` — qualification evidence and grade
+- `packages/agent-runtime/` — durable AgentRun, model provider, tool registry, and capability boundary
+- `docs/GATE_5_AGENT_RUN.md` — AgentRun evidence; the default grant stays read-only
+- `packages/coding-qualify/` — disposable coding fixture, workspace host, and Gate 6 runner
+- `docs/GATE_6_CONTROLLED_CODING.md` — controlled coding evidence
 
 Code - OSS baseline, unmodified, as a submodule:
 
@@ -57,10 +61,11 @@ Code - OSS baseline, unmodified, as a submodule:
 
 - Donor application source (`src/`, `desktop/`, `packages/`, tests, and the rest of the donor tree), including the old Composer implementation
 - Other donor documents (server, desktop, n8n, ADRs). They stay in the donor until a later gate names them.
-- An agent loop inside the IDE. Qualification talks to local Ollama from `packages/qwen-qualify` and does not edit the workspace.
+- An agent loop inside the Composer view. The durable loop is `packages/agent-runtime`. Writes are limited to the Gate 6 qualification workspace.
+- An n8n client. `ExternalCapabilityProvider` is only the empty boundary.
 
 ## Gate
 
 Gate 0 is committed on `migration/code-oss` (`cb486bd`). `main` has no application tree.
 
-Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. Gate 5 qualification is recorded in `docs/GATE_5_QUALIFICATION.md` with grade `limited_agent`. No donor application source has been copied. Gate 6 has not started.
+Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. Gate 5 qualification is recorded in `docs/GATE_5_QUALIFICATION.md` with grade `limited_agent`. The durable AgentRun is recorded in `docs/GATE_5_AGENT_RUN.md`. Gate 6 is recorded in `docs/GATE_6_CONTROLLED_CODING.md`. No donor application source has been copied. Gate 7 has not started.

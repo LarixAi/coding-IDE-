@@ -29,4 +29,4 @@ Recorded in `packages/qwen-qualify/out/qualification.json` at `2026-09-25T19:51:
 
 The contract check `blocks file writes while read-only` also passed. The shell was launched on Code - OSS `1.139.1`. The extension host logged `CodeMe shell activated` and `CodeMe connection: limited_agent`. The window title was `[Extension Development Host] Welcome — CodeMe`. The status item reads `CodeMe: limited`. Explorer, editor, and terminal still open. File edits from the model stay off.
 
-Gate 6 has not started.
+The durable run loop is recorded in `docs/GATE_5_AGENT_RUN.md`. Gate 6 is recorded in `docs/GATE_6_CONTROLLED_CODING.md`.
