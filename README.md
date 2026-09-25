@@ -19,4 +19,4 @@ This repository intentionally starts clean. Do **not** copy the old CodeMe IDE w
 
 Donor, pin, and what is allowed in this tree are recorded in `docs/SOURCE_TARGET.md`. Work continues on `migration/code-oss`. `main` stays free of migration experiments.
 
-Current gate: **Gate 1 — Code - OSS baseline**. The pin is `code-oss/` at `1.139.1` (`04c0d99f4fb0d8afe6ce4f0c58e31e183ac3e4b1`). Build and workflow checks are still open; see `docs/GATE_1_BASELINE.md`. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
+Current gate: **Gate 1 evidence is recorded** for Code - OSS `1.139.1` (`04c0d99f4fb0d8afe6ce4f0c58e31e183ac3e4b1`). See `docs/GATE_1_BASELINE.md`. Gate 2, the donor audit, has not started. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.

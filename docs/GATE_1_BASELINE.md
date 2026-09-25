@@ -29,20 +29,28 @@ npm install
 
 ## Verification
 
-Run on this machine against the pin above, with Node `v24.18.0` and npm `11.16.0`. Gate 1 stays open until every item has evidence.
+Run on this machine against the pin above, with Node `v24.18.0` and npm `11.16.0`. These are stock Code - OSS tests. No CodeMe code was added.
 
 | Check | Result |
 |---|---|
 | `npm install` in `code-oss/` | Passed. Exit 0. 1582 packages. |
 | Electron download | Passed. `.build/electron/version` is `43.6.0`. |
-| `node build/lib/preLaunch.ts` compile | Passed. Exit 0. Client compile finished with 0 errors. Built-in extensions downloaded. |
-| Desktop app launches | Passed. `./scripts/code.sh` started `Code - OSS` with a renderer process and opened the `code-oss` folder. The process stayed up. |
-| Create, read, edit, rename, delete, and save real files | Not run |
-| Native terminal: cwd, PATH, environment | Not run |
-| stdin, stdout, stderr, exit status, cancellation | Not run |
-| Long-running dev server | Not run |
-| Git/SCM | Not run |
-| Language diagnostics and navigation | Not run |
-| Close and reopen restores the workspace | Not run |
+| `node build/lib/preLaunch.ts` compile | Passed. Exit 0. Client compile finished with 0 errors. |
+| Desktop app launches | Passed. `./scripts/code.sh` started `Code - OSS` and opened the `code-oss` folder. |
+| Create, read, edit, rename, delete, and save | Passed. API tests `fs.write/stat/read/delete`, `fs.delete folder`, and a workspace rename/read-back. Git smoke test edited and saved `app.js` and created `newfile.txt`. Smoke test typed into `app.js` and saved it. |
+| Terminal cwd, PATH, and environment | Passed. Bash in the test workspace printed `pwd` for that folder, `printenv PATH` included `/usr/bin`, and `GATE1_MARKER=present` was visible. Split-terminal smoke test inherited cwd. |
+| stdout, exit status, cancellation | Passed. `echo hello` returned stdout and exit 0. `fakecommand` returned a non-zero exit. A `python3 -m http.server` process was cancelled with Ctrl+C, then `curl` to that port failed. |
+| Long-running server | Passed. The same HTTP server stayed up, `curl` received a directory listing, and the port closed after cancellation. |
+| Git/SCM | Passed. `scripts/test-integration.sh --suite git`: 57 passing, 2 skipped. Includes working-tree status, the diff editor, stage, and commit. |
+| Language diagnostics and navigation | Passed. Smoke tests: quick outline for JavaScript and CSS, and the Problems view for a CSS warning and an empty-rule error. |
+| Close and reopen restores the workspace | Passed. Smoke tests `Data Loss (insiders -> insiders)`: restored editors, saved text restored after restart, hot exit, and autosave on shutdown. 10 smoke tests passing in 2 minutes. |
 
-Failures here are Code - OSS baseline failures. Do not debug them in CodeMe code.
+Commands, from `code-oss/` with Node 24.18.0 on `PATH` and `VSCODE_SKIP_PRELAUNCH=1`:
+
+```sh
+./scripts/test-integration.sh --suite git
+./scripts/test-integration.sh --suite api-folder --grep 'fs.write/stat/read/delete|fs.delete folder|echo works|exit code \(zero\)|exit code \(non-zero\)|report zero exit code|report non-zero exit code|contents of command'
+npm run smoketest-no-compile -- -g 'Data Loss \(insiders -> insiders\)|Language Features|should inherit cwd'
+```
+
+Gate 2 has not started.
