@@ -97,8 +97,19 @@ async function dispatch(host, tool, args) {
   }
 }
 
+const READ_ONLY_TOOLS = ["file.read", "repo.search", "git.status", "git.diff", "diagnostics.run", "browser.check"];
+
+async function executeReadOnly(host, tool, args) {
+  if (TOOLS[tool] && !READ_ONLY_TOOLS.includes(tool)) {
+    return failure(tool, "mutation_blocked", `${tool} is blocked until read-only qualification passes`);
+  }
+  return execute(host, tool, args);
+}
+
 module.exports = {
   TOOLS: Object.keys(TOOLS),
+  READ_ONLY_TOOLS,
   execute,
+  executeReadOnly,
   validateWorkspacePath,
 };

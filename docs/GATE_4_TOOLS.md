@@ -45,4 +45,4 @@ On this machine, against Code - OSS `1.139.1`:
 - Code - OSS workspace checks: 8 passing. `file.write` / `file.read` round-trip, path escape, `repo.search` for `codeme-needle`, `git.diff` and `git.status` for that edit, `terminal.run` stdout and a non-zero `false`, `tests.run` stdout/stderr/exit 3, a syntax diagnostic on `broken.js`, and `browser.check` returning `browser_unavailable`.
 - The script exited 0.
 
-Gate 5 has not started. No model is connected.
+Gate 5 is recorded in `docs/GATE_5_QUALIFICATION.md`.

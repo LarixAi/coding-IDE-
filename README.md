@@ -15,6 +15,7 @@ Cursor or any coding agent working in this repository must read these files befo
 5. `docs/MIGRATION_INVENTORY.md` — Gate 2 decisions for the donor. Do not copy a donor path that is classified REPLACE or DELETE.
 6. `docs/GATE_3_SHELL.md` — how to launch the minimal CodeMe shell.
 7. `docs/GATE_4_TOOLS.md` — the agent tool contract and how to test it.
+8. `docs/GATE_5_QUALIFICATION.md` — local Qwen read-only qualification and the recorded grade.
 
 ## Current state
 
@@ -22,4 +23,4 @@ This repository intentionally starts clean. Do **not** copy the old CodeMe IDE w
 
 Donor, pin, and what is allowed in this tree are recorded in `docs/SOURCE_TARGET.md`. Work continues on `migration/code-oss`. `main` stays free of migration experiments.
 
-Current gate: **Gate 4 tool adapter is recorded** in `docs/GATE_4_TOOLS.md`. Run `scripts/test-codeme-tools.sh`. The Code - OSS pin remains `1.139.1`. Gate 5, read-only model qualification, has not started. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
+Current gate: **Gate 5 read-only qualification is recorded** in `docs/GATE_5_QUALIFICATION.md`. Local `qwen3.5:9b` connected and graded `limited_agent`. Run `sh scripts/qualify-qwen.sh`. The Code - OSS pin remains `1.139.1`. Gate 6, the first coding slice, has not started. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.

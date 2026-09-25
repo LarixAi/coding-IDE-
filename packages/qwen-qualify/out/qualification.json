@@ -1,0 +1,50 @@
+{
+  "model": "qwen3.5:9b",
+  "endpoint": "http://127.0.0.1:11434",
+  "checkedAt": "2026-09-25T19:51:17.950Z",
+  "checks": [
+    {
+      "name": "connect",
+      "pass": true,
+      "detail": "pong"
+    },
+    {
+      "name": "identify project",
+      "pass": true,
+      "detail": "badge-demo",
+      "tools": [
+        "file.read"
+      ]
+    },
+    {
+      "name": "locate implementation",
+      "pass": true,
+      "detail": "src/components/Badge.tsx",
+      "tools": [
+        "repo.search",
+        "repo.search"
+      ]
+    },
+    {
+      "name": "use search or read tools",
+      "pass": true,
+      "detail": "Both answers used repository tools"
+    },
+    {
+      "name": "grounded plan",
+      "pass": false,
+      "detail": "I would read the files in the `Badge` component directory to locate the rendering logic and its source file, then I would propose an edit to replace the current rendered text with the desired content in that specific file.",
+      "tools": []
+    },
+    {
+      "name": "report tool failure",
+      "pass": true,
+      "detail": "TOOL_FAILED",
+      "tools": [
+        "file.read:false"
+      ]
+    }
+  ],
+  "grade": "limited_agent",
+  "workspaceUnchanged": true
+}

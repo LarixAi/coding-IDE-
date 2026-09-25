@@ -11,7 +11,7 @@ CodeMe product chrome on the unmodified Code - OSS pin. Explorer, editor, termin
 
 The theme colors are the donor dark tokens from `src/styles.css` at `ee3f2c27`, converted from oklch to hex. The Composer view is a new workbench webview. It does not copy `AgentPanel.tsx`.
 
-Composer shows the idle sequence `Understanding → Planning → Editing → Testing → Fixing → Verifying → Complete` and the text "Waiting for a model connection." The status item reads `CodeMe: not connected`.
+Composer shows the idle sequence `Understanding → Planning → Editing → Testing → Fixing → Verifying → Complete` and the text "No agent is running. File edits stay off." The status item shows the recorded model grade.
 
 ## Launch
 
@@ -34,4 +34,4 @@ Launched on this machine against Code - OSS `1.139.1` (`04c0d99f`).
 
 The macOS process name remains `Code - OSS` because `scripts/code.sh` resolves the built app from `product.json` `nameLong`. That file stays on the upstream pin. The workbench title, theme, Composer, and status item carry the CodeMe identity.
 
-Gate 4 has not started.
+Later gates are recorded in `docs/GATE_4_TOOLS.md` and `docs/GATE_5_QUALIFICATION.md`.

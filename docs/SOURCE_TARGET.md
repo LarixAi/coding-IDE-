@@ -41,6 +41,8 @@ Architecture documents:
 - `packages/agent-tools/` — agent tool contract, independent of Code - OSS
 - `extensions/codeme-shell/code-oss-host.js` — runs that contract on Code - OSS services
 - `docs/GATE_4_TOOLS.md` — tool evidence
+- `packages/qwen-qualify/` — local Qwen read-only qualification runner and fixture
+- `docs/GATE_5_QUALIFICATION.md` — qualification evidence and grade
 
 Code - OSS baseline, unmodified, as a submodule:
 
@@ -55,10 +57,10 @@ Code - OSS baseline, unmodified, as a submodule:
 
 - Donor application source (`src/`, `desktop/`, `packages/`, tests, and the rest of the donor tree), including the old Composer implementation
 - Other donor documents (server, desktop, n8n, ADRs). They stay in the donor until a later gate names them.
-- An agent loop or a connected model
+- An agent loop inside the IDE. Qualification talks to local Ollama from `packages/qwen-qualify` and does not edit the workspace.
 
 ## Gate
 
 Gate 0 is committed on `migration/code-oss` (`cb486bd`). `main` has no application tree.
 
-Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. No donor application source has been copied. Gate 5 has not started.
+Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. Gate 5 qualification is recorded in `docs/GATE_5_QUALIFICATION.md` with grade `limited_agent`. No donor application source has been copied. Gate 6 has not started.

@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { execute, TOOLS } = require("../index.js");
+const { execute, executeReadOnly, TOOLS } = require("../index.js");
 
 const host = {
   async readFile() {
@@ -75,6 +75,22 @@ async function main() {
     assert.strictEqual(result.error.code, "exit_status");
     assert.strictEqual(result.data.output, "boom");
     assert.strictEqual(result.data.exitCode, 2);
+  });
+
+  await test("blocks file writes while read-only", async () => {
+    let called = false;
+    const result = await executeReadOnly(
+      {
+        async writeFile() {
+          called = true;
+        },
+      },
+      "file.write",
+      { path: "README.md", contents: "changed" },
+    );
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.error.code, "mutation_blocked");
+    assert.strictEqual(called, false);
   });
 
   await test("returns structured success from the host", async () => {
