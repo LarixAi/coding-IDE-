@@ -44,4 +44,4 @@ The next model request after the failing test contained that failure. `filesChan
 
 Policy checks in the same script also passed: shell syntax and path escapes are rejected, the fixture test fails before editing, iteration limit and cancellation still stop a controlled run, and a git diff path is copied into `filesChanged`.
 
-Gate 7 has not started. The model does not have write access to the CodeMe tree, and it does not have an open shell.
+Gate 7 is recorded in `docs/GATE_7_MULTI_FILE_FEATURE.md`. The model does not have write access to the CodeMe tree, and it does not have an open shell.

@@ -18,6 +18,7 @@ Cursor or any coding agent working in this repository must read these files befo
 8. `docs/GATE_5_QUALIFICATION.md` — local Qwen read-only qualification and the recorded grade.
 9. `docs/GATE_5_AGENT_RUN.md` — durable AgentRun runtime. The default grant stays read-only.
 10. `docs/GATE_6_CONTROLLED_CODING.md` — controlled coding qualification on a disposable fixture.
+11. `docs/GATE_7_MULTI_FILE_FEATURE.md` — multi-file feature qualification. The user goal does not name files.
 
 ## Current state
 
@@ -25,4 +26,4 @@ This repository intentionally starts clean. Do **not** copy the old CodeMe IDE w
 
 Donor, pin, and what is allowed in this tree are recorded in `docs/SOURCE_TARGET.md`. Work continues on `migration/code-oss`. `main` stays free of migration experiments.
 
-Current gate: **Gate 6 controlled coding is recorded** in `docs/GATE_6_CONTROLLED_CODING.md`. Local `qwen3.5:9b` repaired a disposable fixture through the AgentRun loop. Run `sh scripts/qualify-coding.sh`. Writes stay inside that qualification workspace. The Code - OSS pin remains `1.139.1`. Gate 7 has not started. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
+Current gate: **Gate 7 multi-file feature qualification is recorded** in `docs/GATE_7_MULTI_FILE_FEATURE.md`. Local `qwen3.5:9b` added registration across three files in a disposable service. Run `sh scripts/qualify-feature.sh`. Writes stay inside that qualification workspace. The Code - OSS pin remains `1.139.1`. Gate 8 has not started. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.

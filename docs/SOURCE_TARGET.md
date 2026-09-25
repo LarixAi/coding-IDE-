@@ -47,6 +47,8 @@ Architecture documents:
 - `docs/GATE_5_AGENT_RUN.md` — AgentRun evidence; the default grant stays read-only
 - `packages/coding-qualify/` — disposable coding fixture, workspace host, and Gate 6 runner
 - `docs/GATE_6_CONTROLLED_CODING.md` — controlled coding evidence
+- `packages/feature-qualify/` — disposable multi-file service, requirement checks, and Gate 7 runner
+- `docs/GATE_7_MULTI_FILE_FEATURE.md` — multi-file feature evidence
 
 Code - OSS baseline, unmodified, as a submodule:
 
@@ -68,4 +70,4 @@ Code - OSS baseline, unmodified, as a submodule:
 
 Gate 0 is committed on `migration/code-oss` (`cb486bd`). `main` has no application tree.
 
-Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. Gate 5 qualification is recorded in `docs/GATE_5_QUALIFICATION.md` with grade `limited_agent`. The durable AgentRun is recorded in `docs/GATE_5_AGENT_RUN.md`. Gate 6 is recorded in `docs/GATE_6_CONTROLLED_CODING.md`. No donor application source has been copied. Gate 7 has not started.
+Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. Gate 5 qualification is recorded in `docs/GATE_5_QUALIFICATION.md` with grade `limited_agent`. The durable AgentRun is recorded in `docs/GATE_5_AGENT_RUN.md`. Gate 6 is recorded in `docs/GATE_6_CONTROLLED_CODING.md`. Gate 7 is recorded in `docs/GATE_7_MULTI_FILE_FEATURE.md`. No donor application source has been copied. Gate 8 has not started.

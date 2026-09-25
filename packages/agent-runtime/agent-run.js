@@ -13,18 +13,12 @@ function createRun(options) {
     provider: options.providerName,
     mode: options.mode || "read_only",
     lifecycle: "created",
-    plan: options.mode === "controlled"
-      ? [
-          { id: "understand", title: "Keep the original goal", status: "pending" },
-          { id: "inspect", title: "Inspect the repository", status: "pending" },
-          { id: "edit", title: "Edit the implementation", status: "pending" },
-          { id: "verify", title: "Verify from tests, diagnostics, and the diff", status: "pending" },
-        ]
-      : [
-          { id: "understand", title: "Keep the original goal", status: "pending" },
-          { id: "inspect", title: "Inspect with tools and record observations", status: "pending" },
-          { id: "verify", title: "Verify the outcome from observations", status: "pending" },
-        ],
+    requirements: (options.requirements || []).map((item) => ({
+      id: item.id,
+      text: item.text,
+      status: "unverified",
+    })),
+    plan: buildPlan(options),
     toolCalls: [],
     observations: [],
     decisions: [],
@@ -99,6 +93,12 @@ async function executeRun(run, options) {
   if (run.messages.length === 0) {
     run.messages.push({ role: "system", content: systemPrompt(options) });
     run.messages.push({ role: "user", content: run.goal });
+    if (run.requirements.length) {
+      run.messages.push({
+        role: "user",
+        content: `Tracked requirements start unverified. Do not finish while any requirement is unverified or failed:\n${run.requirements.map((item) => `- ${item.id}: ${item.text}`).join("\n")}`,
+      });
+    }
   }
   store.save(run);
 
@@ -139,7 +139,16 @@ async function executeRun(run, options) {
     if (calls.length === 0) {
       touch(run, "verifying");
       setPlan(run, "verify", "in_progress");
-      const verification = verify ? verify(run, text) : defaultVerify(run, text);
+      let verification = verify ? verify(run, text) : defaultVerify(run, text);
+      syncRequirements(run);
+      const open = openRequirements(run);
+      if (verification.status === "passed" && open.length) {
+        verification = {
+          status: "failed",
+          summary: `Requirements still open: ${open.map((item) => `${item.id} (${item.status})`).join(", ")}. Do not finish while a requirement is unverified or failed.`,
+          evidence: open.map((item) => item.id),
+        };
+      }
       run.verification = verification;
       run.verificationHistory.push({ ...verification, at: new Date().toISOString() });
       store.save(run);
@@ -315,10 +324,61 @@ function recordChange(run, call, result) {
   if (result.ok && call.name === "git.diff" && result.data && typeof result.data.diff === "string") {
     for (const file of pathsFromDiff(result.data.diff)) addChanged(run, file);
   }
+  if (result.ok && call.name === "git.status" && result.data && typeof result.data.porcelain === "string") {
+    for (const file of pathsFromStatus(result.data.porcelain)) addChanged(run, file);
+  }
 }
 
 function addChanged(run, file) {
   if (file && !run.filesChanged.includes(file)) run.filesChanged.push(file);
+}
+
+function buildPlan(options) {
+  const requirements = options.requirements || [];
+  if (requirements.length) {
+    return [
+      { id: "understand", title: "Keep the original goal", status: "pending" },
+      { id: "inspect", title: "Inspect the repository and find the relevant files", status: "pending" },
+      ...requirements.map((item) => ({ id: item.id, title: item.text, status: "pending" })),
+      { id: "verify", title: "Verify tests, diagnostics, the diff, and every requirement", status: "pending" },
+    ];
+  }
+  if (options.mode === "controlled") {
+    return [
+      { id: "understand", title: "Keep the original goal", status: "pending" },
+      { id: "inspect", title: "Inspect the repository", status: "pending" },
+      { id: "edit", title: "Edit the implementation", status: "pending" },
+      { id: "verify", title: "Verify from tests, diagnostics, and the diff", status: "pending" },
+    ];
+  }
+  return [
+    { id: "understand", title: "Keep the original goal", status: "pending" },
+    { id: "inspect", title: "Inspect with tools and record observations", status: "pending" },
+    { id: "verify", title: "Verify the outcome from observations", status: "pending" },
+  ];
+}
+
+function openRequirements(run) {
+  return (run.requirements || []).filter((item) => item.status !== "satisfied");
+}
+
+function syncRequirements(run) {
+  for (const item of run.requirements || []) {
+    if (item.status === "satisfied") setPlan(run, item.id, "completed");
+    else if (item.status === "failed") setPlan(run, item.id, "blocked");
+    else setPlan(run, item.id, "in_progress");
+  }
+}
+
+function pathsFromStatus(porcelain) {
+  const paths = [];
+  for (const line of porcelain.split("\n")) {
+    if (line.length < 4) continue;
+    const raw = line.slice(3).trim();
+    const file = raw.includes(" -> ") ? raw.split(" -> ").pop() : raw;
+    if (file && !paths.includes(file)) paths.push(file);
+  }
+  return paths;
 }
 
 function pathsFromDiff(diff) {
