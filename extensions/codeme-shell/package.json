@@ -1,0 +1,52 @@
+{
+  "name": "codeme-shell",
+  "displayName": "CodeMe",
+  "description": "Minimal CodeMe shell on Code - OSS: identity, theme, Composer, and model connection status.",
+  "version": "0.1.0",
+  "publisher": "codeme",
+  "engines": {
+    "vscode": "^1.139.0"
+  },
+  "categories": ["Other", "Themes"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "themes": [
+      {
+        "id": "CodeMe Dark",
+        "label": "CodeMe Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/codeme-dark-color-theme.json"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codeme",
+          "title": "CodeMe",
+          "icon": "media/codeme.svg"
+        }
+      ]
+    },
+    "views": {
+      "codeme": [
+        {
+          "type": "webview",
+          "id": "codeme.composer",
+          "name": "Composer"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codeme.showConnection",
+        "title": "CodeMe: Model Connection",
+        "category": "CodeMe"
+      }
+    ],
+    "configurationDefaults": {
+      "workbench.colorTheme": "CodeMe Dark",
+      "window.title": "${dirty}${activeEditorShort}${separator}CodeMe"
+    }
+  }
+}

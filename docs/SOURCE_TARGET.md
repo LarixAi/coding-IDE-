@@ -35,6 +35,9 @@ Architecture documents:
 - `docs/SOURCE_TARGET.md` — this boundary
 - `docs/GATE_1_BASELINE.md` — Code - OSS pin and baseline evidence
 - `docs/MIGRATION_INVENTORY.md` — Gate 2 keep, transplant, rebuild, replace, and delete decisions
+- `docs/GATE_3_SHELL.md` — minimal shell launch and evidence
+- `extensions/codeme-shell/` — CodeMe theme, Composer view, and connection status
+- `scripts/launch-codeme.sh` — starts that shell on the Code - OSS pin
 
 Code - OSS baseline, unmodified, as a submodule:
 
@@ -47,12 +50,12 @@ Code - OSS baseline, unmodified, as a submodule:
 
 ## Not present
 
-- Donor application source (`src/`, `desktop/`, `packages/`, tests, and the rest of the donor tree)
+- Donor application source (`src/`, `desktop/`, `packages/`, tests, and the rest of the donor tree), including the old Composer implementation
 - Other donor documents (server, desktop, n8n, ADRs). They stay in the donor until a later gate names them.
-- Any CodeMe branding, Composer, or agent code on top of Code - OSS
+- An agent loop or a connected model
 
 ## Gate
 
 Gate 0 is committed on `migration/code-oss` (`cb486bd`). `main` has no application tree.
 
-Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. No donor application source has been copied. Gate 3 has not started.
+Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`, launched with `scripts/launch-codeme.sh`. No donor application source has been copied. Gate 4 has not started.
