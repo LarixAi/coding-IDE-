@@ -21,6 +21,8 @@ Cursor or any coding agent working in this repository must read these files befo
 11. `docs/GATE_7_MULTI_FILE_FEATURE.md` — multi-file feature qualification. The user goal does not name files.
 12. `docs/GATE_8_N8N_FOUNDATION.md` — n8n capability hub. The hub cannot edit the workspace.
 13. `docs/GATE_9_CAPABILITY_REGISTRY.md` — capability registry and name routing.
+14. `docs/GATE_10_RESEARCH_ASSISTED_CODING.md` — research-assisted coding qualification.
+15. `docs/GATE_11_AUTONOMOUS_HARDENING.md` — autonomous agent hardening.
 
 ## Current state
 
@@ -28,4 +30,4 @@ This repository intentionally starts clean. Do **not** copy the old CodeMe IDE w
 
 Donor, pin, and what is allowed in this tree are recorded in `docs/SOURCE_TARGET.md`. Work continues on `migration/code-oss`. `main` stays free of migration experiments.
 
-Current gate: **Gate 9 capability registry is recorded** in `docs/GATE_9_CAPABILITY_REGISTRY.md`. AgentRun invokes a capability by name. The n8n adapter resolves that name, and the result returns as an untrusted observation. Run `sh scripts/qualify-registry.sh`. The Code - OSS pin remains `1.139.1`. `research.web`, `code.lookup`, `code.debug`, `code.review`, `browser.inspect`, `image.generate`, and `deploy.verify` are reserved and not implemented. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
+Current gate: **Gate 11 autonomous hardening is recorded** in `docs/GATE_11_AUTONOMOUS_HARDENING.md`. AgentRun locks the effective model, selects a versioned strategy, diagnoses failures, accepts mid-run follow-ups, and completes only with evidence. Run `sh scripts/qualify-hardening.sh`. The Code - OSS pin remains `1.139.1`. `research.web`, `code.lookup`, `code.debug`, `code.review`, `browser.inspect`, `image.generate`, and `deploy.verify` are reserved and not implemented. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.

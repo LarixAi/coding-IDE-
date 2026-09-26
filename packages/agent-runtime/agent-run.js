@@ -1,30 +1,39 @@
 const crypto = require("crypto");
 const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
 const { createProgressState, recommendCapability, applyIteration, noteResearch, researchQuestion, postResearchBrief, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
+const { lockModel } = require("./model-lock");
+const { selectStrategy, strategyGuidance } = require("./strategy");
+const { diagnose, autonomyHold } = require("./diagnosis");
+const { inferRequirements, applyFollowUp } = require("./requirements");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
+const STOPPED = new Set(["completed", "cancelled", "failed", "awaiting_user"]);
 
 function createRun(options) {
-  const model = options.model;
+  const lock = options.modelLock || lockModel(options);
+  const strategy = options.strategyRecord || selectStrategy(options.goal, options);
+  const requirements = inferRequirements(options.goal, options);
   return {
     schemaVersion: 1,
     id: `run_${crypto.randomBytes(8).toString("hex")}`,
     goal: options.goal,
-    requestedModel: model,
-    effectiveModel: model,
+    requestedModel: lock.requestedModel || options.model,
+    effectiveModel: lock.effectiveModel || options.model,
+    persistentSelection: lock.persistentSelection || options.model,
+    modelLock: lock,
     provider: options.providerName,
     mode: options.mode || "read_only",
+    taskClass: strategy.taskClass,
+    strategyRecord: strategy,
     lifecycle: "created",
-    requirements: (options.requirements || []).map((item) => ({
-      id: item.id,
-      text: item.text,
-      status: "unverified",
-    })),
-    plan: buildPlan(options),
+    requirements,
+    plan: buildPlan({ ...options, requirements }),
     toolCalls: [],
     observations: [],
     decisions: [],
     repairs: [],
+    diagnoses: [],
+    followUps: [],
     transitions: [],
     filesChanged: [],
     events: [],
@@ -51,8 +60,18 @@ function createRun(options) {
 
 function startAgentRun(options) {
   const controller = new AbortController();
-  const run = createRun(options);
+  const lock = lockModel(options);
+  const run = createRun({ ...options, modelLock: lock });
   options.store.save(run);
+  if (!lock.ok) {
+    return {
+      id: run.id,
+      run,
+      cancel() {},
+      followUp() {},
+      done: Promise.resolve(finishFailed(run, options.store, lock.code, lock.message)),
+    };
+  }
   const done = executeRun(run, { ...options, signal: controller.signal });
   return {
     id: run.id,
@@ -60,6 +79,10 @@ function startAgentRun(options) {
     cancel() {
       run.cancelRequested = true;
       controller.abort();
+    },
+    followUp(text) {
+      applyFollowUp(run, text);
+      options.store.save(run);
     },
     done,
   };
@@ -98,7 +121,7 @@ async function executeRun(run, options) {
   touch(run, "running");
   setPlan(run, "understand", "completed");
   if (run.messages.length === 0) {
-    run.messages.push({ role: "system", content: systemPrompt(options) });
+    run.messages.push({ role: "system", content: systemPrompt({ ...options, strategyRecord: run.strategyRecord }) });
     run.messages.push({ role: "user", content: run.goal });
     if (run.requirements.length) {
       run.messages.push({
@@ -125,7 +148,7 @@ async function executeRun(run, options) {
     }
   }
 
-  while (!TERMINAL.has(run.lifecycle)) {
+  while (!STOPPED.has(run.lifecycle)) {
     if (cancelled(run, signal)) return finishCancelled(run, store);
     if (run.iteration >= run.maxIterations) {
       return finishFailed(run, store, "iteration_limit", "Maximum iterations reached");
@@ -240,7 +263,23 @@ async function executeRun(run, options) {
       };
       run.toolCalls.push(record);
       const observation = observe(call, result);
+      const diagnosis = diagnose(call, result);
+      if (diagnosis) {
+        observation.diagnosis = diagnosis;
+        run.diagnoses.push({
+          iteration: run.iteration,
+          tool: call.name,
+          class: diagnosis.class,
+          next: diagnosis.next,
+          at: new Date().toISOString(),
+        });
+      }
       run.observations.push(observation);
+      const hold = autonomyHold(call, result);
+      if (hold && hold.pause) {
+        run.inFlight = null;
+        return finishPaused(run, store, hold.reason, hold.message);
+      }
       if (observation.type === "capability") {
         if (!Array.isArray(run.events)) run.events = [];
         run.events.push({
@@ -296,12 +335,14 @@ function systemPrompt(options) {
       "Describing a file change or a capability call does not perform it. Use the matching tool.",
       "Finish only after a passing test and a git diff that shows the final edit.",
       "A claim of success is not evidence.",
+      strategyGuidance(options.strategyRecord),
       hub,
     ].join(" ");
   }
   return [
     "You are a CodeMe agent run.",
     "The original user goal stays in the conversation.",
+    strategyGuidance(options.strategyRecord),
     "Use tools for repository facts.",
     "A tool result is an observation. It does not by itself finish the goal.",
     "If a tool fails, report the failure and do not invent file contents or a successful command.",
@@ -316,6 +357,24 @@ function defaultVerify(run, text) {
   }
   if (!String(text).trim()) {
     return { status: "failed", summary: "The answer was empty", evidence: [] };
+  }
+  const writes = (run.toolCalls || []).filter((call) => call.name === "file.write" && call.result && call.result.ok);
+  if (run.mode === "controlled" && writes.length) {
+    const lastWrite = writes[writes.length - 1];
+    const after = (run.toolCalls || []).filter((call) => call.iteration > lastWrite.iteration);
+    const passedTest = after.find((call) => (
+      (call.name === "tests.run" || (call.name === "terminal.run" && call.args && String(call.args.command || "").includes("test")))
+      && call.result
+      && call.result.ok
+    ));
+    const diff = after.find((call) => call.name === "git.diff" && call.result && call.result.ok);
+    if (!passedTest || !diff) {
+      return {
+        status: "failed",
+        summary: "A write is not complete until a later passing test and git diff are recorded",
+        evidence: ["file.write"],
+      };
+    }
   }
   return {
     status: "passed",
@@ -348,6 +407,14 @@ function finishFailed(run, store, code, message) {
   run.inFlight = null;
   run.error = { code, message };
   run.outcome = { status: "failed", reason: code, summary: message };
+  store.save(run);
+  return run;
+}
+
+function finishPaused(run, store, reason, message) {
+  touch(run, "awaiting_user");
+  run.inFlight = null;
+  run.outcome = { status: "paused", reason, summary: message };
   store.save(run);
   return run;
 }
@@ -637,4 +704,4 @@ function summarize(result) {
   return text.length > 500 ? `${text.slice(0, 500)}…` : text;
 }
 
-module.exports = { createRun, startAgentRun, resumeRun, defaultVerify };
+module.exports = { createRun, startAgentRun, resumeRun, defaultVerify, applyFollowUp };

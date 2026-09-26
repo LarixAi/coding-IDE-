@@ -52,6 +52,8 @@ Architecture documents:
 - `packages/n8n-capability/` — n8n gateway. Gate 8 proved `hub.health`. The routed capabilities now also include `research.problem`, `knowledge.lookup`, and `task.decompose`. The hub does not receive the workspace.
 - `docs/GATE_8_N8N_FOUNDATION.md` — n8n foundation evidence
 - `docs/GATE_9_CAPABILITY_REGISTRY.md` — capability registry and name routing
+- `docs/GATE_10_RESEARCH_ASSISTED_CODING.md` — research-assisted coding qualification
+- `docs/GATE_11_AUTONOMOUS_HARDENING.md` — effective model lock, strategy, follow-ups, diagnosis, evidence completion
 
 Code - OSS baseline, unmodified, as a submodule:
 
@@ -73,4 +75,4 @@ Code - OSS baseline, unmodified, as a submodule:
 
 Gate 0 is committed on `migration/code-oss` (`cb486bd`). `main` has no application tree.
 
-Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. Gate 5 qualification is recorded in `docs/GATE_5_QUALIFICATION.md` with grade `limited_agent`. The durable AgentRun is recorded in `docs/GATE_5_AGENT_RUN.md`. Gate 6 is recorded in `docs/GATE_6_CONTROLLED_CODING.md`. Gate 7 is recorded in `docs/GATE_7_MULTI_FILE_FEATURE.md`. Gate 8 is recorded in `docs/GATE_8_N8N_FOUNDATION.md`. Gate 9 is recorded in `docs/GATE_9_CAPABILITY_REGISTRY.md`. No donor application source has been copied.
+Gate 1 baseline checks are recorded in `docs/GATE_1_BASELINE.md`. Gate 2 decisions are recorded in `docs/MIGRATION_INVENTORY.md`. Gate 3 is the extension in `extensions/codeme-shell/`. Gate 4 tools are recorded in `docs/GATE_4_TOOLS.md`. Gate 5 qualification is recorded in `docs/GATE_5_QUALIFICATION.md` with grade `limited_agent`. The durable AgentRun is recorded in `docs/GATE_5_AGENT_RUN.md`. Gate 6 is recorded in `docs/GATE_6_CONTROLLED_CODING.md`. Gate 7 is recorded in `docs/GATE_7_MULTI_FILE_FEATURE.md`. Gate 8 is recorded in `docs/GATE_8_N8N_FOUNDATION.md`. Gate 9 is recorded in `docs/GATE_9_CAPABILITY_REGISTRY.md`. Gate 10 is recorded in `docs/GATE_10_RESEARCH_ASSISTED_CODING.md`. Gate 11 is recorded in `docs/GATE_11_AUTONOMOUS_HARDENING.md`. No donor application source has been copied.

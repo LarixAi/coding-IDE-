@@ -32,4 +32,4 @@ The live record is `packages/n8n-capability/out/registry.json`.
 
 ## Stopped here
 
-`research.web`, `code.lookup`, `code.debug`, `code.review`, `browser.inspect`, `image.generate`, and `deploy.verify` are catalog entries only. Gate 10 has not started.
+`research.web`, `code.lookup`, `code.debug`, `code.review`, `browser.inspect`, `image.generate`, and `deploy.verify` are catalog entries only. Gate 10 is recorded in `docs/GATE_10_RESEARCH_ASSISTED_CODING.md`.

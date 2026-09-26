@@ -2,7 +2,10 @@ const { ModelProvider, OllamaModelProvider } = require("./model-provider");
 const { ToolProvider, ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("./tool-registry");
 const { ExternalCapabilityProvider, CapabilityRegistry } = require("./capability");
 const { RunStore } = require("./run-store");
-const { createRun, startAgentRun, resumeRun } = require("./agent-run");
+const { createRun, startAgentRun, resumeRun, applyFollowUp } = require("./agent-run");
+const { lockModel } = require("./model-lock");
+const { classifyTask, selectStrategy } = require("./strategy");
+const { diagnose } = require("./diagnosis");
 
 module.exports = {
   ModelProvider,
@@ -17,4 +20,9 @@ module.exports = {
   createRun,
   startAgentRun,
   resumeRun,
+  applyFollowUp,
+  lockModel,
+  classifyTask,
+  selectStrategy,
+  diagnose,
 };
