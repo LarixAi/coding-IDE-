@@ -108,6 +108,49 @@ function sameRequest(currentId, incomingId) {
   return Boolean(currentId) && currentId === incomingId;
 }
 
+function droppedPaths(transfer) {
+  const found = [];
+  const seen = new Set();
+  function add(value) {
+    const next = String(value || "").trim();
+    if (!next || next.startsWith("#") || seen.has(next)) return;
+    seen.add(next);
+    found.push({ path: next });
+  }
+  if (!transfer) return found;
+  const names = [
+    "ResourceURLs",
+    "resourceurls",
+    "CodeFiles",
+    "application/vnd.code.uri-list",
+    "text/uri-list",
+    "text/plain",
+  ];
+  for (const name of names) {
+    if (typeof transfer.getData !== "function") continue;
+    const raw = transfer.getData(name);
+    if (!raw) continue;
+    if (name === "ResourceURLs" || name === "resourceurls" || name === "CodeFiles") {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) add(item);
+          continue;
+        }
+      } catch {
+        // Fall through to line splitting for a plain path.
+      }
+    }
+    for (const line of String(raw).split(/\r?\n/)) add(line);
+  }
+  if (transfer.files && transfer.files.length) {
+    for (const file of transfer.files) {
+      if (file && file.path) add(file.path);
+    }
+  }
+  return found;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     COMPOSER_STAGES,
@@ -118,5 +161,6 @@ if (typeof module !== "undefined" && module.exports) {
     diffsByFile,
     formatGoal,
     sameRequest,
+    droppedPaths,
   };
 }

@@ -3,8 +3,9 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider } = require("../../../packages/agent-runtime");
-const { composerKeyAction, composerStage, composerActivity, diffsByFile, formatGoal } = require("../composer-client");
-const { ComposerSession, checkAttachment, workspaceRelative } = require("../composer-session");
+const { composerKeyAction, composerStage, composerActivity, diffsByFile, formatGoal, droppedPaths } = require("../composer-client");
+const { ComposerSession, checkAttachment, workspaceRelative, listOllamaModels } = require("../composer-session");
+const { OllamaModelProvider } = require("../../../packages/agent-runtime/model-provider");
 const { renderComposer } = require("../composer-view");
 
 const ANCHOR = "codeme-attachment-anchor-not-inlined";
@@ -99,6 +100,7 @@ async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-composer-"));
   fs.mkdirSync(path.join(root, "runs"));
   fs.writeFileSync(path.join(root, "README.md"), `${ANCHOR}\n`);
+  fs.writeFileSync(path.join(root, "notes.txt"), "notes\n");
   const outside = path.join(os.tmpdir(), "codeme-outside.txt");
   fs.writeFileSync(outside, "secret\n");
 
@@ -124,8 +126,28 @@ async function main() {
   assert.ok(html.includes("Describe the change"));
   assert.ok(html.includes("split(/\\r?\\n/)"));
   assert.ok(html.includes("select-mode"));
+  assert.ok(html.includes("ResourceURLs"));
+  assert.ok(html.includes("dataset.source"));
   assert.ok(!html.includes("qwen3.5:9b"));
   assert.ok(!html.includes("workbench.action.chat.open"));
+
+  const explorerDrop = droppedPaths({
+    getData(name) {
+      if (name === "ResourceURLs") return JSON.stringify(["file:///tmp/ws/README.md", "file:///tmp/ws/notes.txt"]);
+      return "";
+    },
+  });
+  assert.strictEqual(explorerDrop.length, 2);
+  assert.strictEqual(explorerDrop[0].path, "file:///tmp/ws/README.md");
+  assert.ok(!droppedPaths({
+    getData(name) { return name === "text/plain" ? "/tmp/outside.txt" : ""; },
+  }).some((item) => item.path === "file:///tmp/ws/README.md"));
+
+  const fromProvider = await new OllamaModelProvider().listModels();
+  const fromShell = await listOllamaModels();
+  assert.ok(fromProvider.some((model) => model.id === "qwen3.5:9b"));
+  assert.ok(fromProvider.every((model) => model.provider === "ollama" && model.id));
+  assert.deepStrictEqual(fromShell.map((model) => model.id).sort(), fromProvider.map((model) => model.id).sort());
 
   const models = [
     { provider: "ollama", id: "qwen3.5:9b", label: "Qwen 3.5 9B" },
@@ -144,7 +166,12 @@ async function main() {
   const chip = first.session.attach({ path: "README.md", name: "README.md", size: 12, type: "text/markdown" });
   assert.strictEqual(first.session.detach(chip.attachment.id).ok, true);
   assert.strictEqual(first.session.attachments.length, 0);
-  first.session.attach({ path: "README.md", name: "README.md", size: 12, type: "text/markdown" });
+  assert.strictEqual(first.session.attach({ path: "README.md", name: "README.md", size: 12, type: "text/markdown" }).ok, true);
+  assert.strictEqual(first.session.attach({ path: "notes.txt", name: "notes.txt", size: 6, type: "text/plain" }).ok, true);
+  assert.strictEqual(first.session.attachments.length, 2);
+  assert.strictEqual(first.session.attach({ path: outside, name: "codeme-outside.txt", size: 7 }).code, "path_escape");
+  assert.strictEqual(first.session.detach(first.session.attachments[1].id).ok, true);
+  assert.strictEqual(first.session.attachments.length, 1);
   const started = await first.session.submit("Explain the readme", 1);
   assert.strictEqual(started.ok, true);
   assert.strictEqual(first.session.epoch, 1);
@@ -217,11 +244,24 @@ async function main() {
   const previewRun = JSON.parse(fs.readFileSync(path.join(root, "runs", `${previewed.runId}.json`), "utf8"));
   assert.ok(previewRun.observations.some((item) => item.tool === "browser.check" && item.ok));
 
-  const recovered = sessionFor(root, [{ text: "ok after read", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] }, { text: "done" }], models);
+  const recovered = sessionFor(root, [
+    { text: "ok after read", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+    { text: "done" },
+    { text: "second answer", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+    { text: "second done" },
+    { text: "third answer" },
+  ], models);
   await recovered.session.refreshModels();
   const second = await recovered.session.submit("try again");
   assert.strictEqual(second.ok, true);
   await waitFor(recovered.session, (item) => !item.running && item.stage === "Complete");
+  const third = await recovered.session.submit("follow up");
+  assert.strictEqual(third.ok, true);
+  assert.notStrictEqual(third.runId, second.runId);
+  await waitFor(recovered.session, (item) => item.runId === third.runId && !item.running && item.stage === "Complete");
+  recovered.session.publish(second.requestId, { id: second.runId, lifecycle: "executing_tool", inFlight: { name: "file.read" }, filesChanged: ["stale.md"], toolCalls: [], outcome: null });
+  assert.strictEqual(recovered.session.runId, third.runId);
+  assert.ok(!recovered.session.filesChanged.includes("stale.md"));
 
   const stale = sessionFor(root, [
     { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },

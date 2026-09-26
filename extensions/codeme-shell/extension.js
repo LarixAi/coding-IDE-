@@ -533,7 +533,13 @@ class ComposerViewProvider {
       return;
     }
     if (message.type === "attach") {
-      for (const file of message.files || []) this.session.attach(fileFromUri(file.path || file));
+      const files = message.files || [];
+      if (!files.length) {
+        this.session.notice = "Drop a workspace file onto the composer.";
+        this.session.emit();
+        return;
+      }
+      for (const file of files) this.session.attach(fileFromUri(file.path || file));
       return;
     }
     if (message.type === "pick") await this.pickFiles();

@@ -1,5 +1,4 @@
 const crypto = require("crypto");
-const http = require("http");
 const path = require("path");
 const { startAgentRun } = require("../../packages/agent-runtime");
 const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal } = require("./composer-client");
@@ -7,30 +6,10 @@ const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal }
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 1024 * 1024;
 
-function listOllamaModels(baseUrl = "http://127.0.0.1:11434") {
-  return new Promise((resolve) => {
-    const req = http.get(`${baseUrl.replace(/\/$/, "")}/api/tags`, (res) => {
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => {
-        if (res.statusCode !== 200) {
-          resolve([]);
-          return;
-        }
-        try {
-          const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          resolve((body.models || []).map((model) => modelRecord("ollama", String(model.name || ""))).filter((model) => model.id));
-        } catch {
-          resolve([]);
-        }
-      });
-    });
-    req.setTimeout(2000, () => {
-      req.destroy();
-      resolve([]);
-    });
-    req.on("error", () => resolve([]));
-  });
+async function listOllamaModels(baseUrl = "http://127.0.0.1:11434") {
+  const { OllamaModelProvider } = require("../../packages/agent-runtime/model-provider");
+  const listed = await new OllamaModelProvider({ baseUrl }).listModels();
+  return listed.map((model) => modelRecord(model.provider || "ollama", model.id));
 }
 
 function modelRecord(provider, id) {

@@ -9,6 +9,10 @@ class ModelProvider {
   async complete() {
     throw Object.assign(new Error(`${this.name} does not implement complete`), { code: "not_implemented" });
   }
+
+  async listModels() {
+    return [];
+  }
 }
 
 const PROVIDER_NAMES = {
@@ -31,6 +35,18 @@ class OllamaModelProvider extends ModelProvider {
     super("ollama");
     this.baseUrl = options.baseUrl || "http://127.0.0.1:11434";
     this.timeoutMs = options.timeoutMs || 180000;
+  }
+
+  async listModels() {
+    try {
+      const body = await getJson(this.baseUrl, "/api/tags");
+      return (body.models || []).map((model) => {
+        const id = String(model && model.name || "");
+        return id ? { provider: this.name, id, label: id } : null;
+      }).filter(Boolean);
+    } catch {
+      return [];
+    }
   }
 
   async complete(input) {
@@ -124,6 +140,34 @@ function normalizeMessage(message) {
 
 function stripThinking(text) {
   return String(text).replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+}
+
+function getJson(baseUrl, pathname) {
+  const url = new URL(pathname, baseUrl);
+  const transport = url.protocol === "https:" ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = transport.get(url, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`model list returned ${res.statusCode}`));
+          return;
+        }
+        try {
+          resolve(text ? JSON.parse(text) : {});
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    req.setTimeout(2000, () => {
+      req.destroy();
+      reject(new Error("model list timed out"));
+    });
+    req.on("error", reject);
+  });
 }
 
 function postJson(baseUrl, pathname, body, signal) {

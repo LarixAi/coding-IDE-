@@ -45,7 +45,7 @@ function renderComposer(nonce) {
     .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .chip button { border: 0; background: transparent; color: #6b7689; cursor: pointer; padding: 0; }
     .composer { display: flex; flex-direction: column; min-width: 0; }
-    .composer.over textarea { outline: 1px solid #7fd3ea55; }
+    .shell.over { outline: 1px solid #7fd3ea55; outline-offset: -2px; }
     textarea { width: 100%; min-height: 56px; max-height: 180px; box-sizing: border-box; border: 0; resize: none; background: transparent; color: #dfe4ec; font: inherit; padding: 6px 4px 2px; outline: none; }
     .bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
     .bar button { border: 0; background: transparent; color: #97a3b6; height: 24px; padding: 0 6px; cursor: pointer; font: inherit; font-size: 12px; }
@@ -160,34 +160,25 @@ function renderComposer(nonce) {
       vscode.postMessage({ type: "select-model", provider: option.dataset.provider, id: option.value });
     });
     mode.addEventListener("change", () => vscode.postMessage({ type: "select-mode", mode: mode.value }));
-    drop.addEventListener("dragover", (event) => {
+    const shell = document.querySelector(".shell");
+    function acceptDrag(event) {
       event.preventDefault();
-      drop.classList.add("over");
-    });
-    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-    drop.addEventListener("drop", (event) => {
-      event.preventDefault();
-      drop.classList.remove("over");
-      const paths = droppedPaths(event.dataTransfer);
-      if (paths.length) vscode.postMessage({ type: "attach", files: paths });
-    });
-    function droppedPaths(transfer) {
-      const found = [];
-      const resource = transfer.getData("resourceurls");
-      if (resource) {
-        try {
-          for (const item of JSON.parse(resource)) found.push({ path: String(item) });
-        } catch {}
-      }
-      const list = transfer.getData("text/uri-list") || transfer.getData("text/plain");
-      if (list) {
-        for (const line of list.split(/\\r?\\n/)) {
-          const value = line.trim();
-          if (value && !value.startsWith("#")) found.push({ path: value });
-        }
-      }
-      return found;
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      shell.classList.add("over");
     }
+    document.addEventListener("dragenter", acceptDrag);
+    document.addEventListener("dragover", acceptDrag);
+    document.addEventListener("dragleave", (event) => {
+      if (!document.documentElement.contains(event.relatedTarget)) shell.classList.remove("over");
+    });
+    document.addEventListener("drop", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      shell.classList.remove("over");
+      const paths = droppedPaths(event.dataTransfer);
+      vscode.postMessage({ type: "attach", files: paths, types: Array.from((event.dataTransfer && event.dataTransfer.types) || []) });
+    });
     function current(message) {
       return !(typeof message.epoch === "number" && message.epoch !== epoch);
     }
@@ -216,6 +207,7 @@ function renderComposer(nonce) {
         const option = document.createElement("option");
         option.value = item.id;
         option.dataset.provider = item.provider;
+        option.dataset.source = "provider";
         option.textContent = item.label;
         option.selected = Boolean(state.selected && state.selected.id === item.id && state.selected.provider === item.provider);
         model.appendChild(option);

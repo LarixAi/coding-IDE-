@@ -11,6 +11,7 @@ assert.ok(html.includes(">CodeMe<"));
 assert.ok(html.includes(">Send<"));
 assert.ok(html.includes(">Attach<"));
 assert.ok(html.includes("select-mode"));
+assert.ok(html.includes("ResourceURLs"));
 assert.ok(!html.includes("qwen3.5:9b"));
 assert.ok(!html.includes("File edits stay off"));
 assert.ok(!html.includes("workbench.action.chat.open"));
