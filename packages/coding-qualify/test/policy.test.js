@@ -168,7 +168,7 @@ async function main() {
     assert.ok(!readOnly.includes("file.write"));
     assert.ok(controlled.includes("file.write"));
     assert.ok(controlled.includes("tests.run"));
-    assert.ok(!controlled.includes("browser.check"));
+    assert.ok(controlled.includes("browser.check"));
     const hub = new ExternalCapabilityProvider();
     assert.deepStrictEqual(await hub.listCapabilities(), []);
     assert.strictEqual((await hub.invoke("workflow.run")).error.code, "capability_unavailable");

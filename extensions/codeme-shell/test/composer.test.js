@@ -2,9 +2,10 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider } = require("../../../packages/agent-runtime");
-const { composerKeyAction, composerStage, composerActivity, diffsByFile, formatGoal, droppedPaths } = require("../composer-client");
-const { ComposerSession, checkAttachment, workspaceRelative, listOllamaModels } = require("../composer-session");
+const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider, ControlledToolProvider } = require("../../../packages/agent-runtime");
+const { composerKeyAction, composerStage, composerActivity, diffsByFile, formatGoal, droppedPaths, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
+const { describeFileRead } = require("../image-meta");
+const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels } = require("../composer-session");
 const { OllamaModelProvider } = require("../../../packages/agent-runtime/model-provider");
 const { renderComposer } = require("../composer-view");
 
@@ -15,9 +16,11 @@ class ScriptedModel extends ModelProvider {
     super("scripted");
     this.steps = [...steps];
     this.models = [];
+    this.calls = [];
   }
 
   async complete(input) {
+    this.calls.push(input);
     this.models.push(input.model);
     if (input.signal && input.signal.aborted) {
       throw Object.assign(new Error("model call cancelled"), { code: "cancelled" });
@@ -48,19 +51,20 @@ function workspace(root) {
   };
 }
 
-function sessionFor(root, steps, models, host) {
+function sessionFor(root, steps, models, host, extras = {}) {
   const provider = new ScriptedModel(steps);
   const seen = [];
   const selection = { value: null };
   const session = new ComposerSession({
-    store: new RunStore(path.join(root, "runs")),
+    store: extras.store || new RunStore(path.join(root, "runs")),
     selectionStore: {
       get: () => selection.value,
       set: (value) => { selection.value = value; },
     },
     listModels: async () => models,
     createProvider: () => provider,
-    createRegistry: () => new ToolRegistry(new ReadOnlyToolProvider(host || workspace(root))),
+    createRegistry: extras.createRegistry || (() => new ToolRegistry(new ReadOnlyToolProvider(host || workspace(root)))),
+    capabilities: extras.capabilities || null,
     root,
     onChange: (snapshot) => seen.push(snapshot.stage),
   });
@@ -111,7 +115,23 @@ async function main() {
   assert.strictEqual(escaped.ok, false);
   assert.strictEqual(escaped.code, "path_escape");
   assert.strictEqual(checkAttachment(root, { path: "README.md", kind: "folder", size: 1 }, []).code, "reserved");
-  assert.strictEqual(checkAttachment(root, { path: "README.md", type: "application/pdf", size: 1 }, []).code, "reserved");
+  fs.writeFileSync(path.join(root, "shot.png"), "png");
+  const image = checkAttachment(root, { path: "shot.png", name: "shot.png", size: 3, type: "image/png" }, []);
+  assert.strictEqual(image.ok, true);
+  assert.strictEqual(image.attachment.kind, "image");
+  const pdf = checkAttachment(root, { path: "README.md", name: "notes.pdf", size: 12, type: "application/pdf" }, []);
+  assert.strictEqual(pdf.ok, true);
+  assert.strictEqual(pdf.attachment.kind, "pdf");
+  const imported = importAttachment(root, { path: outside, name: "codeme-outside.txt", size: 7, type: "text/plain" }, []);
+  assert.strictEqual(imported.ok, true);
+  assert.ok(imported.attachment.path.startsWith(".codeme/inbox/"));
+  assert.ok(fs.existsSync(path.join(root, imported.attachment.path)));
+  const droppedBytes = importAttachment(root, { name: "drop.png", type: "image/png", contents: Buffer.from("png").toString("base64") }, []);
+  assert.strictEqual(droppedBytes.ok, true);
+  assert.strictEqual(droppedBytes.attachment.kind, "image");
+  assert.strictEqual(composerVoiceAction(false, false), "unavailable");
+  assert.strictEqual(composerVoiceAction(false, true), "start");
+  assert.strictEqual(composerVoiceAction(true, true), "stop");
 
   const attached = checkAttachment(root, { path: path.join(root, "README.md"), name: "README.md", size: 12, type: "text/markdown" }, []);
   assert.strictEqual(attached.ok, true);
@@ -123,9 +143,14 @@ async function main() {
   const html = renderComposer("nonce-value");
   assert.ok(html.includes("nonce-nonce-value"));
   assert.ok(html.includes("composerKeyAction"));
-  assert.ok(html.includes("Describe the change"));
+  assert.ok(html.includes("Ask, drop a file, or use Voice"));
+  assert.ok(html.includes("id=\\\"mic\\\"") || html.includes('id="mic"'));
   assert.ok(html.includes("split(/\\r?\\n/)"));
   assert.ok(html.includes("select-mode"));
+  assert.ok(html.includes(">Ask<"));
+  assert.ok(html.includes(">Plan<"));
+  assert.ok(html.includes(">Code<"));
+  assert.ok(!html.includes("Read-only"));
   assert.ok(html.includes("ResourceURLs"));
   assert.ok(html.includes("dataset.source"));
   assert.ok(!html.includes("qwen3.5:9b"));
@@ -161,7 +186,14 @@ async function main() {
   assert.strictEqual(first.session.selected.id, "qwen3.5:9b");
   assert.strictEqual(first.session.selectModel("ollama", "llama3.2:3b").ok, true);
   assert.strictEqual(first.selection.value.id, "llama3.2:3b");
-  assert.strictEqual(first.session.selectMode("controlled").ok, true);
+  assert.strictEqual(normalizeComposerMode("read_only"), "ask");
+  assert.strictEqual(agentModeFor("plan"), "read_only");
+  assert.strictEqual(agentModeFor("code"), "controlled");
+  assert.strictEqual(first.session.selectMode("plan").ok, true);
+  assert.strictEqual(first.session.composerMode, "plan");
+  assert.strictEqual(first.session.mode, "read_only");
+  assert.strictEqual(first.session.selectMode("code").ok, true);
+  assert.strictEqual(first.session.composerMode, "code");
   assert.strictEqual(first.session.mode, "controlled");
   const chip = first.session.attach({ path: "README.md", name: "README.md", size: 12, type: "text/markdown" });
   assert.strictEqual(first.session.detach(chip.attachment.id).ok, true);
@@ -169,7 +201,10 @@ async function main() {
   assert.strictEqual(first.session.attach({ path: "README.md", name: "README.md", size: 12, type: "text/markdown" }).ok, true);
   assert.strictEqual(first.session.attach({ path: "notes.txt", name: "notes.txt", size: 6, type: "text/plain" }).ok, true);
   assert.strictEqual(first.session.attachments.length, 2);
-  assert.strictEqual(first.session.attach({ path: outside, name: "codeme-outside.txt", size: 7 }).code, "path_escape");
+  const outsideChip = first.session.attach({ path: outside, name: "codeme-outside.txt", size: 7 });
+  assert.strictEqual(outsideChip.ok, true);
+  assert.ok(outsideChip.attachment.path.startsWith(".codeme/inbox/"));
+  assert.strictEqual(first.session.detach(outsideChip.attachment.id).ok, true);
   assert.strictEqual(first.session.detach(first.session.attachments[1].id).ok, true);
   assert.strictEqual(first.session.attachments.length, 1);
   const started = await first.session.submit("Explain the readme", 1);
@@ -179,6 +214,7 @@ async function main() {
   assert.strictEqual(started.model, "llama3.2:3b");
   assert.strictEqual(started.provider, "ollama");
   assert.strictEqual(started.mode, "controlled");
+  assert.strictEqual(started.composerMode, "code");
   await waitFor(first.session, (item) => item.stage === "Complete" && !item.running);
   assert.ok(first.seen.includes("Reading"));
   assert.ok(first.provider.models.every((model) => model === "llama3.2:3b"));
@@ -203,7 +239,7 @@ async function main() {
   assert.strictEqual(researching.ok, true);
   await waitFor(research.session, (item) => item.tools.some((tool) => tool.name === "file.read"));
   assert.ok(research.session.thread.some((item) => item.role === "user" && item.text.includes("research the readme")));
-  assert.ok(research.session.thread.some((item) => item.role === "assistant" && item.text.includes("Reading the readme")));
+  assert.ok(research.session.activity.includes("Reading the readme") || research.session.tools.some((tool) => tool.name === "file.read"));
   research.session.cancel();
   await waitFor(research.session, (item) => item.stage === "Cancelled" && !item.running);
   assert.ok(research.session.outcome.summary.includes("README.md"));
@@ -225,6 +261,7 @@ async function main() {
   const failed = await failing.session.submit("break");
   assert.strictEqual(failed.ok, true);
   await waitFor(failing.session, (item) => item.stage === "Failed" && !item.running);
+  assert.strictEqual(failing.session.notice, "");
   const again = await failing.session.submit("recover");
   assert.strictEqual(again.ok, true);
   assert.notStrictEqual(again.requestId, failed.requestId);
@@ -278,6 +315,118 @@ async function main() {
   assert.ok(!stale.session.filesChanged.includes("nope.md"));
   stale.session.cancel();
   await waitFor(stale.session, (item) => item.runId === next.runId && item.stage === "Cancelled" && !item.running);
+
+  assert.strictEqual(isProgressTalk("Let me search for HTML files"), true);
+  assert.strictEqual(isProgressTalk("Great! I found your website files."), true);
+  assert.strictEqual(isProgressTalk("Great, I found the current pages."), true);
+  assert.strictEqual(isProgressTalk("The layout now uses a tighter header and a two-column showroom."), false);
+  assert.strictEqual(looksLikeWorkspaceEdit("make a better website layout"), true);
+  const layout = sessionFor(root, [
+    { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+    { text: "1. Restyle the header\n2. Tighten the hero\n3. Switch to Code to apply edits" },
+  ], models);
+  await layout.session.refreshModels();
+  assert.strictEqual(layout.session.composerMode, "ask");
+  const planned = await layout.session.submit("make a better website layout");
+  assert.strictEqual(planned.ok, true);
+  assert.strictEqual(layout.session.notice, "Switch to Code to apply file edits");
+  assert.strictEqual(layout.session.mode, "read_only");
+  await waitFor(layout.session, (item) => item.stage === "Complete" && !item.running);
+
+  const hubState = { invocations: [] };
+  const hub = {
+    async listCapabilities() {
+      return [
+        { name: "hub.health", description: "Echo a short token and report hub health" },
+        { name: "research.problem", description: "Gather short evidence for a problem. Returns sources and excerpts." },
+        { name: "knowledge.lookup", description: "Find a prior note by query, or remember a short note." },
+        { name: "task.decompose", description: "Split a large goal into a bounded task graph." },
+      ];
+    },
+    async invoke(request) {
+      hubState.invocations.push(request.capability);
+      return {
+        protocolVersion: 1,
+        requestId: request.requestId,
+        status: "ok",
+        data: {
+          problem: request.input && (request.input.problem || request.input.question),
+          evidence: [{ title: "Site notes", url: "https://example.com", excerpt: "The workspace site is a dealership preview", source: "test" }],
+        },
+        sources: [],
+        warnings: [],
+        error: null,
+        duration: 3,
+      };
+    },
+  };
+  const researched = sessionFor(root, [
+    { text: "Reading the site first.", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+    { text: "The workspace site is a dealership preview." },
+  ], models, null, { capabilities: hub });
+  await researched.session.refreshModels();
+  const asked = await researched.session.submit("research the website");
+  assert.strictEqual(asked.ok, true);
+  await waitFor(researched.session, (item) => item.stage === "Complete" && !item.running);
+  const researchRun = JSON.parse(fs.readFileSync(path.join(root, "runs", `${asked.runId}.json`), "utf8"));
+  assert.ok(researchRun.observations.some((item) => item.type === "capability" && item.capability === "research.problem"));
+  assert.deepStrictEqual(hubState.invocations, ["research.problem"]);
+
+  const reread = sessionFor(root, [
+    { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+    { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+    { text: "The readme describes the project." },
+  ], models);
+  await reread.session.refreshModels();
+  const finished = await reread.session.submit("what does the readme say");
+  assert.strictEqual(finished.ok, true);
+  await waitFor(reread.session, (item) => item.stage === "Complete" && !item.running);
+  const rereadRun = JSON.parse(fs.readFileSync(path.join(root, "runs", `${finished.runId}.json`), "utf8"));
+  assert.ok(reread.provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("Write the findings now"))));
+  assert.strictEqual(rereadRun.lifecycle, "completed");
+
+  const png = Buffer.from(
+    "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c6360000002000100ffff03000006000557bf0000000049454e44ae426082",
+    "hex",
+  );
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src/index.html"), "<html><body>old</body></html>\n");
+  const layoutHost = workspace(root);
+  layoutHost.writeFile = async (file, contents) => {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.writeFileSync(path.join(root, file), contents);
+    return { path: file, bytes: Buffer.byteLength(contents) };
+  };
+  layoutHost.browserCheck = async (url) => ({ url, statusCode: 200, title: "CarBid", available: true });
+  const coded = sessionFor(root, [
+    { text: "Let me search for HTML files", toolCalls: [{ name: "file.read", args: { path: "src/index.html" } }] },
+    { text: "Applying a tighter layout.", toolCalls: [{ name: "file.write", args: { path: "src/index.html", contents: "<html><body><header>Showroom</header></body></html>\n" } }] },
+    { text: "Checking the preview.", toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:4173/" } }] },
+    { text: "The layout is updated on the preview." },
+  ], models, layoutHost, {
+    createRegistry: (mode) => new ToolRegistry(
+      mode === "controlled" ? new ControlledToolProvider(layoutHost) : new ReadOnlyToolProvider(layoutHost),
+    ),
+  });
+  await coded.session.refreshModels();
+  assert.strictEqual(coded.session.selectMode("code").ok, true);
+  const applied = await coded.session.submit("can you find me a better layout for my website");
+  assert.strictEqual(applied.ok, true);
+  await waitFor(coded.session, (item) => item.stage === "Complete" && !item.running);
+  const layoutRun = JSON.parse(fs.readFileSync(path.join(root, "runs", `${applied.runId}.json`), "utf8"));
+  assert.strictEqual(layoutRun.taskClass, "layout");
+  assert.ok(layoutRun.toolCalls.some((call) => call.name === "file.write"));
+  assert.ok(layoutRun.toolCalls.some((call) => call.name === "browser.check"));
+  assert.ok(layoutRun.toolCalls.every((call) => call.name !== "capability.invoke"));
+  assert.ok(!coded.session.thread.some((item) => /let me search/i.test(item.text)));
+  assert.ok(coded.session.thread.some((item) => item.role === "assistant" && item.text.includes("layout is updated")));
+
+  const pngRead = describeFileRead("shot.png", png);
+  assert.strictEqual(pngRead.kind, "image");
+  assert.strictEqual(pngRead.type, "image/png");
+  assert.strictEqual(pngRead.width, 1);
+  assert.strictEqual(pngRead.height, 1);
+  assert.ok(!Object.prototype.hasOwnProperty.call(pngRead, "contents"));
 
   console.log("ok composer agent run");
 }

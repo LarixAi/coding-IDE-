@@ -1,10 +1,12 @@
 const crypto = require("crypto");
+const fs = require("fs");
 const path = require("path");
 const { startAgentRun } = require("../../packages/agent-runtime");
-const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal } = require("./composer-client");
+const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
 
 const MAX_ATTACHMENTS = 6;
-const MAX_ATTACHMENT_BYTES = 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const INBOX = ".codeme/inbox";
 
 async function listOllamaModels(baseUrl = "http://127.0.0.1:11434") {
   const { OllamaModelProvider } = require("../../packages/agent-runtime/model-provider");
@@ -33,29 +35,102 @@ function workspaceRelative(root, candidate) {
   return relative.split(path.sep).join("/");
 }
 
+function attachmentKind(type, name) {
+  const label = `${type || ""} ${name || ""}`.toLowerCase();
+  if (label.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(name || "")) return "image";
+  if (label.includes("application/pdf") || /\.pdf$/i.test(name || "")) return "pdf";
+  return "file";
+}
+
 function checkAttachment(root, input, existing) {
-  const kind = input && input.kind;
-  if (kind === "folder") return reject("reserved", "Folder attachments are reserved.");
-  if (kind === "image" || kind === "pdf" || String(input && input.type || "").startsWith("image/") || input && input.type === "application/pdf") {
-    return reject("reserved", "Image and PDF attachments are reserved.");
-  }
+  if (input && input.kind === "folder") return reject("reserved", "Folder attachments are reserved.");
   const relative = workspaceRelative(root, input && input.path);
   if (!relative) return reject("path_escape", "That file is outside the workspace.");
   if (existing.length >= MAX_ATTACHMENTS) return reject("too_many", "Attach at most 6 files.");
   const size = Number(input && input.size) || 0;
-  if (size > MAX_ATTACHMENT_BYTES) return reject("too_large", "Each attachment must be 1 MB or smaller.");
+  if (size > MAX_ATTACHMENT_BYTES) return reject("too_large", "Each attachment must be 8 MB or smaller.");
   if (existing.some((item) => item.path === relative)) return reject("duplicate", "That file is already attached.");
+  const name = (input && input.name) || path.posix.basename(relative);
+  const type = (input && input.type) || "text/plain";
   return {
     ok: true,
     attachment: {
       id: `att_${crypto.randomBytes(4).toString("hex")}`,
-      kind: "file",
+      kind: attachmentKind(type, name),
       path: relative,
-      name: (input && input.name) || path.posix.basename(relative),
-      type: (input && input.type) || "text/plain",
+      name,
+      type,
       size,
     },
   };
+}
+
+function importAttachment(root, input, existing) {
+  if (!root) return reject("no_workspace", "Open a folder before attaching files.");
+  if (input && input.kind === "folder") return reject("reserved", "Folder attachments are reserved.");
+  if (input && input.contents) {
+    let raw;
+    try {
+      raw = Buffer.from(String(input.contents), "base64");
+    } catch {
+      return reject("invalid_file", "That drop could not be read.");
+    }
+    if (!raw.length) return reject("invalid_file", "That drop is empty.");
+    if (raw.length > MAX_ATTACHMENT_BYTES) return reject("too_large", "Each attachment must be 8 MB or smaller.");
+    const dest = writeInboxFile(root, input.name || "drop.bin", raw);
+    return checkAttachment(root, {
+      path: dest,
+      name: path.posix.basename(dest),
+      size: raw.length,
+      type: input.type,
+    }, existing);
+  }
+  const relative = workspaceRelative(root, input && input.path);
+  if (relative) return checkAttachment(root, { ...input, path: relative }, existing);
+  const abs = localPath(input && input.path);
+  if (!abs || !fs.existsSync(abs)) return reject("path_escape", "That file is outside the workspace.");
+  const stat = fs.statSync(abs);
+  if (stat.isDirectory()) return reject("reserved", "Folder attachments are reserved.");
+  if (stat.size > MAX_ATTACHMENT_BYTES) return reject("too_large", "Each attachment must be 8 MB or smaller.");
+  const dest = writeInboxFile(root, path.basename(abs), fs.readFileSync(abs));
+  return checkAttachment(root, {
+    path: dest,
+    name: path.posix.basename(dest),
+    size: stat.size,
+    type: input.type,
+  }, existing);
+}
+
+function localPath(value) {
+  let next = String(value || "").trim();
+  if (next.startsWith("file:")) {
+    try {
+      next = decodeURIComponent(new URL(next).pathname);
+    } catch {
+      return "";
+    }
+  }
+  return next ? path.resolve(next) : "";
+}
+
+function writeInboxFile(root, name, buffer) {
+  const dir = path.join(root, INBOX);
+  fs.mkdirSync(dir, { recursive: true });
+  const base = safeName(name);
+  let dest = path.join(dir, base);
+  let index = 1;
+  while (fs.existsSync(dest)) {
+    const ext = path.extname(base);
+    dest = path.join(dir, `${path.basename(base, ext)}-${index}${ext}`);
+    index += 1;
+  }
+  fs.writeFileSync(dest, buffer);
+  return path.relative(root, dest).split(path.sep).join("/");
+}
+
+function safeName(name) {
+  const base = path.basename(String(name || "drop.bin")).replace(/[^\w.\-]+/g, "_") || "drop.bin";
+  return base.slice(0, 80);
 }
 
 function reject(code, message) {
@@ -91,8 +166,8 @@ class ComposerSession {
     this.attachments = [];
     this.models = [];
     this.selected = null;
-    this.mode = this.selectionStore.getMode ? this.selectionStore.getMode() : "read_only";
-    if (this.mode !== "controlled") this.mode = "read_only";
+    this.composerMode = normalizeComposerMode(this.selectionStore.getMode ? this.selectionStore.getMode() : "ask");
+    this.mode = agentModeFor(this.composerMode);
     this.active = null;
     this.running = false;
     this.stage = "Waiting";
@@ -132,6 +207,7 @@ class ComposerSession {
       models: this.models.map((model) => ({ ...model })),
       selected: this.selected ? { ...this.selected } : null,
       mode: this.mode,
+      composerMode: this.composerMode,
       attachments: this.attachments.map((item) => ({ ...item })),
     };
   }
@@ -161,14 +237,15 @@ class ComposerSession {
   }
 
   selectMode(mode) {
-    this.mode = mode === "controlled" ? "controlled" : "read_only";
-    if (this.selectionStore.setMode) this.selectionStore.setMode(this.mode);
+    this.composerMode = normalizeComposerMode(mode);
+    this.mode = agentModeFor(this.composerMode);
+    if (this.selectionStore.setMode) this.selectionStore.setMode(this.composerMode);
     this.emit();
-    return { ok: true, mode: this.mode };
+    return { ok: true, mode: this.composerMode, agentMode: this.mode };
   }
 
   attach(input) {
-    const checked = checkAttachment(this.root, input, this.attachments);
+    const checked = importAttachment(this.root, input, this.attachments);
     if (!checked.ok) {
       this.notice = checked.message;
       this.emit();
@@ -203,7 +280,9 @@ class ComposerSession {
     this.stage = "Understanding";
     this.activity = "Understanding…";
     this.error = "";
-    this.notice = "";
+    this.notice = this.composerMode === "ask" && looksLikeWorkspaceEdit(goal)
+      ? "Switch to Code to apply file edits"
+      : "";
     this.outcome = null;
     this.filesChanged = [];
     this.fileDiffs = [];
@@ -224,6 +303,8 @@ class ComposerSession {
         store: publishing,
         capabilities: this.capabilities,
         mode: this.mode,
+        composerMode: this.composerMode,
+        taskClass: taskClassFor(this.composerMode) || undefined,
         attachments: this.attachments.map((item) => ({
           kind: item.kind,
           path: item.path,
@@ -247,7 +328,7 @@ class ComposerSession {
     }).catch((error) => {
       this.failRequest(requestId, error instanceof Error ? error.message : String(error));
     });
-      return { ok: true, requestId, runId: handle.id, model: this.selected.id, provider: this.selected.provider, mode: this.mode };
+      return { ok: true, requestId, runId: handle.id, model: this.selected.id, provider: this.selected.provider, mode: this.mode, composerMode: this.composerMode };
   }
 
   cancel() {
@@ -271,6 +352,9 @@ class ComposerSession {
     this.verification = run.verification || null;
     this.outcome = run.outcome || null;
     this.error = run.lifecycle === "failed" && run.error ? run.error.message : "";
+    this.notice = this.composerMode === "ask" && looksLikeWorkspaceEdit(run.goal || "")
+      ? "Switch to Code to apply file edits"
+      : "";
     this.running = !["completed", "failed", "cancelled", "awaiting_user"].includes(run.lifecycle);
     if (run.lifecycle === "cancelled") {
       const files = ((run.progress && run.progress.filesRead) || []).filter(Boolean);
@@ -311,7 +395,7 @@ function threadFrom(run) {
   if (run && run.goal) items.push({ role: "user", text: run.goal });
   for (const decision of (run && run.decisions) || []) {
     const text = decision && decision.text ? String(decision.text).trim() : "";
-    if (text) items.push({ role: "assistant", text });
+    if (text && !isProgressTalk(text)) items.push({ role: "assistant", text });
   }
   return items;
 }
@@ -329,9 +413,11 @@ function diffText(run) {
 module.exports = {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
+  INBOX,
   listOllamaModels,
   modelLabel,
   workspaceRelative,
   checkAttachment,
+  importAttachment,
   ComposerSession,
 };

@@ -8,7 +8,7 @@ function renderComposer(nonce) {
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${escapeHtml(nonce)}';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${escapeHtml(nonce)}'; connect-src https: http: ws: wss:; media-src mediastream: blob:;" />
   <style>
     html, body { height: 100%; }
     body { margin: 0; color: #dfe4ec; background: #1c2027; font-family: var(--vscode-font-family); font-size: 13px; overflow: hidden; }
@@ -44,14 +44,15 @@ function renderComposer(nonce) {
     .chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; color: #97a3b6; font-size: 11px; }
     .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .chip button { border: 0; background: transparent; color: #6b7689; cursor: pointer; padding: 0; }
-    .composer { display: flex; flex-direction: column; min-width: 0; }
-    .shell.over { outline: 1px solid #7fd3ea55; outline-offset: -2px; }
+    .composer { display: flex; flex-direction: column; min-width: 0; border-radius: 8px; padding: 2px 4px 4px; }
+    .shell.over .composer { outline: 1px solid #7fd3ea88; outline-offset: 2px; background: #7fd3ea10; }
     textarea { width: 100%; min-height: 56px; max-height: 180px; box-sizing: border-box; border: 0; resize: none; background: transparent; color: #dfe4ec; font: inherit; padding: 6px 4px 2px; outline: none; }
     .bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
     .bar button { border: 0; background: transparent; color: #97a3b6; height: 24px; padding: 0 6px; cursor: pointer; font: inherit; font-size: 12px; }
     #send, #stop { margin-left: auto; color: #7fd3ea; font-weight: 650; }
     #send[hidden], #stop[hidden] { display: none; }
     #send:disabled { opacity: 0.35; }
+    #mic.on { color: #ff918b; }
     .perm { margin-left: 2px; color: #6b7689; font-size: 10px; }
     @media (max-width: 220px) {
       h1, .perm { display: none; }
@@ -65,8 +66,9 @@ function renderComposer(nonce) {
       <h1>CodeMe</h1>
       <div class="pickers">
         <select id="mode" aria-label="Mode">
-          <option value="read_only">Read-only</option>
-          <option value="controlled">Controlled</option>
+          <option value="ask">Ask</option>
+          <option value="plan">Plan</option>
+          <option value="code">Code</option>
         </select>
         <select id="model" aria-label="Model"></select>
       </div>
@@ -82,9 +84,10 @@ function renderComposer(nonce) {
       <p class="notice" id="notice"></p>
       <div class="chips" id="chips"></div>
       <div class="composer" id="drop">
-        <textarea id="prompt" placeholder="Describe the change…" rows="3"></textarea>
+        <textarea id="prompt" placeholder="Ask, drop a file, or use Voice…" rows="3"></textarea>
         <div class="bar">
           <button type="button" id="attach" title="Attach files">Attach</button>
+          <button type="button" id="mic" title="Voice to text" aria-pressed="false">Voice</button>
           <span class="perm" id="perm"></span>
           <button type="button" id="send">Send</button>
           <button type="button" id="stop" hidden>Stop</button>
@@ -110,7 +113,12 @@ function renderComposer(nonce) {
     const notice = document.getElementById("notice");
     const empty = document.getElementById("empty");
     const drop = document.getElementById("drop");
+    const mic = document.getElementById("mic");
     const thread = document.getElementById("thread");
+    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let rec = null;
+    let listening = false;
+    let spoken = "";
     let running = false;
     let sending = false;
     let requestId = "";
@@ -118,6 +126,7 @@ function renderComposer(nonce) {
     let shownRun = "";
     let draft = "";
     function sendPrompt() {
+      stopVoice();
       if (sending || running) return;
       const text = prompt.value;
       if (!text.trim() && !chips.childElementCount) return;
@@ -154,6 +163,62 @@ function renderComposer(nonce) {
     send.addEventListener("click", sendPrompt);
     stop.addEventListener("click", () => vscode.postMessage({ type: "cancel", requestId }));
     document.getElementById("attach").addEventListener("click", () => vscode.postMessage({ type: "pick" }));
+    function setMic(on) {
+      listening = on;
+      mic.classList.toggle("on", on);
+      mic.setAttribute("aria-pressed", on ? "true" : "false");
+      mic.title = on ? "Stop voice" : "Voice to text";
+      mic.textContent = on ? "Stop" : "Voice";
+    }
+    function stopVoice() {
+      if (rec) {
+        try { rec.stop(); } catch {}
+      }
+      setMic(false);
+    }
+    function startVoice() {
+      const action = composerVoiceAction(listening, Boolean(Speech));
+      if (action === "unavailable") {
+        notice.textContent = "Voice to text is not available in this window.";
+        return;
+      }
+      if (action === "stop") {
+        stopVoice();
+        return;
+      }
+      rec = new Speech();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = navigator.language || "en-GB";
+      spoken = prompt.value;
+      rec.onresult = (event) => {
+        let interim = "";
+        let done = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const piece = event.results[i][0].transcript;
+          if (event.results[i].isFinal) done += piece;
+          else interim += piece;
+        }
+        if (done) spoken = (spoken && !/\\s$/.test(spoken) ? spoken + " " : spoken) + done.trim();
+        prompt.value = [spoken, interim.trim()].filter(Boolean).join(spoken && interim ? " " : "");
+        prompt.dispatchEvent(new Event("input"));
+      };
+      rec.onerror = (event) => {
+        if (event.error === "not-allowed") notice.textContent = "Microphone access is blocked.";
+        else if (event.error !== "aborted" && event.error !== "no-speech") notice.textContent = "Voice to text stopped.";
+        setMic(false);
+      };
+      rec.onend = () => setMic(false);
+      try {
+        rec.start();
+        setMic(true);
+        notice.textContent = "";
+      } catch {
+        notice.textContent = "Voice to text could not start.";
+        setMic(false);
+      }
+    }
+    mic.addEventListener("click", startVoice);
     model.addEventListener("change", () => {
       const option = model.selectedOptions[0];
       if (!option) return;
@@ -176,9 +241,29 @@ function renderComposer(nonce) {
       event.preventDefault();
       event.stopPropagation();
       shell.classList.remove("over");
-      const paths = droppedPaths(event.dataTransfer);
-      vscode.postMessage({ type: "attach", files: paths, types: Array.from((event.dataTransfer && event.dataTransfer.types) || []) });
+      collectDrops(event.dataTransfer).then((files) => {
+        vscode.postMessage({ type: "attach", files });
+      });
     });
+    async function collectDrops(transfer) {
+      const listed = droppedPaths(transfer);
+      const files = listed.map((item) => ({ path: item.path }));
+      const names = new Set(files.map((item) => String(item.path || "").split("/").pop()));
+      if (!transfer || !transfer.files) return files;
+      for (const file of transfer.files) {
+        if (file.path) {
+          if (!files.some((item) => item.path === file.path)) files.push({ path: file.path, name: file.name, type: file.type, size: file.size });
+          continue;
+        }
+        if (names.has(file.name)) continue;
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const chunk = 0x8000;
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        files.push({ name: file.name, type: file.type, size: file.size, contents: btoa(binary) });
+      }
+      return files;
+    }
     function current(message) {
       return !(typeof message.epoch === "number" && message.epoch !== epoch);
     }
@@ -199,9 +284,10 @@ function renderComposer(nonce) {
       send.hidden = running;
       send.disabled = running || sending;
       prompt.disabled = false;
-      notice.textContent = state.notice || (!running && state.stage === "Failed" ? (state.error || "") : "");
-      document.getElementById("perm").textContent = state.mode === "controlled" ? "Controlled" : "Read-only";
-      mode.value = state.mode === "controlled" ? "controlled" : "read_only";
+      notice.textContent = state.notice || "";
+      const picked = normalizeComposerMode(state.composerMode || state.mode);
+      document.getElementById("perm").textContent = composerModeLabel(picked);
+      mode.value = picked;
       model.innerHTML = "";
       for (const item of state.models || []) {
         const option = document.createElement("option");

@@ -14,6 +14,32 @@ const COMPOSER_STAGES = [
   "Cancelled",
 ];
 
+function normalizeComposerMode(value) {
+  if (value === "code" || value === "controlled") return "code";
+  if (value === "plan") return "plan";
+  return "ask";
+}
+
+function agentModeFor(composerMode) {
+  return normalizeComposerMode(composerMode) === "code" ? "controlled" : "read_only";
+}
+
+function taskClassFor(composerMode) {
+  return normalizeComposerMode(composerMode) === "plan" ? "plan" : "";
+}
+
+function looksLikeWorkspaceEdit(goal) {
+  const text = String(goal || "").toLowerCase();
+  return /\b(edit|change|update|rewrite|restyle|redesign|layout|better website|improve the (site|page|layout)|apply (the )?(change|edit|fix))\b/.test(text);
+}
+
+function composerModeLabel(composerMode) {
+  const mode = normalizeComposerMode(composerMode);
+  if (mode === "code") return "Code";
+  if (mode === "plan") return "Plan";
+  return "Ask";
+}
+
 function composerKeyAction(event) {
   if (!event || event.isComposing || event.keyCode === 229) return "ignore";
   if (event.key !== "Enter") return "ignore";
@@ -46,8 +72,25 @@ function stageForTool(name) {
   return "Reading";
 }
 
+function isProgressTalk(text) {
+  const body = String(text || "").replace(/\s+/g, " ").trim();
+  if (!body || body.length > 280) return false;
+  return /^(let me |i'll |i will |great[,!]? |i found |i need to |first,? let me |i'm going to |now (i'll|let me) )/i.test(body);
+}
+
+function lastProgressTalk(run) {
+  const decisions = (run && run.decisions) || [];
+  for (let index = decisions.length - 1; index >= 0; index -= 1) {
+    const text = decisions[index] && decisions[index].text;
+    if (isProgressTalk(text)) return String(text).replace(/\s+/g, " ").trim();
+  }
+  return "";
+}
+
 function composerActivity(run) {
   const stage = composerStage(run);
+  const talk = lastProgressTalk(run);
+  if (talk && stage !== "Complete" && stage !== "Failed" && stage !== "Cancelled") return talk;
   const args = run && run.inFlight && run.inFlight.args ? run.inFlight.args : {};
   const target = args.path || args.query || args.url || "";
   if (stage === "Understanding") return "Understanding…";
@@ -108,6 +151,11 @@ function sameRequest(currentId, incomingId) {
   return Boolean(currentId) && currentId === incomingId;
 }
 
+function composerVoiceAction(listening, available) {
+  if (!available) return "unavailable";
+  return listening ? "stop" : "start";
+}
+
 function droppedPaths(transfer) {
   const found = [];
   const seen = new Set();
@@ -154,6 +202,10 @@ function droppedPaths(transfer) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     COMPOSER_STAGES,
+    normalizeComposerMode,
+    agentModeFor,
+    taskClassFor,
+    composerModeLabel,
     composerKeyAction,
     composerStage,
     composerActivity,
@@ -162,5 +214,9 @@ if (typeof module !== "undefined" && module.exports) {
     formatGoal,
     sameRequest,
     droppedPaths,
+    composerVoiceAction,
+    looksLikeWorkspaceEdit,
+    isProgressTalk,
+    lastProgressTalk,
   };
 }

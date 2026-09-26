@@ -99,7 +99,9 @@ async function main() {
 
   await test("strategy selection is deterministic and versioned", async () => {
     assert.strictEqual(classifyTask("find the badge", { mode: "read_only" }), "inspect");
+    assert.strictEqual(classifyTask("research the website", { taskClass: "plan", mode: "read_only" }), "plan");
     assert.strictEqual(classifyTask("Fix the failing identification check", { mode: "controlled" }), "bug-fix");
+    assert.strictEqual(classifyTask("can you find me a better layout for my website", { mode: "controlled" }), "layout");
     assert.strictEqual(classifyTask("Add registration", { requirements: [{ id: "a" }, { id: "b" }, { id: "c" }] }), "feature");
     const strategy = selectStrategy("Fix the failing test", { mode: "controlled" });
     assert.strictEqual(strategy.id, "bug-fix");
@@ -107,6 +109,8 @@ async function main() {
     const run = createRun({ goal: "Fix the failing greet test", model: "scripted", providerName: "scripted", mode: "controlled" });
     assert.strictEqual(run.taskClass, "bug-fix");
     assert.strictEqual(run.strategyRecord.version, 1);
+    const planned = createRun({ goal: "research the website", model: "scripted", providerName: "scripted", mode: "read_only", taskClass: "plan" });
+    assert.strictEqual(planned.taskClass, "plan");
   });
 
   await test("a follow-up updates requirements and forces a re-plan", async () => {

@@ -98,7 +98,7 @@ async function dispatch(host, tool, args) {
 }
 
 const READ_ONLY_TOOLS = ["file.read", "repo.search", "git.status", "git.diff", "diagnostics.run", "browser.check"];
-const CONTROLLED_TOOLS = ["file.read", "file.write", "repo.search", "terminal.run", "diagnostics.run", "tests.run", "git.status", "git.diff"];
+const CONTROLLED_TOOLS = ["file.read", "file.write", "repo.search", "terminal.run", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check"];
 
 function validateCommand(command) {
   if (typeof command !== "string" || command.length === 0) {

@@ -2,6 +2,7 @@ const vscode = require("vscode");
 const cp = require("child_process");
 const { execute, executeReadOnly } = require("../../packages/agent-tools");
 const { createPreviewRunner } = require("./preview-runner");
+const { describeFileRead } = require("./image-meta");
 
 const preview = createPreviewRunner(vscode);
 
@@ -19,8 +20,8 @@ function relativePath(uri) {
 
 async function readFile(filePath) {
   const uri = vscode.Uri.joinPath(workspaceFolder().uri, filePath);
-  const bytes = await vscode.workspace.fs.readFile(uri);
-  return { path: filePath, contents: Buffer.from(bytes).toString("utf8") };
+  const bytes = Buffer.from(await vscode.workspace.fs.readFile(uri));
+  return describeFileRead(filePath, bytes);
 }
 
 async function writeFile(filePath, contents) {

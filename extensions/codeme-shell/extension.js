@@ -435,7 +435,11 @@ function fileType(name) {
     jpeg: "image/jpeg",
     gif: "image/gif",
     webp: "image/webp",
+    svg: "image/svg+xml",
+    bmp: "image/bmp",
     pdf: "application/pdf",
+    txt: "text/plain",
+    py: "text/x-python",
     html: "text/html",
     css: "text/css",
   };
@@ -535,11 +539,14 @@ class ComposerViewProvider {
     if (message.type === "attach") {
       const files = message.files || [];
       if (!files.length) {
-        this.session.notice = "Drop a workspace file onto the composer.";
+        this.session.notice = "Drop a file, image, or PDF onto the composer.";
         this.session.emit();
         return;
       }
-      for (const file of files) this.session.attach(fileFromUri(file.path || file));
+      for (const file of files) {
+        if (file && file.contents) this.session.attach(file);
+        else this.session.attach(fileFromUri(file.path || file));
+      }
       return;
     }
     if (message.type === "pick") await this.pickFiles();
@@ -548,12 +555,17 @@ class ComposerViewProvider {
   async pickFiles() {
     const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
     const picked = await vscode.window.showOpenDialog({
-      title: "Attach workspace files",
+      title: "Attach files",
       canSelectMany: true,
       canSelectFiles: true,
       canSelectFolders: false,
       openLabel: "Attach",
       defaultUri: folder && folder.uri,
+      filters: [
+        { name: "All files", extensions: ["*"] },
+        { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
+        { name: "Documents", extensions: ["md", "txt", "pdf", "json", "html", "css", "js", "ts"] },
+      ],
     });
     for (const uri of picked || []) this.session.attach(fileFromUri(uri.toString()));
   }

@@ -6,6 +6,7 @@ const { createRun, startAgentRun, resumeRun, applyFollowUp } = require("./agent-
 const { lockModel } = require("./model-lock");
 const { classifyTask, selectStrategy } = require("./strategy");
 const { diagnose } = require("./diagnosis");
+const { selectCapability, recommendCapability, isSiteLayoutGoal } = require("./progress");
 
 module.exports = {
   ModelProvider,
@@ -25,4 +26,7 @@ module.exports = {
   classifyTask,
   selectStrategy,
   diagnose,
+  selectCapability,
+  recommendCapability,
+  isSiteLayoutGoal,
 };

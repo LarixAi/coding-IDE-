@@ -37,6 +37,12 @@ function createProgressState(options = {}) {
     pendingQuestion: null,
     focus: false,
     idleTurns: 0,
+    rereadSame: false,
+    writeNow: false,
+    inspectSatisfied: false,
+    replanned: false,
+    searchedQueries: [],
+    selectedName: null,
   };
 }
 
@@ -49,6 +55,97 @@ function recommendCapability(records) {
   ));
   listed.sort((left, right) => recommendationScore(right) - recommendationScore(left));
   return listed[0] || null;
+}
+
+function selectCapability(goal, listed, options = {}) {
+  const records = (listed || []).filter((item) => item && item.name);
+  const match = (category) => records.find((item) => item.category === category) || null;
+  const text = String(goal || "").toLowerCase();
+  const composerMode = options.composerMode || "";
+  const taskClass = options.taskClass || "";
+  if (isSiteLayoutGoal(goal) || taskClass === "layout") return null;
+
+  if (isKnowledgeLookup(text)) {
+    const found = match("knowledge");
+    if (found) return found;
+  }
+  if (isLargeMultiPart(text, { composerMode, taskClass })) {
+    const found = match("task");
+    if (found) return found;
+  }
+  if (isUnknownTechnicalProblem(text)) {
+    const found = match("research");
+    if (found) return found;
+  }
+  return null;
+}
+
+function isUnknownTechnicalProblem(text) {
+  if (/\b(research|investigate|look up|look into)\b/.test(text)) return true;
+  if (/\b(how|why)\b/.test(text) && /\b(does|is|are|do|did|can|would|fail|error|work|happen)\b/.test(text)) return true;
+  if (/\b(failing api|api error|unknown error|unknown technical)\b/.test(text)) return true;
+  if (/\balgorithm\b/.test(text) && !/\b(fix|repair|implement|verify|inspect)\b/.test(text)) return true;
+  return false;
+}
+
+function isLargeMultiPart(text, options = {}) {
+  if (options.taskClass === "plan" || options.composerMode === "plan") {
+    const words = text.split(/\s+/).filter(Boolean).length;
+    if (words >= 16 || text.length >= 80) return true;
+  }
+  if (/\b1[.)]\s+\S[\s\S]+\b2[.)]\s+\S/.test(text)) return true;
+  if (/\b(fix|repair|implement|verify|inspect|patch|edit)\b/.test(text)) return false;
+  const sentences = text.split(/[.!?]+\s/).filter((item) => item.trim().length > 12);
+  const ands = (text.match(/\band\b/g) || []).length;
+  return sentences.length >= 3 || ands >= 3;
+}
+
+function isKnowledgeLookup(text) {
+  return /\b(remembered|project notes|our notes|knowledge base|prior note|stored notes)\b/.test(text)
+    || /\b(what did we (save|store|note)|look up .*(note|knowledge))\b/.test(text);
+}
+
+function isSiteLayoutGoal(goal) {
+  const text = String(goal || "").toLowerCase();
+  if (/\b(layout|restyle|redesign|better website|improve the (site|page|layout))\b/.test(text)) return true;
+  return /\b(edit|change|update|rewrite|improve)\b/.test(text) && /\b(html|css|page|site|website|layout)\b/.test(text);
+}
+
+function applyEditNotice() {
+  return [
+    "The pages are already inspected.",
+    "Apply the layout with file.write on the workspace HTML or CSS.",
+    "Then call browser.check.",
+    "Do not search the same query again.",
+  ].join(" ");
+}
+
+function capabilityGuidance(records) {
+  const lines = [];
+  for (const item of records || []) {
+    if (!item || !item.name) continue;
+    if (item.category === "research") {
+      lines.push(`Use ${item.name} for an unknown technical problem (research, how/why, failing API, algorithm).`);
+    } else if (item.category === "task") {
+      lines.push(`Use ${item.name} for a large multi-part goal.`);
+    } else if (item.category === "knowledge") {
+      lines.push(`Use ${item.name} when the goal asks for remembered or project notes.`);
+    }
+  }
+  return lines.join(" ");
+}
+
+function writeFindingsNotice() {
+  return "Write the findings now. Do not reread files you already inspected.";
+}
+
+function htmlCssRead(state) {
+  return (state.filesRead || []).some((file) => /\.(html?|css)$/i.test(String(file || "")));
+}
+
+function alreadySearched(state, query) {
+  const text = String(query || "");
+  return Boolean(text && state && Array.isArray(state.searchedQueries) && state.searchedQueries.includes(text));
 }
 
 function recommendationScore(item) {
@@ -69,16 +166,21 @@ function applyIteration(state, input) {
 
   for (const call of input.calls || []) {
     if (call.name === "repo.search") {
+      const query = String((call.args && call.args.query) || "");
+      remember(state.searchedQueries, query);
       const fresh = searchPaths(call.result).filter((file) => !state.filesDiscovered.includes(file));
       for (const file of fresh) {
         remember(state.filesDiscovered, file);
         rememberKey(state, `discovered:${file}`);
       }
       if (fresh.length) categories.push("new_relevant_file");
-      else if (!searchPaths(call.result).length) rememberKey(state, "search:empty");
+      else {
+        if (!searchPaths(call.result).length) rememberKey(state, "search:empty");
+        if (query) rememberKey(state, `search:repeat:${query}`);
+      }
     } else if (call.name === "file.read") {
       const file = call.args && call.args.path;
-      const fact = digest((call.result && call.result.data && call.result.data.contents) || (call.result && call.result.error && call.result.error.code) || "");
+      const fact = digest(readPayload(call.result));
       if (!state.readFacts) state.readFacts = {};
       if (file && state.readFacts[file] !== fact) {
         state.readFacts[file] = fact;
@@ -88,6 +190,8 @@ function applyIteration(state, input) {
           remember(state.filesRead, file);
           categories.push("new_implementation_fact");
         }
+      } else if (file && state.readFacts[file] === fact) {
+        state.rereadSame = true;
       }
     } else if (call.name === "file.write") {
       const file = call.args && call.args.path;
@@ -129,6 +233,12 @@ function applyIteration(state, input) {
       const key = `terminal:${digest(JSON.stringify(call.args || {}))}:${call.result && call.result.ok ? "ok" : "fail"}`;
       if (rememberKey(state, key) && ranSuccessfully(call.result)) categories.push("new_failure");
     }
+  }
+
+  if (htmlCssRead(state)) state.inspectSatisfied = true;
+  if (isSiteLayoutGoal(input.goal || state.goal) && htmlCssRead(state) && !(input.calls || []).some((call) => call.name === "file.write")) {
+    state.writeNow = true;
+    state.focus = true;
   }
 
   const acted = (input.calls || []).length > 0;
@@ -176,6 +286,15 @@ function applyIteration(state, input) {
 
   const stuck = !material && (state.semanticStagnation >= state.threshold || cycling);
   if (!stuck) return { events, action: "continue", stopSummary: "" };
+
+  if (isSiteLayoutGoal(state.goal) && !state.replanned) {
+    state.replanned = true;
+    state.writeNow = true;
+    state.focus = true;
+    state.semanticStagnation = 0;
+    state.stagnantTurns = 0;
+    return { events, action: "replan", stopSummary: "" };
+  }
 
   const question = questionKey(input.goal);
   if (!state.recommendedName || state.seenQuestions.includes(question)) {
@@ -246,8 +365,7 @@ function observationKey(call, result) {
   if (call.name === "file.read") {
     const file = call.args && call.args.path;
     if (!file) return null;
-    const body = (result && result.data && result.data.contents) || (result && result.error && result.error.code) || "";
-    return `read:${file}:${digest(body)}`;
+    return `read:${file}:${digest(readPayload(result))}`;
   }
   if (call.name === "tests.run" || (call.name === "terminal.run" && isTestCommand(call))) {
     return `test:${testSignature(result)}`;
@@ -264,10 +382,15 @@ function compactObservation(call) {
 
 // After stagnation the runtime narrows the offered tools to the ones that can change
 // the outcome. Browsing and workaround tools are withheld until progress resumes.
-const MATERIAL_TOOLS = ["file.write", "file.read", "tests.run", "diagnostics.run", "git.diff", "git.status"];
+const MATERIAL_TOOLS = ["file.write", "file.read", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check"];
 
 function focusTools(state, definitions) {
-  if (!state || (state.strategy !== "stagnant" && !state.focus)) return definitions;
+  if (!state) return definitions;
+  if (state.inspectSatisfied && isSiteLayoutGoal(state.goal)) {
+    const local = definitions.filter((item) => item.name !== "repo.search" && item.name !== "capability.invoke" && item.name !== "capability.list");
+    if (local.length) return local;
+  }
+  if (state.strategy !== "stagnant" && !state.focus) return definitions;
   const narrowed = definitions.filter((item) => MATERIAL_TOOLS.includes(item.name));
   return narrowed.length ? narrowed : definitions;
 }
@@ -333,6 +456,14 @@ function cycleDetected(window) {
     if (previous === current) return true;
   }
   return false;
+}
+
+function readPayload(result) {
+  const data = result && result.data;
+  if (data && data.kind === "image") {
+    return `${data.type || ""}:${data.bytes || 0}:${data.width || 0}x${data.height || 0}`;
+  }
+  return (data && data.contents) || (result && result.error && result.error.code) || "";
 }
 
 function searchPaths(result) {
@@ -411,6 +542,12 @@ function clip(value, limit) {
 module.exports = {
   createProgressState,
   recommendCapability,
+  selectCapability,
+  isSiteLayoutGoal,
+  capabilityGuidance,
+  writeFindingsNotice,
+  applyEditNotice,
+  alreadySearched,
   applyIteration,
   noteResearch,
   researchQuestion,
