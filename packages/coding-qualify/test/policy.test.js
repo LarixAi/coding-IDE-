@@ -108,7 +108,7 @@ async function main() {
       model: "scripted",
       providerName: "scripted",
       mode: "controlled",
-      provider: new ScriptedModelProvider(Array.from({ length: 6 }, (_, index) => ({ toolCalls: [{ name: "repo.search", args: { query: `greet-${index}` } }] }))),
+      provider: new ScriptedModelProvider(["package.json", "README.md", "src/greet.js"].map((file) => ({ toolCalls: [{ name: "file.read", args: { path: file } }] }))),
       registry,
       store,
       maxIterations: 3,

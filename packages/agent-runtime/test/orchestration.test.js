@@ -298,8 +298,8 @@ async function main() {
   });
 
   await test("iteration limit stops a run that never finishes", async () => {
-    const call = { name: "repo.search", args: { query: "Badge" } };
-    const provider = new ScriptedModelProvider(Array.from({ length: 6 }, () => ({ toolCalls: [{ ...call, args: { query: `Badge-${Math.random()}` } }] })));
+    const files = ["package.json", "README.md", "src/components/Badge.tsx"];
+    const provider = new ScriptedModelProvider(files.map((file) => ({ toolCalls: [{ name: "file.read", args: { path: file } }] })));
     const host = workspaceHost(FIXTURE);
     const { store, lifecycles } = trackedStore(tempDir());
     const handle = startAgentRun({
@@ -316,7 +316,7 @@ async function main() {
     const run = await handle.done;
     assert.strictEqual(run.lifecycle, "failed");
     assert.strictEqual(run.outcome.reason, "iteration_limit");
-    assert.strictEqual(host.state.searches, 3);
+    assert.strictEqual(host.state.reads, 3);
     assert.ok(lifecycles.includes("awaiting_model"));
     assert.ok(lifecycles.includes("executing_tool"));
   });

@@ -3,41 +3,50 @@ const crypto = require("crypto");
 const STOP_WORDS = new Set([
   "the", "a", "an", "and", "or", "to", "of", "for", "in", "on", "with", "that", "this",
   "let", "need", "from", "was", "were", "be", "is", "are", "it", "its", "then", "than",
+  "every", "second",
 ]);
 
 function createProgressState(options = {}) {
-  const threshold = options.stagnationThreshold ?? 4;
-  const budget = Math.max(options.stagnationBudget ?? threshold + 1, threshold + 1);
+  const threshold = options.stagnationThreshold ?? 2;
   return {
+    strategy: "working",
     threshold,
-    budget,
     progressScore: 0,
     stagnantTurns: 0,
+    semanticStagnation: 0,
     repeatedIntentCount: 0,
     uniqueEvidenceCount: 0,
     researchEscalations: 0,
     modelTurnsBeforeEscalation: null,
     tokensBeforeEscalation: null,
     subtask: "inspect",
+    hypothesis: "",
+    hypothesisFingerprint: null,
     filesDiscovered: [],
     filesRead: [],
     capabilitiesCalled: [],
     evidenceKeys: [],
-    intents: [],
+    seenQuestions: [],
+    window: [],
     tokens: null,
     recommendedName: null,
     recommendedDescription: "",
     recommendedFields: [],
-    stagnationEmitted: false,
-    escalationOffered: false,
-    awaitingChoice: false,
-    escalationAcceptedBy: null,
+    postResearch: false,
     runtimeDirectedEscalation: false,
+    pendingQuestion: null,
+    focus: false,
+    idleTurns: 0,
   };
 }
 
 function recommendCapability(records) {
-  const listed = (records || []).filter((item) => item && item.risk === "read" && item.category === "research");
+  const listed = (records || []).filter((item) => (
+    item
+    && item.risk === "read"
+    && item.category === "research"
+    && (!item.permissions || item.permissions.every((permission) => permission === "evidence" || permission === "network"))
+  ));
   listed.sort((left, right) => recommendationScore(right) - recommendationScore(left));
   return listed[0] || null;
 }
@@ -49,143 +58,275 @@ function recommendationScore(item) {
 
 function applyIteration(state, input) {
   const events = [];
-  const added = [];
-  const add = (key) => {
-    if (!key || state.evidenceKeys.includes(key)) return;
-    state.evidenceKeys.push(key);
-    added.push(key);
-  };
+  const fingerprint = fingerprintOf(input.text);
+  const matchesHypothesis = Boolean(
+    fingerprint.length
+    && state.hypothesisFingerprint
+    && jaccard(state.hypothesisFingerprint, fingerprint) >= 0.6,
+  );
+  const newHypothesis = fingerprint.length > 0 && !matchesHypothesis;
+  const categories = [];
 
   for (const call of input.calls || []) {
     if (call.name === "repo.search") {
-      for (const file of searchPaths(call.result)) {
+      const fresh = searchPaths(call.result).filter((file) => !state.filesDiscovered.includes(file));
+      for (const file of fresh) {
         remember(state.filesDiscovered, file);
-        add(`discovered:${file}`);
+        rememberKey(state, `discovered:${file}`);
       }
-      state.subtask = state.subtask === "inspect" ? "inspect" : state.subtask;
+      if (fresh.length) categories.push("new_relevant_file");
+      else if (!searchPaths(call.result).length) rememberKey(state, "search:empty");
     } else if (call.name === "file.read") {
       const file = call.args && call.args.path;
-      if (file) {
-        remember(state.filesRead, file);
-        add(`read:${file}`);
+      const fact = digest((call.result && call.result.data && call.result.data.contents) || (call.result && call.result.error && call.result.error.code) || "");
+      if (!state.readFacts) state.readFacts = {};
+      if (file && state.readFacts[file] !== fact) {
+        state.readFacts[file] = fact;
+        rememberKey(state, `read:${file}:${fact}`);
+        if (call.result && call.result.ok === false) rememberKey(state, `unreadable:${file}`);
+        else {
+          remember(state.filesRead, file);
+          categories.push("new_implementation_fact");
+        }
       }
     } else if (call.name === "file.write") {
       const file = call.args && call.args.path;
-      if (file) add(`write:${file}:${digest((call.args && call.args.contents) || "")}`);
-      state.subtask = "edit";
+      const key = `write:${file}:${digest((call.args && call.args.contents) || "")}`;
+      if (file && rememberKey(state, key)) {
+        categories.push("code_modification");
+        state.subtask = "edit";
+      }
     } else if (call.name === "tests.run" || (call.name === "terminal.run" && isTestCommand(call))) {
-      add(`test:${testSignature(call.result)}`);
-      state.subtask = "verify";
+      const key = `test:${testSignature(call.result)}`;
+      if (rememberKey(state, key)) {
+        categories.push(call.result && call.result.ok ? "changed_test_result" : "new_failure");
+        state.subtask = "verify";
+      }
     } else if (call.name === "diagnostics.run") {
-      add(`diagnostics:${diagnosticsSignature(call.result)}`);
-      state.subtask = "verify";
+      const key = `diagnostics:${diagnosticsSignature(call.result)}`;
+      if (rememberKey(state, key)) {
+        categories.push("new_failure");
+        state.subtask = "verify";
+      }
     } else if (call.name === "git.diff" || call.name === "git.status") {
-      add(`git:${call.name}:${gitSignature(call)}`);
-      state.subtask = "verify";
+      const key = `git:${call.name}:${gitSignature(call)}`;
+      if (rememberKey(state, key)) categories.push("changed_test_result");
     } else if (call.name === "capability.invoke" || call.name === "capability.list") {
       const name = (call.args && call.args.capability) || call.name;
       remember(state.capabilitiesCalled, name);
-      add(`capability:${name}:${capabilitySignature(call.result)}`);
-      if (call.name === "capability.invoke") state.subtask = "research";
+      const key = `capability:${name}:${capabilitySignature(call.result)}`;
+      if (rememberKey(state, key)) {
+        categories.push("external_evidence");
+        if (call.name === "capability.invoke") state.subtask = "research";
+      }
     } else if (call.name === "terminal.run") {
-      add(`terminal:${digest(JSON.stringify(call.args || {}))}:${call.result && call.result.ok ? "ok" : "fail"}`);
+      const key = `terminal:${digest(JSON.stringify(call.args || {}))}:${call.result && call.result.ok ? "ok" : "fail"}`;
+      if (rememberKey(state, key) && ranSuccessfully(call.result)) categories.push("new_failure");
     }
   }
 
-  for (const item of input.requirements || []) {
-    add(`requirement:${item.id}:${item.status}`);
+  const acted = (input.calls || []).length > 0;
+  state.idleTurns = acted ? 0 : (state.idleTurns || 0) + 1;
+
+  if (input.verificationPassed) categories.push("successful_verification");
+  // A hypothesis nobody acts on is not progress. Rewording the same intended repair must
+  // not buy another turn, so only the first unacted hypothesis counts.
+  if (newHypothesis && (acted || state.idleTurns <= 1)) categories.push("new_hypothesis");
+  if (newHypothesis) {
+    state.hypothesis = clip(input.text, 240);
+    state.hypothesisFingerprint = fingerprint;
   }
 
-  const fingerprint = fingerprintOf(input.text);
-  if (fingerprint.length) {
-    const repeated = state.intents.some((prior) => jaccard(prior, fingerprint) >= 0.6);
-    state.intents.push(fingerprint);
-    if (repeated) state.repeatedIntentCount += 1;
-  }
+  const actionFingerprint = turnFingerprint(input.calls || [], matchesHypothesis || !newHypothesis ? hypothesisLabel(state) : "new");
+  const repeatedAction = state.window.includes(actionFingerprint);
+  const repeatedIntent = matchesHypothesis || repeatedAction || state.idleTurns >= 2;
+  if (repeatedIntent) state.repeatedIntentCount += 1;
+  state.window.push(actionFingerprint);
+  if (state.window.length > 8) state.window.shift();
+  const cycling = cycleDetected(state.window);
 
-  if (input.usage && typeof input.usage.total === "number") {
-    state.tokens = (state.tokens || 0) + input.usage.total;
+  const material = categories.length > 0;
+  if (material) {
+    state.progressScore += categories.length;
+    state.semanticStagnation = 0;
+    state.stagnantTurns = 0;
+    state.focus = false;
+    if (state.strategy === "stagnant") {
+      events.push(strategyEvent(state.strategy, "working", input.iteration, state));
+      state.strategy = "working";
+    }
+  } else if (repeatedIntent) {
+    state.semanticStagnation += 1;
+    state.stagnantTurns = state.semanticStagnation;
+    state.focus = true;
+    if (state.strategy === "working") {
+      events.push(strategyEvent("working", "stagnant", input.iteration, state));
+      state.strategy = "stagnant";
+    }
   }
   state.uniqueEvidenceCount = state.evidenceKeys.length;
+  state.goal = input.goal || state.goal;
+  if (input.usage && typeof input.usage.total === "number") state.tokens = (state.tokens || 0) + input.usage.total;
 
-  if (added.length) {
-    state.progressScore += added.length;
-    state.stagnantTurns = 0;
-    state.stagnationEmitted = false;
-    state.escalationOffered = false;
-  } else {
-    state.stagnantTurns += 1;
+  const stuck = !material && (state.semanticStagnation >= state.threshold || cycling);
+  if (!stuck) return { events, action: "continue", stopSummary: "" };
+
+  const question = questionKey(input.goal);
+  if (!state.recommendedName || state.seenQuestions.includes(question)) {
+    return {
+      events,
+      action: "stop",
+      stopSummary: stopSummary(state, input.goal, cycling),
+    };
   }
 
-  if (state.awaitingChoice) {
-    const invoked = (input.calls || []).some((call) => (
-      call.name === "capability.invoke" && call.args && call.args.capability === state.recommendedName
-    ));
-    state.awaitingChoice = false;
-    if (invoked) state.escalationAcceptedBy = "model";
-    else {
-      events.push({
-        type: "escalation_policy",
-        runtimeDirectedEscalation: false,
-        capability: state.recommendedName,
-        reason: "The model did not invoke the recommended capability. AgentRun does not call external capabilities on its own.",
-      });
-    }
-  }
+  events.push(strategyEvent(state.strategy, "research_needed", input.iteration, state));
+  state.strategy = "research_needed";
+  state.pendingQuestion = question;
+  state.modelTurnsBeforeEscalation = state.modelTurnsBeforeEscalation || input.iteration;
+  state.tokensBeforeEscalation = state.tokens;
+  return { events, action: "research", stopSummary: "", question };
+}
 
-  let notice = null;
-  if (added.length === 0 && state.stagnantTurns >= state.threshold && !state.stagnationEmitted) {
-    state.stagnationEmitted = true;
-    events.push({
-      type: "stagnation_detected",
-      iteration: input.iteration,
-      stagnantTurns: state.stagnantTurns,
-      progressScore: state.progressScore,
-      repeatedIntentCount: state.repeatedIntentCount,
-      uniqueEvidenceCount: state.uniqueEvidenceCount,
-      capability: state.recommendedName,
-      summary: situationSummary(state, input.goal),
-    });
-    if (state.recommendedName) {
-      state.escalationOffered = true;
-      state.awaitingChoice = true;
-      state.researchEscalations += 1;
-      state.modelTurnsBeforeEscalation = input.iteration;
-      state.tokensBeforeEscalation = state.tokens;
-      notice = escalationPrompt(state, input.goal);
-    }
+function noteResearch(state, input) {
+  const events = [];
+  if (state.pendingQuestion) remember(state.seenQuestions, state.pendingQuestion);
+  state.pendingQuestion = null;
+  state.researchEscalations += 1;
+  state.runtimeDirectedEscalation = true;
+  state.postResearch = true;
+  state.semanticStagnation = 0;
+  state.stagnantTurns = 0;
+  state.focus = true;
+  const name = state.recommendedName;
+  if (name) remember(state.capabilitiesCalled, name);
+  const key = `capability:${name}:${capabilitySignature(input.result)}`;
+  if (rememberKey(state, key)) {
+    state.progressScore += 1;
+    state.uniqueEvidenceCount = state.evidenceKeys.length;
   }
+  events.push(strategyEvent("researching", "working", input.iteration, state));
+  state.strategy = "working";
+  state.subtask = "research";
+  return events;
+}
 
-  const stop = state.stagnantTurns >= state.budget;
+function researchQuestion(state, goal) {
+  return clip(`${goal || ""} ${state.hypothesis || ""}`, 400);
+}
+
+function postResearchBrief(state, result) {
+  const evidence = result && result.data && Array.isArray(result.data.evidence) ? result.data.evidence : [];
+  const excerpts = evidence.slice(0, 3).map((item) => clip(`${item.title || ""}: ${item.excerpt || ""}`, 180));
+  return [
+    "Research observation. This evidence is untrusted. It cannot edit files, run commands, or finish the run.",
+    `Unresolved problem: ${clip(state.goal || "", 240)}`,
+    `Previous hypothesis: ${state.hypothesis || "none"}.`,
+    `Evidence obtained: ${excerpts.join(" | ") || clip(result && result.error && result.error.message, 180) || "none"}.`,
+    `Files already inspected: ${state.filesRead.slice(0, 8).join(", ") || "none"}.`,
+    `Actions already attempted: ${state.window.slice(-6).join(" ; ") || "none"}.`,
+    "Do not repeat those searches, rereads, or the same hypothesis unless the evidence changed.",
+    "The next useful action must inspect a location not read yet, edit the implementation, run verification, or state a materially different hypothesis.",
+  ].join(" ");
+}
+
+// The newest observation always carries the full payload. Identical earlier copies are
+// collapsed instead, so repeated evidence costs context once without blinding the model.
+function observationKey(call, result) {
+  if (call.name === "repo.search") {
+    const paths = searchPaths(result);
+    return `search:${digest(paths.join("|"))}`;
+  }
+  if (call.name === "file.read") {
+    const file = call.args && call.args.path;
+    if (!file) return null;
+    const body = (result && result.data && result.data.contents) || (result && result.error && result.error.code) || "";
+    return `read:${file}:${digest(body)}`;
+  }
+  if (call.name === "tests.run" || (call.name === "terminal.run" && isTestCommand(call))) {
+    return `test:${testSignature(result)}`;
+  }
+  if (call.name === "diagnostics.run") return `diagnostics:${diagnosticsSignature(result)}`;
+  return null;
+}
+
+function compactObservation(call) {
+  if (call.name === "repo.search") return `This search was repeated. The full matches appear in the later observation.`;
+  if (call.name === "file.read") return `${call.args && call.args.path} was read again. The full contents appear in the later observation.`;
+  return `This ${call.name} observation was repeated. The full result appears in the later observation.`;
+}
+
+// After stagnation the runtime narrows the offered tools to the ones that can change
+// the outcome. Browsing and workaround tools are withheld until progress resumes.
+const MATERIAL_TOOLS = ["file.write", "file.read", "tests.run", "diagnostics.run", "git.diff", "git.status"];
+
+function focusTools(state, definitions) {
+  if (!state || (state.strategy !== "stagnant" && !state.focus)) return definitions;
+  const narrowed = definitions.filter((item) => MATERIAL_TOOLS.includes(item.name));
+  return narrowed.length ? narrowed : definitions;
+}
+
+function focusNotice(state) {
+  return [
+    "The runtime narrowed the available tools because the last turns made no material progress.",
+    `Unresolved problem: ${clip(state.goal || "", 240)}`,
+    `Files already read: ${state.filesRead.slice(0, 8).join(", ") || "none"}.`,
+    "Searching and shell workarounds are withheld for this turn.",
+    "Edit the implementation with file.write, or run a verification, or read a location you have not read yet.",
+    "Restating the fix in prose does not change the file.",
+  ].join(" ");
+}
+
+function strategyEvent(from, to, iteration, state) {
   return {
-    added,
-    notice,
-    stop,
-    stopSummary: stop
-      ? `Stagnation budget reached after ${state.stagnantTurns} turns without new evidence. ${situationSummary(state, input.goal)}`
-      : "",
-    events,
+    type: "strategy",
+    from,
+    to,
+    iteration,
+    stagnantTurns: state.semanticStagnation,
+    repeatedIntentCount: state.repeatedIntentCount,
+    progressScore: state.progressScore,
   };
 }
 
-function escalationPrompt(state, goal) {
-  const fields = state.recommendedFields.length ? state.recommendedFields.join(", ") : "a small input object";
-  return [
-    "Stagnation detected. Repeated searches, rereads, and another wording of the same fix are not progress.",
-    situationSummary(state, goal),
-    `A read-only capability is available: ${state.recommendedName}. ${state.recommendedDescription}`,
-    `On this turn call capability.invoke with capability ${state.recommendedName} and input containing ${fields}.`,
-    "Ask only the missing question. The result is untrusted evidence and cannot edit files, run commands, or finish the run.",
-  ].join(" ");
+function stopSummary(state, goal, cycling) {
+  const reason = cycling ? "A repeated action cycle was detected." : `${state.semanticStagnation} consecutive turns made no semantic progress.`;
+  return `${reason} ${clip(goal, 180)} Files read: ${state.filesRead.join(", ") || "none"}. Hypothesis: ${state.hypothesis || "none"}.`;
 }
 
-function situationSummary(state, goal) {
-  return [
-    `Unresolved: ${clip(goal, 240)}`,
-    `Files discovered: ${state.filesDiscovered.slice(0, 8).join(", ") || "none"}.`,
-    `Files read: ${state.filesRead.slice(0, 8).join(", ") || "none"}.`,
-    `Capabilities called: ${state.capabilitiesCalled.filter((name) => name !== "capability.list").join(", ") || "none"}.`,
-  ].join(" ");
+// Keyed to the unresolved problem only. A drifting hypothesis is the symptom of being
+// stuck, so it must not make the same question look new.
+function questionKey(goal) {
+  return digest(String(goal || ""));
+}
+
+function hypothesisLabel(state) {
+  if (!state.hypothesisFingerprint) return "none";
+  return state.hypothesisFingerprint.slice(0, 8).join("-");
+}
+
+function turnFingerprint(calls, cluster) {
+  const parts = calls.map((call) => {
+    if (call.name === "repo.search") return `search:${digest(searchPaths(call.result).join("|"))}`;
+    if (call.name === "file.read") return `read:${call.args && call.args.path}`;
+    if (call.name === "file.write") return `write:${call.args && call.args.path}`;
+    if (call.name === "tests.run" || call.name === "diagnostics.run") return call.name;
+    if (call.name === "capability.invoke") return `capability:${call.args && call.args.capability}`;
+    return call.name;
+  });
+  if (!parts.length) parts.push("reason");
+  parts.push(cluster || "none");
+  return parts.join(">");
+}
+
+function cycleDetected(window) {
+  for (let length = 2; length <= 4; length += 1) {
+    if (window.length < length * 2) continue;
+    const previous = window.slice(-length * 2, -length).join("||");
+    const current = window.slice(-length).join("||");
+    if (previous === current) return true;
+  }
+  return false;
 }
 
 function searchPaths(result) {
@@ -201,12 +342,7 @@ function searchPaths(result) {
 
 function testSignature(result) {
   const data = (result && result.data) || {};
-  const text = `${data.stdout || ""}\n${data.stderr || ""}`
-    .replace(/\/[^\s)]+/g, "")
-    .replace(/:\d+:\d+/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 180);
+  const text = `${data.stdout || ""}\n${data.stderr || ""}`.replace(/\/[^\s)]+/g, "").replace(/:\d+:\d+/g, "").replace(/\s+/g, " ").trim().slice(0, 180);
   return `${result && result.ok ? "ok" : "fail"}:${text}`;
 }
 
@@ -222,8 +358,14 @@ function gitSignature(call) {
 
 function capabilitySignature(result) {
   const evidence = result && result.data && Array.isArray(result.data.evidence) ? result.data.evidence : [];
-  const titles = evidence.map((item) => item && (item.url || item.title) || "").join("|");
-  return digest(`${result && result.status}:${titles}`);
+  return digest(`${result && result.status}:${evidence.map((item) => (item && (item.url || item.title)) || "").join("|")}`);
+}
+
+// A refused or unroutable call reports nothing about the problem, so it is not evidence.
+function ranSuccessfully(result) {
+  if (!result) return false;
+  if (result.ok) return true;
+  return Boolean(result.error && result.error.code === "exit_status");
 }
 
 function isTestCommand(call) {
@@ -232,11 +374,7 @@ function isTestCommand(call) {
 }
 
 function fingerprintOf(text) {
-  const words = String(text || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((word) => word.length > 3 && !STOP_WORDS.has(word));
+  const words = String(text || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word.length > 3 && !STOP_WORDS.has(word));
   return [...new Set(words)].sort();
 }
 
@@ -250,6 +388,12 @@ function remember(list, value) {
   if (value && !list.includes(value)) list.push(value);
 }
 
+function rememberKey(state, key) {
+  if (!key || state.evidenceKeys.includes(key)) return false;
+  state.evidenceKeys.push(key);
+  return true;
+}
+
 function digest(value) {
   return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
 }
@@ -258,4 +402,16 @@ function clip(value, limit) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
-module.exports = { createProgressState, recommendCapability, applyIteration };
+module.exports = {
+  createProgressState,
+  recommendCapability,
+  applyIteration,
+  noteResearch,
+  researchQuestion,
+  postResearchBrief,
+  observationKey,
+  compactObservation,
+  focusTools,
+  focusNotice,
+  cycleDetected,
+};

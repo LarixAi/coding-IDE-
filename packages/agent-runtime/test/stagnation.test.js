@@ -3,6 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, startAgentRun, ToolRegistry, ControlledToolProvider } = require("../index.js");
+const { cycleDetected } = require("../progress");
 const { createWorkspaceHost } = require("../../coding-qualify/host");
 
 const FIXTURE = path.join(__dirname, "../../research-qualify/fixture");
@@ -34,12 +35,13 @@ class ScriptedModelProvider extends ModelProvider {
   }
 }
 
-function researchHub() {
+function researchHub(state) {
   return {
     async listCapabilities() {
       return [{ name: "research.problem", description: "Gather short evidence for a problem. Returns sources and excerpts." }];
     },
     async invoke(request) {
+      state.invocations += 1;
       return {
         protocolVersion: 1,
         requestId: request.requestId,
@@ -47,9 +49,7 @@ function researchHub() {
         data: {
           problem: request.input && request.input.problem,
           confidence: "low",
-          likely_cause: null,
-          recommended_fix: null,
-          evidence: [{ title: "Luhn algorithm", url: "https://example.com/luhn", excerpt: "double every second digit from the right", source: "test" }],
+          evidence: [{ title: "Published rule", url: "https://example.com/rule", excerpt: "double every second digit from the right", source: "test" }],
         },
         sources: [],
         warnings: [],
@@ -60,20 +60,20 @@ function researchHub() {
   };
 }
 
-function stallSteps() {
-  const usage = { total: 100 };
+function step(text, toolCall) {
+  return { usage: { total: 40 }, text, toolCalls: toolCall ? [toolCall] : [] };
+}
+
+function loopSteps(count) {
   const search = { name: "repo.search", args: { query: "validNumber" } };
   const read = { name: "file.read", args: { path: "src/check.js" } };
-  return [
-    { usage, toolCalls: [search] },
-    { usage, toolCalls: [read] },
-    { usage, toolCalls: [{ name: "repo.search", args: { query: "validNumber check" } }] },
-    { usage, toolCalls: [read] },
-    { usage, toolCalls: [{ name: "repo.search", args: { query: "validNumber algorithm" } }] },
-    { usage, text: FIX_TEXT },
-    { usage, text: FIX_AGAIN },
-    { usage, text: FIX_TEXT },
-  ];
+  const steps = [];
+  for (let index = 0; index < count; index += 1) {
+    const tool = index % 2 === 0 ? search : read;
+    const text = index % 2 === 0 ? FIX_TEXT : FIX_AGAIN;
+    steps.push(step(text, tool));
+  }
+  return steps;
 }
 
 function start(options) {
@@ -88,11 +88,9 @@ function start(options) {
     registry: new ToolRegistry(new ControlledToolProvider(createWorkspaceHost(options.workspace || FIXTURE))),
     store,
     capabilities: options.capabilities,
-    maxIterations: options.maxIterations ?? 30,
+    maxIterations: options.maxIterations ?? 20,
     maxIdenticalActions: options.maxIdenticalActions ?? 20,
     maxRetries: options.maxRetries ?? 10,
-    stagnationThreshold: options.stagnationThreshold,
-    stagnationBudget: options.stagnationBudget,
     verify: options.verify || (() => ({ status: "failed", summary: "the check is still wrong", evidence: [] })),
   });
 }
@@ -109,75 +107,140 @@ async function test(name, fn) {
 }
 
 async function main() {
-  await test("the Luhn stall is detected and cannot continue", async () => {
-    const provider = new ScriptedModelProvider(stallSteps());
-    const run = await start({ provider, capabilities: researchHub() }).done;
-    assert.strictEqual(run.lifecycle, "failed");
-    assert.strictEqual(run.error.code, "stagnation");
-    assert.ok(run.iteration < 12);
-    assert.ok(run.iteration < run.maxIterations);
-    assert.strictEqual(run.progress.filesRead.length, 1);
-    assert.ok(run.progress.filesDiscovered.includes("src/check.js"));
-    assert.strictEqual(run.progress.progressScore, run.progress.filesDiscovered.length + run.progress.filesRead.length);
-    assert.ok(run.progress.repeatedIntentCount >= 1);
-    assert.ok(run.progress.stagnantTurns >= run.progress.threshold);
-    const detected = run.events.find((event) => event.type === "stagnation_detected");
-    assert.ok(detected);
-    assert.ok(detected.iteration <= 6);
-    assert.strictEqual(detected.capability, "research.problem");
-    assert.strictEqual(run.progress.researchEscalations, 1);
-    assert.strictEqual(run.progress.modelTurnsBeforeEscalation, detected.iteration);
-    assert.strictEqual(run.progress.tokensBeforeEscalation, detected.iteration * 100);
-    assert.ok(run.messages.some((message) => message.role === "user" && message.content.includes("research.problem") && message.content.includes("untrusted evidence")));
-    assert.ok(!run.toolCalls.some((call) => call.name === "capability.invoke"));
-    const policy = run.events.find((event) => event.type === "escalation_policy");
-    assert.ok(policy);
-    assert.strictEqual(policy.runtimeDirectedEscalation, false);
-    assert.strictEqual(run.progress.runtimeDirectedEscalation, false);
-    assert.strictEqual(run.progress.escalationAcceptedBy, null);
-    const loop = fs.readFileSync(path.join(__dirname, "../agent-run.js"), "utf8");
-    assert.strictEqual(loop.includes("research.problem"), false);
+  await test("a rolling action cycle is detected", async () => {
+    const cycle = ["search:a", "search:b", "read:a", "reason:x"];
+    assert.strictEqual(cycleDetected(cycle.concat(cycle)), true);
+    assert.strictEqual(cycleDetected(["search:a", "read:b", "write:c"]), false);
   });
 
-  await test("a model-selected research call is the only escalation that runs", async () => {
-    const usage = { total: 20 };
-    const steps = stallSteps().slice(0, 6);
-    steps.push({
-      usage,
-      toolCalls: [{ name: "capability.invoke", args: { capability: "research.problem", input: { problem: "Luhn algorithm which digits are doubled" } } }],
-    });
-    steps.push({
-      usage,
-      toolCalls: [{ name: "file.write", args: { path: "src/check.js", contents: "module.exports = { validNumber() { return false; } };\n" } }],
-    });
-    steps.push({ usage, text: "repaired from the evidence" });
+  await test("the repeated Luhn reasoning loop escalates once and then stops", async () => {
+    const hubState = { invocations: 0 };
+    const provider = new ScriptedModelProvider(loopSteps(8));
+    const run = await start({ provider, capabilities: researchHub(hubState) }).done;
+    const researchNeeded = run.events.find((event) => event.type === "strategy" && event.to === "research_needed");
+    const directed = run.toolCalls.find((call) => call.directedBy === "runtime");
+    assert.strictEqual(run.lifecycle, "failed");
+    assert.strictEqual(run.error.code, "stagnation");
+    assert.ok(run.iteration <= 6);
+    assert.ok(run.iteration < run.maxIterations);
+    assert.ok(researchNeeded);
+    assert.strictEqual(researchNeeded.stagnantTurns, 2);
+    assert.ok(run.progress.repeatedIntentCount >= 2);
+    assert.strictEqual(hubState.invocations, 1);
+    assert.strictEqual(run.progress.researchEscalations, 1);
+    assert.ok(directed);
+    assert.strictEqual(directed.args.capability, "research.problem");
+    assert.strictEqual(directed.result.directedBy, "runtime");
+    assert.strictEqual(directed.result.trusted, false);
+    assert.ok(run.events.some((event) => event.type === "capability" && event.directedBy === "runtime" && event.trusted === false));
+    const toolMessages = run.messages.filter((message) => message.role === "tool");
+    const searchMessages = toolMessages.filter((message) => message.name === "repo.search");
+    assert.ok(searchMessages.length >= 2);
+    assert.ok(searchMessages.slice(0, -1).every((message) => message.compacted === true));
+    assert.strictEqual(searchMessages.at(-1).compacted, undefined);
+    assert.ok(searchMessages.at(-1).content.includes("matches"));
+    const readMessages = toolMessages.filter((message) => message.name === "file.read");
+    assert.ok(readMessages.at(-1).content.includes("contents"));
+    assert.ok(run.toolCalls.some((call) => call.name === "repo.search" && call.result && call.result.data && call.result.data.matches));
+    assert.ok(run.messages.some((message) => message.role === "user" && String(message.content).includes("narrowed the available tools")));
+    const consumed = provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("double every second digit from the right")));
+    assert.strictEqual(consumed, true);
+    assert.strictEqual(run.progress.runtimeDirectedEscalation, true);
+    const loop = fs.readFileSync(path.join(__dirname, "../agent-run.js"), "utf8");
+    const progress = fs.readFileSync(path.join(__dirname, "../progress.js"), "utf8");
+    for (const source of [loop, progress]) {
+      assert.strictEqual(source.includes("research.problem"), false);
+      assert.strictEqual(source.includes("n8n"), false);
+      assert.strictEqual(source.toLowerCase().includes("luhn"), false);
+      assert.strictEqual(source.toLowerCase().includes("qwen"), false);
+    }
+  });
+
+  await test("a repeated read still shows the model the contents", async () => {
+    const read = { name: "file.read", args: { path: "src/check.js" } };
+    const provider = new ScriptedModelProvider([
+      step("Reading the implementation.", read),
+      step("Checking the tests.", { name: "file.read", args: { path: "test/check.test.js" } }),
+      step("Reading the implementation again before editing.", read),
+      step("done"),
+    ]);
+    const run = await start({ provider, capabilities: researchHub({ invocations: 0 }) }).done;
+    const reads = run.messages.filter((message) => message.role === "tool" && message.name === "file.read" && message.observationKey.startsWith("read:src/check.js"));
+    assert.strictEqual(reads.length, 2);
+    assert.strictEqual(reads[0].compacted, true);
+    assert.strictEqual(reads[1].compacted, undefined);
+    assert.ok(reads[1].content.includes("validNumber"));
+    assert.ok(run.toolCalls.every((call) => call.name !== "file.read" || call.result.data.contents.includes("validNumber")));
+  });
+
+  await test("a refused command is not counted as progress", async () => {
+    const provider = new ScriptedModelProvider([
+      step(FIX_TEXT, { name: "repo.search", args: { query: "validNumber" } }),
+      step(FIX_AGAIN, { name: "terminal.run", args: { command: "ls -la" } }),
+      step(FIX_TEXT, { name: "terminal.run", args: { command: "cat src/check.js | head" } }),
+      step(FIX_AGAIN, { name: "repo.search", args: { query: "validNumber" } }),
+      step(FIX_TEXT),
+      step(FIX_AGAIN),
+    ]);
+    const run = await start({ provider, capabilities: researchHub({ invocations: 0 }) }).done;
+    const refused = run.toolCalls.filter((call) => call.name === "terminal.run" && call.result.ok === false);
+    assert.strictEqual(refused.length, 2);
+    assert.ok(run.events.some((event) => event.type === "strategy" && event.to === "research_needed" && event.iteration <= 4));
+  });
+
+  await test("reworded reasoning without any action does not buy more turns", async () => {
+    const hubState = { invocations: 0 };
+    const provider = new ScriptedModelProvider([
+      step("Reading the implementation.", { name: "file.read", args: { path: "src/check.js" } }),
+      step("The test is failing on line 4. Let me verify the algorithm implementation."),
+      step("Let me analyze the issue more carefully. The current code doubles digits at even indices from the left."),
+      step("Let me fix the implementation to double digits at odd positions counted from the right."),
+      step("Let me carefully work through the rule once more and then correct the implementation."),
+      step("Let me restate the correct procedure before editing."),
+    ]);
+    const run = await start({ provider, capabilities: researchHub(hubState) }).done;
+    const stagnant = run.events.find((event) => event.type === "strategy" && event.to === "stagnant");
+    const escalated = run.events.find((event) => event.type === "strategy" && event.to === "research_needed");
+    assert.ok(stagnant, "narration must register as stagnation");
+    assert.strictEqual(stagnant.iteration, 3);
+    assert.ok(escalated);
+    assert.strictEqual(escalated.iteration, 4);
+    assert.strictEqual(hubState.invocations, 1);
+    assert.ok(run.messages.some((message) => message.role === "user" && String(message.content).includes("does not change the file")));
+  });
+
+  await test("research evidence must be followed by new progress", async () => {
+    const hubState = { invocations: 0 };
+    const steps = loopSteps(4);
+    steps.push(step("The evidence changes the repair.", { name: "file.write", args: { path: "src/check.js", contents: "module.exports = { validNumber() { return false; } };\n" } }));
+    steps.push(step("repaired after the evidence"));
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-stagnation-fix-"));
     fs.cpSync(FIXTURE, workspace, { recursive: true });
     const provider = new ScriptedModelProvider(steps);
     const run = await start({
       provider,
       workspace,
-      capabilities: researchHub(),
+      capabilities: researchHub(hubState),
       verify(runState, text) {
-        const researched = runState.toolCalls.some((call) => call.name === "capability.invoke" && call.result && call.result.ok && call.result.trusted === false);
-        const wrote = runState.toolCalls.some((call) => call.name === "file.write" && call.result && call.result.ok);
-        if (researched && wrote && text.includes("repaired")) return { status: "passed", summary: "model used the evidence", evidence: ["capability.invoke"] };
-        return { status: "failed", summary: "still stalled", evidence: [] };
+        const researched = runState.toolCalls.some((call) => call.directedBy === "runtime" && call.result && call.result.trusted === false);
+        const wrote = runState.toolCalls.some((call) => call.name === "file.write" && call.result && call.result.ok && call.directedBy !== "runtime");
+        if (researched && wrote && text.includes("repaired")) return { status: "passed", summary: "the repair followed the evidence", evidence: ["file.write"] };
+        return { status: "failed", summary: "the repair is not verified", evidence: [] };
       },
     }).done;
     assert.strictEqual(run.lifecycle, "completed");
     assert.strictEqual(run.error, null);
-    assert.strictEqual(run.progress.escalationAcceptedBy, "model");
-    assert.strictEqual(run.progress.runtimeDirectedEscalation, false);
-    assert.ok(!run.events.some((event) => event.type === "escalation_policy"));
-    assert.ok(run.observations.some((item) => item.type === "capability" && item.trusted === false && item.capability === "research.problem"));
-    assert.ok(run.progress.stagnantTurns < run.progress.budget);
+    assert.strictEqual(run.verification.status, "passed");
+    assert.strictEqual(hubState.invocations, 1);
+    assert.strictEqual(run.progress.researchEscalations, 1);
+    assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("double every second digit from the right"))));
   });
 
   await test("iteration, retry, and cancel protections still stop the run", async () => {
+    const hubState = { invocations: 0 };
     const limited = await start({
-      provider: new ScriptedModelProvider(Array.from({ length: 6 }, (_, index) => ({ toolCalls: [{ name: "repo.search", args: { query: `validNumber ${index}` } }] }))),
-      capabilities: researchHub(),
+      provider: new ScriptedModelProvider(Array.from({ length: 6 }, (_, index) => step("", { name: "repo.search", args: { query: `validNumber ${index}` } }))),
+      capabilities: researchHub(hubState),
       maxIterations: 3,
       maxIdenticalActions: 10,
     }).done;
@@ -185,8 +248,8 @@ async function main() {
 
     const missing = { name: "file.read", args: { path: "src/missing.txt" } };
     const retried = await start({
-      provider: new ScriptedModelProvider([{ toolCalls: [missing] }, { toolCalls: [missing] }, { toolCalls: [missing] }]),
-      capabilities: researchHub(),
+      provider: new ScriptedModelProvider([step("", missing), step("", missing), step("", missing)]),
+      capabilities: researchHub(hubState),
       maxRetries: 2,
       maxIdenticalActions: 10,
     }).done;
@@ -195,7 +258,7 @@ async function main() {
 
     const cancelling = start({
       provider: new ScriptedModelProvider([{ waitForAbort: true }]),
-      capabilities: researchHub(),
+      capabilities: researchHub(hubState),
     });
     cancelling.cancel();
     const cancelled = await cancelling.done;

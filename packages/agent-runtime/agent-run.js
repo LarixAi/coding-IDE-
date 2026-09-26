@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
-const { createProgressState, recommendCapability, applyIteration } = require("./progress");
+const { createProgressState, recommendCapability, applyIteration, noteResearch, researchQuestion, postResearchBrief, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 
@@ -28,6 +28,7 @@ function createRun(options) {
     transitions: [],
     filesChanged: [],
     events: [],
+    strategy: "working",
     progress: createProgressState(options),
     verification: { status: "pending", summary: "", evidence: [] },
     verificationHistory: [],
@@ -139,7 +140,7 @@ async function executeRun(run, options) {
       decision = await provider.complete({
         model: run.effectiveModel,
         messages: run.messages.map((message) => ({ ...message })),
-        tools: registry.definitions().concat(capabilityTools),
+        tools: focusTools(run.progress, registry.definitions().concat(capabilityTools)),
         signal,
         timeoutMs: run.timeoutMs,
       });
@@ -181,14 +182,15 @@ async function executeRun(run, options) {
       run.verificationHistory.push({ ...verification, at: new Date().toISOString() });
       store.save(run);
       if (verification.status === "passed") return finishCompleted(run, store, text);
-      const outcome = closeIteration(run, capabilityRegistry);
-      store.save(run);
-      if (outcome.stop) return finishFailed(run, store, "stagnation", outcome.stopSummary);
-      run.messages.push({
-        role: "user",
-        content: outcome.notice || `Verification failed: ${verification.summary}. Keep going with tools. A claim of success is not evidence.`,
-      });
-      store.save(run);
+      const settled = await settleTurn(run, store, capabilityRegistry, options, signal);
+      if (settled && settled.lifecycle) return settled;
+      if (!(settled && (settled.researched || settled.focused))) {
+        run.messages.push({
+          role: "user",
+          content: `Verification failed: ${verification.summary}. Keep going with tools. A claim of success is not evidence.`,
+        });
+        store.save(run);
+      }
       continue;
     }
 
@@ -262,7 +264,7 @@ async function executeRun(run, options) {
         });
       }
       run.inFlight = null;
-      run.messages.push({ role: "tool", name: call.name, content: JSON.stringify(result).slice(0, 8000) });
+      pushObservation(run, call, result);
       store.save(run);
 
       if (options.interruptAfterTool) {
@@ -272,13 +274,8 @@ async function executeRun(run, options) {
       }
     }
 
-    const outcome = closeIteration(run, capabilityRegistry);
-    store.save(run);
-    if (outcome.stop) return finishFailed(run, store, "stagnation", outcome.stopSummary);
-    if (outcome.notice) {
-      run.messages.push({ role: "user", content: outcome.notice });
-      store.save(run);
-    }
+    const settled = await settleTurn(run, store, capabilityRegistry, options, signal);
+    if (settled && settled.lifecycle) return settled;
   }
 
   return run;
@@ -446,6 +443,97 @@ function pathsFromDiff(diff) {
     if (match && !paths.includes(match[2])) paths.push(match[2]);
   }
   return paths;
+}
+
+function pushObservation(run, call, result) {
+  const key = observationKey(call, result);
+  run.messages.push({
+    role: "tool",
+    name: call.name,
+    content: JSON.stringify(result).slice(0, 8000),
+    observationKey: key || undefined,
+  });
+  if (!key) return;
+  for (let index = 0; index < run.messages.length - 1; index += 1) {
+    const message = run.messages[index];
+    if (message.role !== "tool" || message.observationKey !== key || message.compacted) continue;
+    message.content = compactObservation(call);
+    message.compacted = true;
+  }
+}
+
+async function settleTurn(run, store, registry, options, signal) {
+  const outcome = closeIteration(run, registry);
+  store.save(run);
+  if (outcome.action === "stop") return finishFailed(run, store, "stagnation", outcome.stopSummary);
+  if (outcome.action === "research") {
+    await directResearch(run, registry, options, signal, store);
+    return { researched: true };
+  }
+  if (run.progress.focus) {
+    run.messages.push({ role: "user", content: focusNotice(run.progress) });
+    store.save(run);
+    return { focused: true };
+  }
+  return null;
+}
+
+async function directResearch(run, registry, options, signal, store) {
+  const progress = run.progress;
+  const name = progress.recommendedName;
+  const question = researchQuestion(progress, run.goal);
+  const input = {};
+  for (const field of progress.recommendedFields) input[field] = question;
+  if (!Object.keys(input).length) input.question = question;
+  const call = { name: "capability.invoke", args: { capability: name, input } };
+  if (!Array.isArray(run.events)) run.events = [];
+  run.events.push({ type: "strategy", from: "research_needed", to: "researching", iteration: run.iteration, runId: run.id });
+  run.strategy = "researching";
+  progress.strategy = "researching";
+  let result;
+  try {
+    result = await dispatchCapability(options.capabilities, run, call, signal, registry);
+  } catch (error) {
+    result = {
+      ok: false,
+      kind: "capability",
+      trusted: false,
+      capability: name,
+      status: "unavailable",
+      error: { code: "capability_unavailable", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+  result.directedBy = "runtime";
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    directedBy: "runtime",
+    result,
+  };
+  run.toolCalls.push(record);
+  const observation = observe(call, result);
+  observation.directedBy = "runtime";
+  run.observations.push(observation);
+  run.events.push({
+    type: "capability",
+    runId: run.id,
+    requestId: observation.requestId,
+    capability: observation.capability,
+    duration: observation.duration,
+    status: observation.status,
+    trusted: false,
+    directedBy: "runtime",
+    evidence: observation.evidence,
+    reason: "CodeMe requested this read-only capability because the run was stagnant. The model did not select it.",
+  });
+  for (const event of noteResearch(progress, { iteration: run.iteration, result })) {
+    run.events.push({ ...event, runId: run.id });
+  }
+  run.strategy = progress.strategy;
+  run.messages.push({ role: "user", content: postResearchBrief(progress, result) });
+  store.save(run);
 }
 
 function closeIteration(run, registry) {
