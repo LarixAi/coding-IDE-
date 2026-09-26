@@ -3,29 +3,22 @@ const crypto = require("crypto");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { renderComposer } = require("./hub-panel");
+const { renderComposer } = require("./composer-view");
 const { renderWelcome } = require("./welcome");
-const { readOnly } = require("./code-oss-host");
-const { ReadOnlyToolProvider } = require("../../packages/agent-runtime/tool-registry");
+const { host } = require("./code-oss-host");
+const { ReadOnlyToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
+const { RunStore } = require("../../packages/agent-runtime/run-store");
+const { ComposerSession, listOllamaModels } = require("./composer-session");
 
 let N8nCapabilityProvider;
-let buildRequest;
-let acceptResponse;
 let OllamaModelProvider;
 try {
   ({ N8nCapabilityProvider } = require("../../packages/n8n-capability"));
-  ({ buildRequest, acceptResponse } = require("../../packages/agent-runtime/capability"));
   ({ OllamaModelProvider } = require("../../packages/agent-runtime/model-provider"));
 } catch {
   N8nCapabilityProvider = null;
   OllamaModelProvider = null;
 }
-
-const HUB_ACTIONS = {
-  "research.problem": (text) => ({ problem: text }),
-  "knowledge.lookup": (text) => ({ query: text }),
-  "task.decompose": (text) => ({ goal: text }),
-};
 
 function activate(context) {
   console.log("CodeMe shell activated");
@@ -35,7 +28,7 @@ function activate(context) {
     detail: "Checking the local model server.",
     hub: { connected: false, capabilities: [], detail: "Checking the intelligence hub." },
   };
-  const composer = new ComposerViewProvider(state);
+  const composer = new ComposerViewProvider(context, state);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("codeme.agent", composer),
   );
@@ -61,14 +54,14 @@ function activate(context) {
   refreshConnection(state).then(() => {
     applyConnection(connection, state);
     applyHub(hubItem, state);
-    composer.render();
+    composer.sync();
     welcome.render();
     console.log(`CodeMe connection: ${state.grade}`);
   });
   probeHub().then((hub) => {
     state.hub = hub;
     applyHub(hubItem, state);
-    composer.render();
+    composer.sync();
   });
 
   context.subscriptions.push(
@@ -106,8 +99,8 @@ async function arrangeShell(welcome) {
   }
   if (welcome.panel) welcome.panel.dispose();
   await runCommand("workbench.view.explorer");
-  await runCommand("codeme.agent.focus");
   await runCommand("workbench.action.chat.open");
+  await runCommand("codeme.agent.focus");
 }
 
 async function closeStockWelcome() {
@@ -215,8 +208,8 @@ async function probeHub() {
 
 function applyConnection(item, state) {
   const labels = {
-    read_only_qualified: "$(sparkle) qwen3.5:9b",
-    limited_agent: "$(sparkle) qwen3.5:9b",
+    read_only_qualified: "$(sparkle) local model",
+    limited_agent: "$(sparkle) local model",
     chat_only: "$(sparkle) local model offline",
   };
   item.text = labels[state.grade] || labels.chat_only;
@@ -238,21 +231,21 @@ function refreshConnection(state) {
         let installed = false;
         try {
           const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          installed = (body.models || []).some((model) => String(model.name || "").startsWith("qwen3.5:9b"));
+          installed = (body.models || []).some((model) => String(model.name || "").length > 0);
         } catch {
           installed = false;
         }
         if (!installed) {
           state.grade = "chat_only";
-          state.detail = "Ollama is running, but qwen3.5:9b is not installed. The IDE stays usable.";
+          state.detail = "Ollama is running, but no model is installed. The IDE stays usable.";
           resolve();
           return;
         }
         const recorded = readGrade();
         state.grade = recorded === "read_only_qualified" || recorded === "limited_agent" ? recorded : "limited_agent";
         state.detail = state.grade === "read_only_qualified"
-          ? "qwen3.5:9b passed read-only qualification. It cannot edit files."
-          : "qwen3.5:9b is installed. Read-only qualification has not passed, so editing stays off.";
+          ? "A local model passed read-only qualification. It cannot edit files."
+          : "A local model is installed. The composer chooses it. Editing stays off.";
         resolve();
       });
     });
@@ -279,130 +272,153 @@ function readGrade() {
   }
 }
 
-async function workspaceBrief() {
+function workspaceRoot() {
   const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
-  if (!folder) return { open: false, text: "No workspace folder is open." };
-  const found = await vscode.workspace.findFiles("**/*", "**/{.git,node_modules,out,dist,.tools}/**", 80);
-  const paths = found.map((uri) => vscode.workspace.asRelativePath(uri, false)).sort();
-  const active = vscode.window.activeTextEditor;
-  const activePath = active ? vscode.workspace.asRelativePath(active.document.uri, false) : "";
-  const lines = [
-    `Workspace: ${folder.name}`,
-    `Root: ${folder.uri.fsPath}`,
-    activePath ? `Active file: ${activePath}` : "Active file: none",
-    "Files:",
-    paths.join("\n") || "(no files found)",
-  ];
-  return { open: true, text: lines.join("\n") };
+  return folder ? folder.uri.fsPath : "";
 }
 
-async function answerChat(webviewView, message) {
-  const text = String(message.text || "").trim().slice(0, 4000);
-  if (!text) return;
-  const post = (body) => webviewView.webview.postMessage({ type: "chat", role: "assistant", text: body });
-  if (!OllamaModelProvider) {
-    post("The local model client is missing.");
-    return;
-  }
-  const workspace = await workspaceBrief();
-  if (!workspace.open) {
-    post("No workspace folder is open, so the model cannot see any files. Use Open Folder, then ask again.");
-    return;
-  }
-  const mode = message.mode === "plan" || message.mode === "agent" ? message.mode : "ask";
-  const guidance = mode === "agent"
-    ? "The user selected Agent mode. File edits stay off. Describe the change from the files you read, and do not claim files were edited."
-    : mode === "plan"
-      ? "Draft a short implementation plan from the files you read. Do not claim files were edited."
-      : "Answer from the open workspace. Read files before you answer. Do not claim files were edited.";
-  const tools = new ReadOnlyToolProvider({}).definitions();
-  const messages = [
-    {
-      role: "system",
-      content: `You are CodeMe inside the IDE. ${guidance}\nUse file.read and repo.search for files you have not already been shown. Write tools are not available.\n\n${workspace.text}`,
-    },
-    { role: "user", content: text },
-  ];
+function fileFromUri(uri) {
+  const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+  if (!folder) return { path: String(uri || "") };
+  let parsed = String(uri || "");
+  if (parsed.startsWith("file:")) parsed = vscode.Uri.parse(parsed).fsPath;
+  const name = path.basename(parsed);
+  let size = 0;
+  let type = fileType(name);
   try {
-    const provider = new OllamaModelProvider({ timeoutMs: 120000 });
-    for (let turn = 0; turn < 4; turn += 1) {
-      const result = await provider.complete({ model: "qwen3.5:9b", messages, tools });
-      const calls = Array.isArray(result.toolCalls) ? result.toolCalls : [];
-      if (!calls.length) {
-        post(result.text || "The local model returned an empty reply.");
-        return;
-      }
-      messages.push({ role: "assistant", content: result.text || "", toolCalls: calls });
-      for (const call of calls.slice(0, 4)) {
-        const label = (call.args && (call.args.path || call.args.query)) || "";
-        webviewView.webview.postMessage({
-          type: "chat",
-          role: "assistant",
-          done: false,
-          text: `Looking at ${call.name}${label ? ` ${label}` : ""}`,
-        });
-        const observed = await readOnly(call.name, call.args || {});
-        messages.push({ role: "tool", name: call.name, content: JSON.stringify(observed).slice(0, 8000) });
-      }
-    }
-    post("The model kept asking for files and did not finish an answer. Ask about a specific file.");
-  } catch (error) {
-    post(error && error.message ? error.message : "The local model did not answer.");
+    const stat = fs.statSync(parsed);
+    if (stat.isDirectory()) return { path: parsed, kind: "folder", name, size: 0, type: "folder" };
+    size = stat.size;
+  } catch {
+    size = 0;
   }
+  return {
+    path: parsed,
+    name,
+    size,
+    type,
+    kind: "file",
+  };
+}
+
+function fileType(name) {
+  const ext = path.extname(name).slice(1).toLowerCase();
+  const known = {
+    md: "text/markdown",
+    js: "text/javascript",
+    jsx: "text/javascript",
+    ts: "text/typescript",
+    tsx: "text/typescript",
+    json: "application/json",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    pdf: "application/pdf",
+    html: "text/html",
+    css: "text/css",
+  };
+  return known[ext] || (ext ? `text/${ext}` : "text/plain");
 }
 
 class ComposerViewProvider {
-  constructor(state) {
+  constructor(context, state) {
+    this.context = context;
     this.state = state;
     this.view = undefined;
+    this.session = new ComposerSession({
+      store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
+      selectionStore: {
+        get: () => context.globalState.get("codeme.model"),
+        set: (value) => context.globalState.update("codeme.model", value),
+      },
+      listModels: () => listOllamaModels(),
+      createProvider: (selection) => {
+        if (!OllamaModelProvider || selection.provider !== "ollama") {
+          throw Object.assign(new Error(`Provider ${selection.provider} is not connected`), { code: "unknown_provider" });
+        }
+        return new OllamaModelProvider();
+      },
+      createRegistry: () => new ToolRegistry(new ReadOnlyToolProvider(host)),
+      capabilities: N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null,
+      root: workspaceRoot(),
+      onChange: (snapshot) => this.post(snapshot),
+    });
   }
 
   async resolveWebviewView(webviewView) {
     this.view = webviewView;
     webviewView.webview.options = { enableScripts: true };
-    const hub = await probeHub();
-    this.state.hub = hub;
-    this.render();
-    webviewView.webview.onDidReceiveMessage(async (message) => {
-      if (!message) return;
-      if (message.type === "chat") {
-        await answerChat(webviewView, message);
-        return;
-      }
-      if (message.type !== "hub") return;
-      const text = String(message.text || "").trim().slice(0, 1500);
-      if (!text) {
-        webviewView.webview.postMessage({ type: "result", text: "Enter a problem or a goal first." });
-        return;
-      }
-      const inputFor = HUB_ACTIONS[message.action];
-      if (!inputFor || !buildRequest || !acceptResponse || !N8nCapabilityProvider) {
-        webviewView.webview.postMessage({ type: "result", text: "That hub capability is not available." });
-        return;
-      }
-      const provider = new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 });
-      const built = buildRequest({
-        runId: "run_composer",
-        capability: message.action,
-        input: inputFor(text),
-        context: { purpose: "composer" },
-        timeout: message.action === "task.decompose" ? 80000 : 15000,
-      });
-      if (!built.ok) {
-        webviewView.webview.postMessage({ type: "result", text: built.error.message });
-        return;
-      }
-      const response = await provider.invoke(built.request);
-      const accepted = acceptResponse(response, built.request);
-      webviewView.webview.postMessage({ type: "result", text: JSON.stringify(accepted, null, 2) });
-    });
+    const nonce = crypto.randomBytes(16).toString("hex");
+    webviewView.webview.html = renderComposer(nonce);
+    webviewView.webview.onDidReceiveMessage((message) => this.onMessage(message));
+    this.session.root = workspaceRoot();
+    await this.session.refreshModels();
   }
 
-  render() {
+  sync() {
+    if (!this.session) return;
+    this.session.root = workspaceRoot();
+    this.session.refreshModels();
+  }
+
+  post(snapshot) {
     if (!this.view) return;
-    const nonce = crypto.randomBytes(16).toString("hex");
-    const hub = this.state.hub || { connected: false, capabilities: [], detail: "Checking the intelligence hub." };
-    this.view.webview.html = renderComposer({ ...hub, model: { detail: this.state.detail } }, nonce);
+    const selected = snapshot.selected;
+    if (selected) {
+      this.state.detail = `${selected.label} is selected.`;
+    }
+    this.view.webview.postMessage({ type: "state", ...snapshot });
+  }
+
+  async onMessage(message) {
+    if (!message || !this.view) return;
+    if (message.type === "ready") {
+      this.post(this.session.snapshot());
+      return;
+    }
+    if (message.type === "submit") {
+      const text = String(message.text || "");
+      const result = await this.session.submit(text, message.epoch);
+      if (!result.ok) {
+        this.view.webview.postMessage({ type: "rejected", epoch: message.epoch, code: result.code, message: result.message });
+        return;
+      }
+      this.view.webview.postMessage({ type: "accepted", epoch: message.epoch, requestId: result.requestId, runId: result.runId, text });
+      return;
+    }
+    if (message.type === "cancel") {
+      this.session.cancel();
+      return;
+    }
+    if (message.type === "select-model") {
+      const result = this.session.selectModel(message.provider, message.id);
+      if (!result.ok) this.view.webview.postMessage({ type: "rejected", code: result.code, message: result.message });
+      return;
+    }
+    if (message.type === "detach") {
+      this.session.detach(message.id);
+      return;
+    }
+    if (message.type === "attach") {
+      for (const file of message.files || []) this.session.attach(fileFromUri(file.path || file));
+      return;
+    }
+    if (message.type === "pick") await this.pickFiles();
+  }
+
+  async pickFiles() {
+    const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+    const picked = await vscode.window.showOpenDialog({
+      title: "Attach workspace files",
+      canSelectMany: true,
+      canSelectFiles: true,
+      canSelectFolders: false,
+      openLabel: "Attach",
+      defaultUri: folder && folder.uri,
+    });
+    for (const uri of picked || []) this.session.attach(fileFromUri(uri.toString()));
   }
 }
 

@@ -188,4 +188,4 @@ function readOnly(tool, args) {
   return executeReadOnly(host, tool, args);
 }
 
-module.exports = { runTool, readOnly };
+module.exports = { runTool, readOnly, host };

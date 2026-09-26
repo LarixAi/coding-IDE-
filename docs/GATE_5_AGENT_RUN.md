@@ -1,6 +1,6 @@
 # Gate 5 — Durable AgentRun
 
-Checked before any write, terminal, or test permission. The Composer stage list in `extensions/codeme-shell/extension.js` is still a static label. It does not create a run.
+Checked before any write, terminal, or test permission. The Composer now starts a real AgentRun. See `docs/COMPOSER_INTEGRATION.md`.
 
 ## Audit
 

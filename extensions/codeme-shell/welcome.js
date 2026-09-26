@@ -37,7 +37,7 @@ function renderWelcome(view, nonce) {
       <button class="card primary" type="button" data-action="open"><div class="card-title"><span class="icon">⌂</span>Open Folder</div><p>Open a real folder on this computer.</p></button>
       <button class="card secondary" type="button" data-action="clone"><div class="card-title"><span class="icon">⎇</span>Clone Repository</div><p>Clone a Git repository.</p></button>
       <button class="card secondary" type="button" data-action="create"><div class="card-title"><span class="icon">+</span>Create Project</div><p>Create a folder with a README and .gitignore.</p></button>
-      <button class="card secondary" type="button" data-action="connect"><div class="card-title"><span class="icon">⌁</span>Connect AI Provider</div><p>Local model: qwen3.5:9b through Ollama.</p></button>
+      <button class="card secondary" type="button" data-action="connect"><div class="card-title"><span class="icon">⌁</span>Connect AI Provider</div><p>Discover installed local models through Ollama.</p></button>
     </div>
   </main>
   <script nonce="${escapeHtml(nonce)}">
