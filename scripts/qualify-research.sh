@@ -8,6 +8,7 @@ export PATH="$node_bin:$PATH"
 
 node "$root/packages/agent-runtime/test/stagnation.test.js"
 node "$root/packages/research-qualify/test/fallback.test.js"
+node "$root/packages/research-qualify/test/research-integration.test.js"
 node "$root/packages/n8n-capability/test/capabilities.test.js"
 node "$root/packages/n8n-capability/test/registry.test.js"
 node "$root/packages/n8n-capability/test/foundation.test.js"
