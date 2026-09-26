@@ -1,6 +1,9 @@
 const vscode = require("vscode");
 const cp = require("child_process");
 const { execute, executeReadOnly } = require("../../packages/agent-tools");
+const { createPreviewRunner } = require("./preview-runner");
+
+const preview = createPreviewRunner(vscode);
 
 function workspaceFolder() {
   const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
@@ -160,12 +163,16 @@ async function diagnostics() {
 }
 
 async function browserCheck(url) {
-  return {
-    available: false,
-    code: "browser_unavailable",
-    message: "No browser runner is configured for this workspace",
-    url,
-  };
+  try {
+    return await preview.check(workspaceFolder().uri.fsPath, url);
+  } catch (error) {
+    return {
+      available: false,
+      code: error && error.code ? String(error.code) : "preview_failed",
+      message: error instanceof Error ? error.message : String(error),
+      url,
+    };
+  }
 }
 
 const host = {

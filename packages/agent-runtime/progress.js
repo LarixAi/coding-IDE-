@@ -111,6 +111,12 @@ function applyIteration(state, input) {
     } else if (call.name === "git.diff" || call.name === "git.status") {
       const key = `git:${call.name}:${gitSignature(call)}`;
       if (rememberKey(state, key)) categories.push("changed_test_result");
+    } else if (call.name === "browser.check") {
+      const key = `browser:${(call.args && call.args.url) || ""}:${call.result && call.result.ok ? "ok" : "fail"}`;
+      if (rememberKey(state, key)) {
+        categories.push(call.result && call.result.ok ? "changed_test_result" : "new_failure");
+        state.subtask = "verify";
+      }
     } else if (call.name === "capability.invoke" || call.name === "capability.list") {
       const name = (call.args && call.args.capability) || call.name;
       remember(state.capabilitiesCalled, name);

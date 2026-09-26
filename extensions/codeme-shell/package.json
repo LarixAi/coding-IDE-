@@ -42,13 +42,30 @@
         "command": "codeme.showConnection",
         "title": "CodeMe: Model Connection",
         "category": "CodeMe"
+      },
+      {
+        "command": "codeme.ask",
+        "title": "CodeMe: Ask",
+        "category": "CodeMe"
+      },
+      {
+        "command": "codeme.attach",
+        "title": "CodeMe: Attach Workspace File",
+        "category": "CodeMe"
       }
     ],
     "configurationDefaults": {
       "workbench.colorTheme": "CodeMe Dark",
       "workbench.startupEditor": "none",
       "window.commandCenter": false,
-      "window.title": "${dirty}${activeEditorShort}${separator}CodeMe"
+      "window.title": "${dirty}${activeEditorShort}${separator}CodeMe",
+      "chat.disableAIFeatures": true,
+      "chat.commandCenter.enabled": false,
+      "chat.titleBar.signIn.enabled": false,
+      "chat.titleBar.openInAgentsWindow.enabled": false,
+      "workbench.secondarySideBar.defaultVisibility": "visible",
+      "workbench.tips.enabled": false,
+      "workbench.editor.empty.hint": "hidden"
     }
   }
 }

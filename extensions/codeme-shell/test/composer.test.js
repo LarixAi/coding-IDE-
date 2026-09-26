@@ -3,7 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider } = require("../../../packages/agent-runtime");
-const { composerKeyAction, composerStage, formatGoal } = require("../composer-client");
+const { composerKeyAction, composerStage, composerActivity, diffsByFile, formatGoal } = require("../composer-client");
 const { ComposerSession, checkAttachment, workspaceRelative } = require("../composer-session");
 const { renderComposer } = require("../composer-view");
 
@@ -47,7 +47,7 @@ function workspace(root) {
   };
 }
 
-function sessionFor(root, steps, models) {
+function sessionFor(root, steps, models, host) {
   const provider = new ScriptedModel(steps);
   const seen = [];
   const selection = { value: null };
@@ -59,7 +59,7 @@ function sessionFor(root, steps, models) {
     },
     listModels: async () => models,
     createProvider: () => provider,
-    createRegistry: () => new ToolRegistry(new ReadOnlyToolProvider(workspace(root))),
+    createRegistry: () => new ToolRegistry(new ReadOnlyToolProvider(host || workspace(root))),
     root,
     onChange: (snapshot) => seen.push(snapshot.stage),
   });
@@ -87,6 +87,14 @@ async function main() {
   assert.strictEqual(composerStage({ lifecycle: "completed" }), "Complete");
   assert.strictEqual(composerStage({ lifecycle: "failed" }), "Failed");
   assert.strictEqual(composerStage({ lifecycle: "cancelled" }), "Cancelled");
+  assert.strictEqual(composerStage({ lifecycle: "awaiting_user" }), "Waiting");
+  assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "file.read", args: { path: "src/app.js" } } }), "Reading src/app.js");
+  assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "repo.search", args: { query: "src/" } } }), "Searching src/");
+  assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "browser.check", args: { url: "http://127.0.0.1:4173/" } } }), "Checking http://127.0.0.1:4173/");
+  assert.strictEqual(composerActivity({ lifecycle: "verifying" }), "Verifying");
+  const files = diffsByFile("diff --git a/src/app.js b/src/app.js\n+ok\n", ["src/app.js"]);
+  assert.strictEqual(files[0].path, "src/app.js");
+  assert.ok(files[0].diff.includes("+ok"));
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-composer-"));
   fs.mkdirSync(path.join(root, "runs"));
@@ -115,7 +123,9 @@ async function main() {
   assert.ok(html.includes("composerKeyAction"));
   assert.ok(html.includes("Describe the change"));
   assert.ok(html.includes("split(/\\r?\\n/)"));
+  assert.ok(html.includes("select-mode"));
   assert.ok(!html.includes("qwen3.5:9b"));
+  assert.ok(!html.includes("workbench.action.chat.open"));
 
   const models = [
     { provider: "ollama", id: "qwen3.5:9b", label: "Qwen 3.5 9B" },
@@ -129,6 +139,8 @@ async function main() {
   assert.strictEqual(first.session.selected.id, "qwen3.5:9b");
   assert.strictEqual(first.session.selectModel("ollama", "llama3.2:3b").ok, true);
   assert.strictEqual(first.selection.value.id, "llama3.2:3b");
+  assert.strictEqual(first.session.selectMode("controlled").ok, true);
+  assert.strictEqual(first.session.mode, "controlled");
   const chip = first.session.attach({ path: "README.md", name: "README.md", size: 12, type: "text/markdown" });
   assert.strictEqual(first.session.detach(chip.attachment.id).ok, true);
   assert.strictEqual(first.session.attachments.length, 0);
@@ -139,14 +151,36 @@ async function main() {
   assert.ok(/^run_/.test(started.runId));
   assert.strictEqual(started.model, "llama3.2:3b");
   assert.strictEqual(started.provider, "ollama");
+  assert.strictEqual(started.mode, "controlled");
   await waitFor(first.session, (item) => item.stage === "Complete" && !item.running);
   assert.ok(first.seen.includes("Reading"));
   assert.ok(first.provider.models.every((model) => model === "llama3.2:3b"));
   const saved = JSON.parse(fs.readFileSync(path.join(root, "runs", `${started.runId}.json`), "utf8"));
   assert.ok(saved.goal.includes("README.md"));
   assert.ok(!saved.goal.includes(ANCHOR));
+  assert.ok(Array.isArray(saved.attachments));
+  assert.strictEqual(saved.attachments[0].path, "README.md");
+  assert.ok(!JSON.stringify(saved.attachments).includes(ANCHOR));
   assert.ok(saved.observations.some((item) => item.tool === "file.read"));
+  assert.strictEqual(saved.mode, "controlled");
+  assert.strictEqual(saved.effectiveModel, "llama3.2:3b");
+  assert.ok(saved.strategyRecord && saved.strategyRecord.id);
   assert.strictEqual(first.session.detach("missing").ok, false);
+
+  const research = sessionFor(root, [
+    { text: "Reading the readme first.", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+    { wait: true },
+  ], models);
+  await research.session.refreshModels();
+  const researching = await research.session.submit("research the readme");
+  assert.strictEqual(researching.ok, true);
+  await waitFor(research.session, (item) => item.tools.some((tool) => tool.name === "file.read"));
+  assert.ok(research.session.thread.some((item) => item.role === "user" && item.text.includes("research the readme")));
+  assert.ok(research.session.thread.some((item) => item.role === "assistant" && item.text.includes("Reading the readme")));
+  research.session.cancel();
+  await waitFor(research.session, (item) => item.stage === "Cancelled" && !item.running);
+  assert.ok(research.session.outcome.summary.includes("README.md"));
+  assert.ok(!research.session.verification);
 
   const hanging = sessionFor(root, [{ wait: true }], models);
   await hanging.session.refreshModels();
@@ -168,6 +202,20 @@ async function main() {
   assert.strictEqual(again.ok, true);
   assert.notStrictEqual(again.requestId, failed.requestId);
   await waitFor(failing.session, (item) => item.requestId === again.requestId && item.stage === "Failed" && !item.running);
+
+  const previewHost = workspace(root);
+  previewHost.browserCheck = async (url) => ({ available: true, statusCode: 200, title: "Car Bid Dealership", url });
+  const preview = sessionFor(root, [
+    { toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:4173/" } }] },
+    { text: "The site is running at http://127.0.0.1:4173/" },
+  ], models, previewHost);
+  await preview.session.refreshModels();
+  const previewed = await preview.session.submit("run the website");
+  assert.strictEqual(previewed.ok, true);
+  await waitFor(preview.session, (item) => item.stage === "Complete" && !item.running);
+  assert.ok(preview.seen.includes("Testing"));
+  const previewRun = JSON.parse(fs.readFileSync(path.join(root, "runs", `${previewed.runId}.json`), "utf8"));
+  assert.ok(previewRun.observations.some((item) => item.tool === "browser.check" && item.ok));
 
   const recovered = sessionFor(root, [{ text: "ok after read", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] }, { text: "done" }], models);
   await recovered.session.refreshModels();

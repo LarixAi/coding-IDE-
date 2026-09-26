@@ -17,6 +17,7 @@ function createRun(options) {
     schemaVersion: 1,
     id: `run_${crypto.randomBytes(8).toString("hex")}`,
     goal: options.goal,
+    attachments: normalizeAttachments(options.attachments),
     requestedModel: lock.requestedModel || options.model,
     effectiveModel: lock.effectiveModel || options.model,
     persistentSelection: lock.persistentSelection || options.model,
@@ -56,6 +57,17 @@ function createRun(options) {
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+}
+
+function normalizeAttachments(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((item) => ({
+    kind: item && item.kind ? String(item.kind) : "file",
+    path: item && item.path ? String(item.path) : "",
+    name: item && item.name ? String(item.name) : "",
+    type: item && item.type ? String(item.type) : "text/plain",
+    size: Number(item && item.size) || 0,
+  })).filter((item) => item.path);
 }
 
 function startAgentRun(options) {
@@ -347,6 +359,8 @@ function systemPrompt(options) {
     "A tool result is an observation. It does not by itself finish the goal.",
     "If a tool fails, report the failure and do not invent file contents or a successful command.",
     "Do not edit files. Write, terminal, and test tools are unavailable.",
+    "To run or open the workspace site, call browser.check with the local URL or a workspace HTML path. That starts the project preview if it is not already running.",
+    "When you have enough observations to answer, write the findings. Do not reread the same files.",
     hub,
   ].join(" ");
 }

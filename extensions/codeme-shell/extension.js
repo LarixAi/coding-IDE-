@@ -5,8 +5,9 @@ const fs = require("fs");
 const path = require("path");
 const { renderComposer } = require("./composer-view");
 const { renderWelcome } = require("./welcome");
+const { renderEmptyEditor } = require("./empty-editor");
 const { host } = require("./code-oss-host");
-const { ReadOnlyToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
+const { ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
 const { RunStore } = require("../../packages/agent-runtime/run-store");
 const { ComposerSession, listOllamaModels } = require("./composer-session");
 
@@ -30,14 +31,19 @@ function activate(context) {
   };
   const composer = new ComposerViewProvider(context, state);
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider("codeme.agent", composer),
+    vscode.window.registerWebviewViewProvider("codeme.agent", composer, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
   );
   const welcome = new WelcomePanel(state);
-  context.subscriptions.push(welcome);
+  const emptyEditor = new EmptyEditorPanel();
+  context.subscriptions.push(welcome, emptyEditor);
   context.subscriptions.push(
-    vscode.workspace.onDidChangeWorkspaceFolders(() => arrangeShell(welcome)),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => arrangeShell(welcome, emptyEditor)),
+    vscode.window.tabGroups.onDidChangeTabs(() => emptyEditor.sync()),
   );
-  arrangeShell(welcome);
+  applyPreferredSettings();
+  arrangeShell(welcome, emptyEditor);
 
   const connection = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   connection.name = "CodeMe model connection";
@@ -51,6 +57,10 @@ function activate(context) {
   context.subscriptions.push(hubItem);
   applyConnection(connection, state);
   applyHub(hubItem, state);
+  composer.refreshStatus = () => {
+    applyConnection(connection, state);
+    applyHub(hubItem, state);
+  };
   refreshConnection(state).then(() => {
     applyConnection(connection, state);
     applyHub(hubItem, state);
@@ -68,6 +78,8 @@ function activate(context) {
     vscode.commands.registerCommand("codeme.showConnection", () => {
       vscode.window.showInformationMessage(`${state.detail} ${state.hub.detail}`);
     }),
+    vscode.commands.registerCommand("codeme.ask", () => vscode.commands.executeCommand("codeme.agent.focus")),
+    vscode.commands.registerCommand("codeme.attach", () => composer.pickFiles()),
   );
 }
 
@@ -75,6 +87,25 @@ function applyHub(item, state) {
   const hub = state.hub || {};
   item.text = hub.connected ? "$(radio-tower) hub" : "$(radio-tower) hub offline";
   item.tooltip = hub.detail || "";
+}
+
+async function applyPreferredSettings() {
+  const config = vscode.workspace.getConfiguration();
+  const pairs = [
+    ["chat.disableAIFeatures", true],
+    ["chat.titleBar.signIn.enabled", false],
+    ["chat.titleBar.openInAgentsWindow.enabled", false],
+    ["workbench.secondarySideBar.defaultVisibility", "visible"],
+    ["workbench.tips.enabled", false],
+    ["workbench.editor.empty.hint", "hidden"],
+  ];
+  for (const [key, value] of pairs) {
+    try {
+      if (config.get(key) !== value) await config.update(key, value, vscode.ConfigurationTarget.Global);
+    } catch {
+      // Some keys cannot be written as defaults. The workspace still stays usable.
+    }
+  }
 }
 
 function folderOpen() {
@@ -89,8 +120,9 @@ async function runCommand(command) {
   }
 }
 
-async function arrangeShell(welcome) {
+async function arrangeShell(welcome, emptyEditor) {
   if (!folderOpen()) {
+    if (emptyEditor) emptyEditor.dispose();
     await runCommand("workbench.action.closeSidebar");
     await runCommand("workbench.action.closeAuxiliaryBar");
     await closeStockWelcome();
@@ -99,8 +131,12 @@ async function arrangeShell(welcome) {
   }
   if (welcome.panel) welcome.panel.dispose();
   await runCommand("workbench.view.explorer");
-  await runCommand("workbench.action.chat.open");
+  await runCommand("workbench.action.closeChat");
   await runCommand("codeme.agent.focus");
+  if (emptyEditor) {
+    emptyEditor.sync();
+    setTimeout(() => emptyEditor.sync(), 250);
+  }
 }
 
 async function closeStockWelcome() {
@@ -166,6 +202,90 @@ class WelcomePanel {
   }
 }
 
+class EmptyEditorPanel {
+  constructor() {
+    this.panel = undefined;
+  }
+
+  sync() {
+    if (!folderOpen()) {
+      this.dispose();
+      return;
+    }
+    if (hasWorkspaceEditor()) {
+      this.dispose();
+      return;
+    }
+    this.open();
+  }
+
+  open() {
+    if (this.panel) {
+      this.render();
+      this.panel.reveal(vscode.ViewColumn.One, false);
+      return;
+    }
+    this.panel = vscode.window.createWebviewPanel(
+      "codeme.start",
+      "Start",
+      { viewColumn: vscode.ViewColumn.One, preserveFocus: false },
+      { enableScripts: true, retainContextWhenHidden: true },
+    );
+    this.panel.onDidDispose(() => {
+      this.panel = undefined;
+    });
+    this.panel.webview.onDidReceiveMessage((message) => this.onMessage(message));
+    this.render();
+    this.panel.reveal(vscode.ViewColumn.One, false);
+    vscode.commands.executeCommand("codeme.agent.focus").then(() => {}, () => {});
+  }
+
+  render() {
+    if (!this.panel) return;
+    const nonce = crypto.randomBytes(16).toString("hex");
+    this.panel.webview.html = renderEmptyEditor(nonce);
+  }
+
+  async onMessage(message) {
+    if (!message || message.type !== "empty") return;
+    if (message.action === "open") {
+      await vscode.commands.executeCommand("workbench.action.quickOpen");
+      return;
+    }
+    if (message.action === "search") {
+      await vscode.commands.executeCommand("workbench.action.findInFiles");
+      return;
+    }
+    if (message.action === "terminal") {
+      await vscode.commands.executeCommand("workbench.action.terminal.toggleTerminal");
+      return;
+    }
+    if (message.action === "ask") await vscode.commands.executeCommand("codeme.agent.focus");
+  }
+
+  dispose() {
+    if (this.panel) this.panel.dispose();
+  }
+}
+
+function isCodeMeSurface(tab) {
+  const viewType = String((tab.input && tab.input.viewType) || "");
+  const label = String(tab.label || "");
+  return viewType.includes("codeme.start")
+    || viewType.includes("codeme.welcome")
+    || label === "Start";
+}
+
+function hasWorkspaceEditor() {
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (isCodeMeSurface(tab)) continue;
+      if (tab.input) return true;
+    }
+  }
+  return false;
+}
+
 async function createProject() {
   const name = await vscode.window.showInputBox({
     title: "Create Project",
@@ -207,12 +327,12 @@ async function probeHub() {
 }
 
 function applyConnection(item, state) {
-  const labels = {
-    read_only_qualified: "$(sparkle) local model",
-    limited_agent: "$(sparkle) local model",
-    chat_only: "$(sparkle) local model offline",
-  };
-  item.text = labels[state.grade] || labels.chat_only;
+  if (state.grade === "chat_only") {
+    item.text = "$(sparkle) model offline";
+  } else {
+    const selected = state.selectedLabel ? state.selectedLabel : "local model";
+    item.text = `$(sparkle) ${selected}`;
+  }
   item.tooltip = state.detail;
 }
 
@@ -244,8 +364,8 @@ function refreshConnection(state) {
         const recorded = readGrade();
         state.grade = recorded === "read_only_qualified" || recorded === "limited_agent" ? recorded : "limited_agent";
         state.detail = state.grade === "read_only_qualified"
-          ? "A local model passed read-only qualification. It cannot edit files."
-          : "A local model is installed. The composer chooses it. Editing stays off.";
+          ? "Read-only."
+          : "A local model is installed.";
         resolve();
       });
     });
@@ -332,6 +452,8 @@ class ComposerViewProvider {
       selectionStore: {
         get: () => context.globalState.get("codeme.model"),
         set: (value) => context.globalState.update("codeme.model", value),
+        getMode: () => context.globalState.get("codeme.mode") || "read_only",
+        setMode: (value) => context.globalState.update("codeme.mode", value),
       },
       listModels: () => listOllamaModels(),
       createProvider: (selection) => {
@@ -340,7 +462,9 @@ class ComposerViewProvider {
         }
         return new OllamaModelProvider();
       },
-      createRegistry: () => new ToolRegistry(new ReadOnlyToolProvider(host)),
+      createRegistry: (mode) => new ToolRegistry(
+        mode === "controlled" ? new ControlledToolProvider(host) : new ReadOnlyToolProvider(host),
+      ),
       capabilities: N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null,
       root: workspaceRoot(),
       onChange: (snapshot) => this.post(snapshot),
@@ -367,9 +491,11 @@ class ComposerViewProvider {
     if (!this.view) return;
     const selected = snapshot.selected;
     if (selected) {
+      this.state.selectedLabel = selected.label;
       this.state.detail = `${selected.label} is selected.`;
     }
-    this.view.webview.postMessage({ type: "state", ...snapshot });
+    if (this.refreshStatus) this.refreshStatus();
+    this.view.webview.postMessage({ type: "state", readOnly: snapshot.mode !== "controlled", ...snapshot });
   }
 
   async onMessage(message) {
@@ -389,12 +515,17 @@ class ComposerViewProvider {
       return;
     }
     if (message.type === "cancel") {
+      if (message.requestId && this.session.requestId && message.requestId !== this.session.requestId) return;
       this.session.cancel();
       return;
     }
     if (message.type === "select-model") {
       const result = this.session.selectModel(message.provider, message.id);
       if (!result.ok) this.view.webview.postMessage({ type: "rejected", code: result.code, message: result.message });
+      return;
+    }
+    if (message.type === "select-mode") {
+      this.session.selectMode(message.mode);
       return;
     }
     if (message.type === "detach") {

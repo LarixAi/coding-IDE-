@@ -98,11 +98,11 @@ async function run() {
     assert.ok(found.data.items.some((item) => item.path === "broken.js"));
   });
 
-  await test("browser.check returns a structured unavailable result", async () => {
+  await test("browser.check reports a down local page without starting a different server", async () => {
     const result = await runTool("browser.check", { url: "http://127.0.0.1:9" });
     assert.strictEqual(result.ok, false);
-    assert.strictEqual(result.error.code, "browser_unavailable");
-    assert.strictEqual(result.data.url, "http://127.0.0.1:9");
+    assert.ok(["connection_refused", "ECONNREFUSED", "timeout"].includes(result.error.code), result.error.code);
+    assert.ok(String(result.data.url).includes("127.0.0.1:9"));
   });
 }
 

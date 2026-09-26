@@ -1,0 +1,127 @@
+const assert = require("assert");
+const fs = require("fs");
+const http = require("http");
+const os = require("os");
+const path = require("path");
+const { createPreviewRunner, portFromText, previewPlan } = require("../preview-runner");
+
+function mockVscode(commands) {
+  const sent = [];
+  return {
+    sent,
+    vscode: {
+      Uri: { parse: (value) => ({ toString: () => value, fsPath: value }) },
+      commands: {
+        executeCommand: async (name, uri) => {
+          commands.push({ name, uri: uri && uri.toString() });
+        },
+      },
+      window: {
+        terminals: [],
+        createTerminal(options) {
+          const terminal = {
+            name: options.name,
+            cwd: options.cwd,
+            show() {},
+            sendText(command) { sent.push(command); },
+          };
+          this.terminals.push(terminal);
+          return terminal;
+        },
+      },
+    },
+  };
+}
+
+async function listen(handler) {
+  const server = http.createServer(handler);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  return { server, port, url: `http://127.0.0.1:${port}/` };
+}
+
+async function main() {
+  assert.strictEqual(portFromText("serve src -l 4173"), 4173);
+  assert.strictEqual(portFromText("Open http://localhost:4173"), 4173);
+  assert.strictEqual(portFromText("node server.js"), 0);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-preview-"));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: "serve src -l 4173" } }));
+  fs.writeFileSync(path.join(root, "README.md"), "Open http://localhost:4173\n");
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src", "index.html"), "<title>Car Bid</title>");
+
+  const filePlan = previewPlan(root, "file:///workspace/src/index.html");
+  assert.strictEqual(filePlan.ok, true);
+  assert.strictEqual(filePlan.url, "http://127.0.0.1:4173/");
+  assert.strictEqual(filePlan.command, "npm start");
+  assert.strictEqual(filePlan.shouldStart, true);
+
+  const otherPort = previewPlan(root, "http://127.0.0.1:9");
+  assert.strictEqual(otherPort.ok, true);
+  assert.strictEqual(otherPort.shouldStart, false);
+
+  const blocked = previewPlan(root, "https://example.com");
+  assert.strictEqual(blocked.ok, false);
+  assert.strictEqual(blocked.code, "invalid_url");
+
+  const live = await listen((_req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end("<title>Live Preview</title>");
+  });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: `serve src -l ${live.port}` } }));
+  const commands = [];
+  const mock = mockVscode(commands);
+  const runner = createPreviewRunner(mock.vscode);
+  const page = await runner.check(root, "src/index.html");
+  assert.strictEqual(page.available, true);
+  assert.strictEqual(page.statusCode, 200);
+  assert.strictEqual(page.title, "Live Preview");
+  assert.deepStrictEqual(mock.sent, []);
+  assert.ok(commands.some((item) => item.name === "vscode.open"));
+  live.server.close();
+
+  const down = await runner.check(root, "http://127.0.0.1:9");
+  assert.strictEqual(down.available, false);
+  assert.ok(["ECONNREFUSED", "connection_refused", "timeout"].includes(down.code), down.code);
+
+  const starting = await listen((_req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end("<title>Started</title>");
+  });
+  const startPort = starting.port;
+  await new Promise((resolve) => starting.server.close(resolve));
+  const startRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-preview-start-"));
+  fs.writeFileSync(path.join(startRoot, "package.json"), JSON.stringify({ scripts: { start: `serve src -l ${startPort}` } }));
+  const startCommands = [];
+  const startMock = mockVscode(startCommands);
+  let launched;
+  startMock.vscode.window.createTerminal = function createTerminal(options) {
+    const terminal = {
+      name: options.name,
+      show() {},
+      sendText(command) {
+        startMock.sent.push(command);
+        launched = http.createServer((_req, res) => {
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end("<title>Started</title>");
+        });
+        launched.listen(startPort, "127.0.0.1");
+      },
+    };
+    this.terminals.push(terminal);
+    return terminal;
+  };
+  const started = await createPreviewRunner(startMock.vscode).check(startRoot, `http://127.0.0.1:${startPort}/`);
+  assert.strictEqual(started.available, true);
+  assert.strictEqual(startMock.sent[0], "npm start");
+  assert.strictEqual(started.title, "Started");
+  if (launched) await new Promise((resolve) => launched.close(resolve));
+
+  console.log("ok preview runner");
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

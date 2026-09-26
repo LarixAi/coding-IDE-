@@ -11,62 +11,87 @@ function renderComposer(nonce) {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${escapeHtml(nonce)}';" />
   <style>
     html, body { height: 100%; }
-    body { margin: 0; color: #dfe4ec; background: #1c2027; font-family: var(--vscode-font-family); font-size: 13px; }
-    .shell { height: 100%; display: flex; flex-direction: column; }
-    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 36px; padding: 0 10px; border-bottom: 1px solid #2a3038; background: #171b23; }
-    h1 { margin: 0; font-size: 12px; font-weight: 600; }
-    select { max-width: 180px; background: #171b23; color: #dfe4ec; border: 1px solid #2a3038; border-radius: 6px; height: 24px; }
-    .thread { flex: 1; overflow: auto; padding: 12px; }
-    .stage { margin: 0 0 10px; color: #7fd3ea; font-size: 12px; font-weight: 600; }
-    .steps { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 12px; padding: 0; list-style: none; }
-    .steps li { color: #6b7689; font-size: 11px; }
-    .steps li.now { color: #dfe4ec; }
-    .bubble { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; line-height: 1.45; }
-    .bubble.user { background: #2b3a48; }
-    .bubble.assistant { background: #171b23; border: 1px solid #2a3038; }
-    .error { color: #ff918b; margin: 0 0 8px; }
-    .card { border: 1px solid #2a3038; border-radius: 6px; padding: 8px 10px; margin: 0 0 8px; }
-    .card h2 { margin: 0 0 4px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #97a3b6; }
-    .card p, .card li { margin: 0; color: #dfe4ec; }
-    details pre { white-space: pre-wrap; color: #97a3b6; font-size: 11px; }
-    footer { border-top: 1px solid #2a3038; padding: 8px; background: #171b23; }
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-    .chip { display: flex; align-items: center; gap: 6px; border: 1px solid #2a3038; border-radius: 6px; padding: 4px 6px; background: #1c2027; }
-    .chip button { border: 0; background: transparent; color: #97a3b6; cursor: pointer; }
-    .drop { border: 1px solid #2a3038; border-radius: 6px; background: #1c2027; }
-    .drop.over { border-color: #7fd3ea; }
-    textarea { width: 100%; min-height: 64px; box-sizing: border-box; border: 0; resize: vertical; background: transparent; color: #dfe4ec; font: inherit; padding: 8px; outline: none; }
-    .bar { display: flex; align-items: center; gap: 8px; padding: 0 8px 8px; }
-    .bar button, .ghost { border: 1px solid #2a3038; background: #1c2027; color: #dfe4ec; border-radius: 6px; height: 24px; padding: 0 8px; cursor: pointer; }
-    #send { margin-left: auto; background: #7fd3ea; color: #171b23; border: 0; font-weight: 700; }
-    #send:disabled, #stop[hidden] { opacity: 0.45; }
-    .notice { color: #eebb58; font-size: 11px; margin: 0 0 6px; }
+    body { margin: 0; color: #dfe4ec; background: #1c2027; font-family: var(--vscode-font-family); font-size: 13px; overflow: hidden; }
+    .shell { height: 100%; min-width: 0; display: flex; flex-direction: column; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 10px; flex-shrink: 0; }
+    h1 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
+    header .pickers { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    #model, #mode { max-width: min(140px, 46%); min-width: 0; background: transparent; color: #dfe4ec; border: 0; height: 22px; font: inherit; font-size: 12px; text-align: right; }
+    .thread { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px 16px; }
+    .empty { margin: 28px 4px 0; color: #6b7689; font-size: 12px; line-height: 1.5; }
+    .bubble { margin: 0 0 10px; max-width: 100%; min-width: 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .bubble.user { margin-left: 18%; color: #dfe4ec; font-size: 13px; }
+    .bubble.assistant { color: #c7ced8; }
+    .activity { display: none; margin: 0 0 10px; color: #97a3b6; font-size: 12px; }
+    .activity.on { display: block; }
+    .tools { margin: 0 0 10px; }
+    .tools details { margin: 0 0 4px; color: #6b7689; font-size: 11px; }
+    .tools summary { cursor: pointer; }
+    .result { margin: 8px 0 0; }
+    .result-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #dfe4ec; }
+    .result-summary { margin: 0 0 8px; color: #c7ced8; }
+    .result-count { margin: 0 0 6px; color: #97a3b6; font-size: 12px; }
+    .file { margin: 0; }
+    .file summary { cursor: pointer; color: #dfe4ec; font-size: 12px; list-style: none; }
+    .file summary::-webkit-details-marker { display: none; }
+    .file summary::before { content: "› "; color: #6b7689; }
+    .file[open] summary::before { content: "⌄ "; }
+    .file pre { margin: 6px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; color: #97a3b6; font-size: 11px; }
+    .error { margin: 0 0 8px; color: #ff918b; font-size: 12px; }
+    footer { flex-shrink: 0; padding: 0 8px 8px; }
+    .notice { min-height: 0; margin: 0 2px 4px; color: #eebb58; font-size: 11px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 2px 6px; }
+    .chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; color: #97a3b6; font-size: 11px; }
+    .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip button { border: 0; background: transparent; color: #6b7689; cursor: pointer; padding: 0; }
+    .composer { display: flex; flex-direction: column; min-width: 0; }
+    .composer.over textarea { outline: 1px solid #7fd3ea55; }
+    textarea { width: 100%; min-height: 56px; max-height: 180px; box-sizing: border-box; border: 0; resize: none; background: transparent; color: #dfe4ec; font: inherit; padding: 6px 4px 2px; outline: none; }
+    .bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .bar button { border: 0; background: transparent; color: #97a3b6; height: 24px; padding: 0 6px; cursor: pointer; font: inherit; font-size: 12px; }
+    #send, #stop { margin-left: auto; color: #7fd3ea; font-weight: 650; }
+    #send[hidden], #stop[hidden] { display: none; }
+    #send:disabled { opacity: 0.35; }
+    .perm { margin-left: 2px; color: #6b7689; font-size: 10px; }
+    @media (max-width: 220px) {
+      h1, .perm { display: none; }
+      #model { max-width: 100%; text-align: left; }
+    }
   </style>
 </head>
 <body>
   <div class="shell">
     <header>
       <h1>CodeMe</h1>
-      <select id="model" aria-label="Model"></select>
+      <div class="pickers">
+        <select id="mode" aria-label="Mode">
+          <option value="read_only">Read-only</option>
+          <option value="controlled">Controlled</option>
+        </select>
+        <select id="model" aria-label="Model"></select>
+      </div>
     </header>
     <div class="thread" id="thread">
-      <p class="stage" id="stage">Waiting</p>
-      <ol class="steps" id="steps"></ol>
+      <p class="empty" id="empty">Ask about this workspace.</p>
       <div id="messages"></div>
-      <div id="result"></div>
+      <p class="activity" id="activity"></p>
+      <div class="tools" id="tools"></div>
+      <div class="result" id="result"></div>
     </div>
     <footer>
       <p class="notice" id="notice"></p>
       <div class="chips" id="chips"></div>
-      <div class="drop" id="drop">
-        <textarea id="prompt" placeholder="Describe the change…"></textarea>
+      <div class="composer" id="drop">
+        <textarea id="prompt" placeholder="Describe the change…" rows="3"></textarea>
         <div class="bar">
-          <button type="button" id="attach" class="ghost">Attach</button>
+          <button type="button" id="attach" title="Attach files">Attach</button>
+          <span class="perm" id="perm"></span>
+          <button type="button" id="send">Send</button>
           <button type="button" id="stop" hidden>Stop</button>
-          <button type="button" id="send">↑</button>
         </div>
       </div>
     </footer>
+    <p hidden id="stage">Waiting</p>
   </div>
   <script nonce="${escapeHtml(nonce)}">
     ${client}
@@ -75,21 +100,23 @@ function renderComposer(nonce) {
     const send = document.getElementById("send");
     const stop = document.getElementById("stop");
     const model = document.getElementById("model");
-    const steps = document.getElementById("steps");
+    const mode = document.getElementById("mode");
     const stage = document.getElementById("stage");
+    const activity = document.getElementById("activity");
     const messages = document.getElementById("messages");
+    const tools = document.getElementById("tools");
     const result = document.getElementById("result");
     const chips = document.getElementById("chips");
     const notice = document.getElementById("notice");
+    const empty = document.getElementById("empty");
     const drop = document.getElementById("drop");
+    const thread = document.getElementById("thread");
     let running = false;
     let sending = false;
     let requestId = "";
     let epoch = 0;
     let shownRun = "";
     let draft = "";
-    const trail = COMPOSER_STAGES.filter((name) => name !== "Waiting" && name !== "Failed" && name !== "Cancelled");
-    steps.innerHTML = trail.map((name) => '<li data-stage="' + name + '">' + name + "</li>").join("");
     function sendPrompt() {
       if (sending || running) return;
       const text = prompt.value;
@@ -120,6 +147,10 @@ function renderComposer(nonce) {
         sendPrompt();
       }
     });
+    prompt.addEventListener("input", () => {
+      prompt.style.height = "auto";
+      prompt.style.height = Math.min(180, prompt.scrollHeight) + "px";
+    });
     send.addEventListener("click", sendPrompt);
     stop.addEventListener("click", () => vscode.postMessage({ type: "cancel", requestId }));
     document.getElementById("attach").addEventListener("click", () => vscode.postMessage({ type: "pick" }));
@@ -128,6 +159,7 @@ function renderComposer(nonce) {
       if (!option) return;
       vscode.postMessage({ type: "select-model", provider: option.dataset.provider, id: option.value });
     });
+    mode.addEventListener("change", () => vscode.postMessage({ type: "select-mode", mode: mode.value }));
     drop.addEventListener("dragover", (event) => {
       event.preventDefault();
       drop.classList.add("over");
@@ -161,7 +193,7 @@ function renderComposer(nonce) {
     }
     function applyState(state) {
       if (!current(state)) return;
-      if (state.requestId && requestId && state.requestId !== requestId) return;
+      if (state.requestId) requestId = state.requestId;
       running = Boolean(state.running);
       stage.textContent = state.stage || "Waiting";
       stage.dataset.stage = state.stage || "Waiting";
@@ -169,11 +201,16 @@ function renderComposer(nonce) {
       stage.dataset.running = running ? "true" : "false";
       stage.dataset.model = state.selected ? state.selected.id : "";
       stage.dataset.provider = state.selected ? state.selected.provider : "";
-      for (const item of steps.querySelectorAll("li")) item.classList.toggle("now", item.dataset.stage === state.stage);
+      const line = state.activity || "";
+      activity.textContent = line;
+      activity.classList.toggle("on", running && Boolean(line));
       stop.hidden = !running;
+      send.hidden = running;
       send.disabled = running || sending;
-      prompt.disabled = running;
-      notice.textContent = state.notice || state.error || "";
+      prompt.disabled = false;
+      notice.textContent = state.notice || (!running && state.stage === "Failed" ? (state.error || "") : "");
+      document.getElementById("perm").textContent = state.mode === "controlled" ? "Controlled" : "Read-only";
+      mode.value = state.mode === "controlled" ? "controlled" : "read_only";
       model.innerHTML = "";
       for (const item of state.models || []) {
         const option = document.createElement("option");
@@ -188,7 +225,7 @@ function renderComposer(nonce) {
         const chip = document.createElement("span");
         chip.className = "chip";
         const label = document.createElement("span");
-        label.textContent = item.name + " · " + item.type + " · " + item.size + " B";
+        label.textContent = item.name + " · " + (item.type || "text/plain") + " · " + formatSize(item.size);
         const remove = document.createElement("button");
         remove.type = "button";
         remove.textContent = "×";
@@ -198,64 +235,93 @@ function renderComposer(nonce) {
         chip.appendChild(remove);
         chips.appendChild(chip);
       }
-      if (!running && state.outcome && state.runId && state.runId !== shownRun) {
+      renderThread(state.thread || []);
+      renderTools(state.tools || []);
+      if (running) {
+        result.innerHTML = "";
+        shownRun = "";
+      } else if (state.outcome && state.runId && state.runId !== shownRun) {
         shownRun = state.runId;
-        addMessage("assistant", outcomeText(state));
         renderResult(state);
       }
+      empty.hidden = Boolean(messages.childElementCount || running);
+      thread.scrollTop = thread.scrollHeight;
+    }
+    function formatSize(size) {
+      const bytes = Number(size) || 0;
+      if (bytes >= 1024) return Math.round(bytes / 1024) + " KB";
+      return bytes + " B";
     }
     function outcomeText(state) {
       const outcome = state.outcome || {};
-      return outcome.summary || outcome.reason || state.stage;
+      return String(outcome.summary || outcome.reason || state.stage || "").trim();
+    }
+    function renderTools(items) {
+      tools.innerHTML = "";
+      if (!running) return;
+      for (const item of items) {
+        const row = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = toolLabel(item);
+        row.appendChild(summary);
+        tools.appendChild(row);
+      }
+    }
+    function toolLabel(item) {
+      if (item.name === "file.read") return "Read " + (item.path || "file");
+      if (item.name === "file.write") return "Edited " + (item.path || "file");
+      if (item.name === "repo.search") return "Searched " + (item.path || "workspace");
+      if (item.name === "tests.run") return "Ran tests";
+      if (item.name === "capability.invoke") return "Researched documentation";
+      return item.name;
     }
     function renderResult(state) {
-      const files = state.filesChanged || [];
-      const verification = state.verification && state.verification.summary ? state.verification.summary : "";
       result.innerHTML = "";
-      const card = document.createElement("div");
-      card.className = "card";
-      const title = document.createElement("h2");
-      title.textContent = state.stage || "";
-      const body = document.createElement("p");
-      body.textContent = outcomeText(state);
-      card.appendChild(title);
-      card.appendChild(body);
-      if (state.runId) {
-        const id = document.createElement("p");
-        id.textContent = state.runId;
-        card.appendChild(id);
+      const files = state.fileDiffs && state.fileDiffs.length ? state.fileDiffs : (state.filesChanged || []).map((file) => ({ path: file, diff: "" }));
+      const title = document.createElement("p");
+      title.className = "result-title";
+      title.textContent = state.stage === "Complete" ? "Complete" : (state.stage === "Cancelled" ? "Stopped" : (state.stage || ""));
+      result.appendChild(title);
+      const summary = document.createElement("p");
+      summary.className = "result-summary";
+      summary.textContent = outcomeText(state);
+      result.appendChild(summary);
+      if (state.verification && state.verification.status && state.verification.status !== "pending") {
+        const verify = document.createElement("p");
+        verify.className = "result-count";
+        verify.textContent = "Verification " + state.verification.status + (state.verification.summary ? ": " + state.verification.summary : "");
+        result.appendChild(verify);
       }
       if (files.length) {
-        const list = document.createElement("ul");
+        const count = document.createElement("p");
+        count.className = "result-count";
+        count.textContent = files.length + (files.length === 1 ? " file changed" : " files changed");
+        result.appendChild(count);
         for (const file of files) {
-          const item = document.createElement("li");
-          item.textContent = file;
-          list.appendChild(item);
+          const row = document.createElement("details");
+          row.className = "file";
+          const header = document.createElement("summary");
+          header.textContent = file.path;
+          row.appendChild(header);
+          if (file.diff) {
+            const pre = document.createElement("pre");
+            pre.textContent = file.diff;
+            row.appendChild(pre);
+          }
+          result.appendChild(row);
         }
-        card.appendChild(list);
       }
-      if (verification) {
-        const check = document.createElement("p");
-        check.textContent = verification;
-        card.appendChild(check);
-      }
-      if (state.diff) {
-        const details = document.createElement("details");
-        const summary = document.createElement("summary");
-        summary.textContent = "Diff";
-        const pre = document.createElement("pre");
-        pre.textContent = state.diff;
-        details.appendChild(summary);
-        details.appendChild(pre);
-        card.appendChild(details);
-      }
-      result.appendChild(card);
+    }
+    function renderThread(items) {
+      messages.innerHTML = "";
+      for (const item of items) addMessage(item.role, item.text);
     }
     function addMessage(role, text) {
       const item = document.createElement("div");
       item.className = "bubble " + role;
       item.textContent = text;
       messages.appendChild(item);
+      empty.hidden = true;
     }
     let sawState = false;
     window.addEventListener("message", (event) => {
@@ -267,9 +333,9 @@ function renderComposer(nonce) {
       if (message.type === "accepted" && current(message) && sameRequest(message.requestId, message.requestId)) {
         requestId = message.requestId;
         prompt.value = "";
+        prompt.style.height = "";
         draft = "";
         sending = false;
-        addMessage("user", message.text || "");
         send.disabled = running;
       }
       if (message.type === "rejected" && current(message)) {

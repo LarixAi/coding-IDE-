@@ -22,7 +22,7 @@ const DEFINITIONS = {
     parameters: { type: "object", properties: {}, required: [] },
   },
   "browser.check": {
-    description: "Check a running page. Unavailable until a preview runner exists.",
+    description: "Start the workspace preview if needed and check a local page. Use the site URL from the project, or a workspace HTML path.",
     parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
   },
   "file.write": {

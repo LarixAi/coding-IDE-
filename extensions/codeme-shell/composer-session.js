@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const http = require("http");
 const path = require("path");
 const { startAgentRun } = require("../../packages/agent-runtime");
-const { composerStage, formatGoal } = require("./composer-client");
+const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal } = require("./composer-client");
 
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 1024 * 1024;
@@ -112,13 +112,19 @@ class ComposerSession {
     this.attachments = [];
     this.models = [];
     this.selected = null;
+    this.mode = this.selectionStore.getMode ? this.selectionStore.getMode() : "read_only";
+    if (this.mode !== "controlled") this.mode = "read_only";
     this.active = null;
     this.running = false;
     this.stage = "Waiting";
+    this.activity = "";
     this.error = "";
     this.notice = "";
     this.outcome = null;
     this.filesChanged = [];
+    this.fileDiffs = [];
+    this.tools = [];
+    this.thread = [];
     this.verification = null;
     this.diff = "";
     this.runId = "";
@@ -134,14 +140,19 @@ class ComposerSession {
       epoch: this.epoch,
       running: this.running,
       stage: this.stage,
+      activity: this.activity,
       error: this.error,
       notice: this.notice,
       outcome: this.outcome,
       filesChanged: this.filesChanged.slice(),
+      fileDiffs: this.fileDiffs.map((item) => ({ ...item })),
+      tools: this.tools.map((item) => ({ ...item })),
+      thread: this.thread.map((item) => ({ ...item })),
       verification: this.verification,
       diff: this.diff,
       models: this.models.map((model) => ({ ...model })),
       selected: this.selected ? { ...this.selected } : null,
+      mode: this.mode,
       attachments: this.attachments.map((item) => ({ ...item })),
     };
   }
@@ -168,6 +179,13 @@ class ComposerSession {
     this.notice = "";
     this.emit();
     return { ok: true, model: { ...match } };
+  }
+
+  selectMode(mode) {
+    this.mode = mode === "controlled" ? "controlled" : "read_only";
+    if (this.selectionStore.setMode) this.selectionStore.setMode(this.mode);
+    this.emit();
+    return { ok: true, mode: this.mode };
   }
 
   attach(input) {
@@ -198,16 +216,20 @@ class ComposerSession {
     if (!this.selected) return reject("no_model", "No local model is installed.");
     const requestId = crypto.randomBytes(8).toString("hex");
     if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
-    const provider = this.createProvider(this.selected);
-    const registry = this.createRegistry();
+      const provider = this.createProvider(this.selected);
+    const registry = this.createRegistry(this.mode);
     this.requestId = requestId;
     this.runId = "";
     this.running = true;
     this.stage = "Understanding";
+    this.activity = "Understanding…";
     this.error = "";
     this.notice = "";
     this.outcome = null;
     this.filesChanged = [];
+    this.fileDiffs = [];
+    this.tools = [];
+    this.thread = [{ role: "user", text: goal }];
     this.verification = null;
     this.diff = "";
     this.active = { requestId, runId: "", handle: null };
@@ -222,8 +244,15 @@ class ComposerSession {
         registry,
         store: publishing,
         capabilities: this.capabilities,
-        mode: "read_only",
-        timeoutMs: 120000,
+        mode: this.mode,
+        attachments: this.attachments.map((item) => ({
+          kind: item.kind,
+          path: item.path,
+          name: item.name,
+          type: item.type,
+          size: item.size,
+        })),
+        timeoutMs: 180000,
       });
     } catch (error) {
       this.failRequest(requestId, error instanceof Error ? error.message : String(error));
@@ -239,7 +268,7 @@ class ComposerSession {
     }).catch((error) => {
       this.failRequest(requestId, error instanceof Error ? error.message : String(error));
     });
-    return { ok: true, requestId, runId: handle.id, model: this.selected.id, provider: this.selected.provider };
+      return { ok: true, requestId, runId: handle.id, model: this.selected.id, provider: this.selected.provider, mode: this.mode };
   }
 
   cancel() {
@@ -254,12 +283,29 @@ class ComposerSession {
     this.active.runId = run.id;
     this.runId = run.id;
     this.stage = composerStage(run);
+    this.activity = composerActivity(run);
     this.filesChanged = (run.filesChanged || []).slice();
+    this.diff = diffText(run);
+    this.fileDiffs = diffsByFile(this.diff, this.filesChanged);
+    this.tools = compactTools(run);
+    this.thread = threadFrom(run);
     this.verification = run.verification || null;
     this.outcome = run.outcome || null;
-    this.diff = diffText(run);
     this.error = run.lifecycle === "failed" && run.error ? run.error.message : "";
-    this.running = !["completed", "failed", "cancelled"].includes(run.lifecycle);
+    this.running = !["completed", "failed", "cancelled", "awaiting_user"].includes(run.lifecycle);
+    if (run.lifecycle === "cancelled") {
+      const files = ((run.progress && run.progress.filesRead) || []).filter(Boolean);
+      this.verification = null;
+      this.outcome = {
+        status: "cancelled",
+        summary: files.length
+          ? `Stopped before the answer was written. Already read ${files.join(", ")}.`
+          : "Stopped before the answer was written.",
+      };
+    }
+    if (run.lifecycle === "awaiting_user") {
+      this.activity = (run.outcome && run.outcome.summary) || "Waiting for you";
+    }
     this.emit();
   }
 
@@ -279,6 +325,16 @@ class ComposerSession {
     this.active = null;
     this.emit();
   }
+}
+
+function threadFrom(run) {
+  const items = [];
+  if (run && run.goal) items.push({ role: "user", text: run.goal });
+  for (const decision of (run && run.decisions) || []) {
+    const text = decision && decision.text ? String(decision.text).trim() : "";
+    if (text) items.push({ role: "assistant", text });
+  }
+  return items;
 }
 
 function diffText(run) {

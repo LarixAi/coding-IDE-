@@ -43,5 +43,6 @@ cd "$root/code-oss"
 exec "$app_bundle/Contents/MacOS/Code - OSS" . \
 	--extensions-dir="$ext_dir" \
 	--disable-extension=vscode.vscode-api-tests \
+	--disable-workspace-trust \
 	--user-data-dir="$user_data" \
 	"$@"
