@@ -25,6 +25,8 @@ const PROVIDER_NAMES = {
   "git.diff": "git_diff",
   "diagnostics.run": "diagnostics_run",
   "browser.check": "browser_check",
+  "dir.create": "dir_create",
+  "dir.list": "dir_list",
   "capability.list": "capability_list",
   "capability.invoke": "capability_invoke",
 };

@@ -10,6 +10,8 @@ const TOOLS = {
   "diagnostics.run": [],
   "tests.run": ["command"],
   "browser.check": ["url"],
+  "dir.create": ["path"],
+  "dir.list": ["path"],
 };
 
 function failure(tool, code, message, data) {
@@ -92,13 +94,17 @@ async function dispatch(host, tool, args) {
       return host.runTests(args.command);
     case "browser.check":
       return host.browserCheck(args.url);
+    case "dir.create":
+      return host.createDirectory(args.path);
+    case "dir.list":
+      return host.listDirectory(args.path);
     default:
       throw Object.assign(new Error(`Unknown tool: ${tool}`), { code: "unknown_tool" });
   }
 }
 
-const READ_ONLY_TOOLS = ["file.read", "repo.search", "git.status", "git.diff", "diagnostics.run", "browser.check"];
-const CONTROLLED_TOOLS = ["file.read", "file.write", "repo.search", "terminal.run", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check"];
+const READ_ONLY_TOOLS = ["file.read", "repo.search", "git.status", "git.diff", "diagnostics.run", "browser.check", "dir.list"];
+const CONTROLLED_TOOLS = ["file.read", "file.write", "repo.search", "terminal.run", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "dir.create", "dir.list"];
 
 function validateCommand(command) {
   if (typeof command !== "string" || command.length === 0) {

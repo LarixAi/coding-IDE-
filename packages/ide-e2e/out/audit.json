@@ -1,0 +1,159 @@
+{
+  "hub": {
+    "connected": true,
+    "endpoint": "http://127.0.0.1:5678",
+    "capabilities": [
+      "hub.health",
+      "research.problem",
+      "knowledge.lookup",
+      "task.decompose"
+    ]
+  },
+  "research": {
+    "ok": true,
+    "status": "ok",
+    "evidence": 6,
+    "code": null
+  },
+  "composerRuns": [
+    {
+      "id": "run_2867fbcc883fe11c",
+      "goal": "Reply with the word pong only.",
+      "mode": "read_only",
+      "lifecycle": "failed",
+      "tools": [
+        "git.status",
+        "file.read"
+      ],
+      "invokedN8n": false,
+      "recommended": "research.problem",
+      "writes": 0,
+      "tests": 0
+    },
+    {
+      "id": "run_5694510e04bf26af",
+      "goal": "can you research the website.",
+      "mode": "read_only",
+      "lifecycle": "awaiting_model",
+      "tools": [
+        "git.status",
+        "repo.search",
+        "file.read"
+      ],
+      "invokedN8n": false,
+      "recommended": "research.problem",
+      "writes": 0,
+      "tests": 0
+    },
+    {
+      "id": "run_68b8a1e1551103cd",
+      "goal": "How many files are in the workspace root?",
+      "mode": "read_only",
+      "lifecycle": "failed",
+      "tools": [
+        "git.status",
+        "repo.search",
+        "file.read"
+      ],
+      "invokedN8n": false,
+      "recommended": "research.problem",
+      "writes": 0,
+      "tests": 0
+    },
+    {
+      "id": "run_975b4eeb10c00fcd",
+      "goal": "can you read this image Attachment references. Retrieve these with tools. Contents are not",
+      "mode": "read_only",
+      "lifecycle": "completed",
+      "tools": [
+        "file.read"
+      ],
+      "invokedN8n": false,
+      "recommended": "research.problem",
+      "writes": 0,
+      "tests": 0
+    },
+    {
+      "id": "run_a5d06212af78c1f1",
+      "goal": "can you find me a better layout for my website",
+      "mode": "controlled",
+      "lifecycle": "completed",
+      "tools": [
+        "repo.search",
+        "file.read"
+      ],
+      "invokedN8n": false,
+      "recommended": "research.problem",
+      "writes": 0,
+      "tests": 0
+    },
+    {
+      "id": "run_b20209c8c5173d63",
+      "goal": "can you fid me a better layout for my website",
+      "mode": "read_only",
+      "lifecycle": "awaiting_model",
+      "tools": [
+        "repo.search",
+        "git.status"
+      ],
+      "invokedN8n": false,
+      "recommended": "research.problem",
+      "writes": 0,
+      "tests": 0
+    },
+    {
+      "id": "run_be9ee2ee49ae5673",
+      "goal": "Name the project in one sentence from README.md.",
+      "mode": "read_only",
+      "lifecycle": "completed",
+      "tools": [
+        "file.read"
+      ],
+      "invokedN8n": false,
+      "recommended": "research.problem",
+      "writes": 0,
+      "tests": 0
+    },
+    {
+      "id": "run_ec576a1d9cb01342",
+      "goal": "okay can you do some research on the website",
+      "mode": "read_only",
+      "lifecycle": "cancelled",
+      "tools": [
+        "repo.search",
+        "file.read"
+      ],
+      "invokedN8n": false,
+      "recommended": "research.problem",
+      "writes": 0,
+      "tests": 0
+    },
+    {
+      "id": "run_ef210581c36c058d",
+      "goal": "research the website",
+      "mode": "read_only",
+      "lifecycle": "completed",
+      "tools": [
+        "file.read",
+        "capability.invoke"
+      ],
+      "invokedN8n": true,
+      "recommended": "research.problem",
+      "writes": 0,
+      "tests": 0
+    },
+    {
+      "id": "run_fd85f9cf77ada416",
+      "goal": "Read README.md and name the project.",
+      "mode": "read_only",
+      "lifecycle": "completed",
+      "tools": [
+        "file.read"
+      ],
+      "invokedN8n": false,
+      "recommended": "research.problem",
+      "writes": 0,
+      "tests": 0
+    }
+  ]
+}

@@ -15,7 +15,7 @@ async function researchProblem(body, httpRequest) {
     collectAnswers(problem, httpRequest).catch((error) => failedSource(warnings, "stackoverflow", error)),
   ]);
   const evidence = [];
-  for (const item of [...web, ...issues, ...answers]) {
+  for (const item of [...web, ...issues.filter((item) => relevant(item, problem)), ...answers.filter((item) => relevant(item, problem))]) {
     if (evidence.length >= 6) break;
     evidence.push(item);
   }
@@ -61,7 +61,23 @@ async function collectWeb(problem, httpRequest) {
     const item = evidenceItem(topic.Text, topic.FirstURL, topic.Text, "web");
     if (item) found.push(item);
   }
-  return found.slice(0, 3);
+  if (found.length) return found.slice(0, 3);
+  const query = webQuery(problem);
+  const pageHtml = await httpRequest({
+    url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+    json: false,
+    timeout: 12000,
+    headers: { "User-Agent": "CodeMe" },
+  });
+  const text = asText(pageHtml);
+  const parsed = parseSearchResults(text);
+  if (parsed.length) return parsed.slice(0, 4);
+  if (!text) {
+    const kind = pageHtml == null ? "empty" : typeof pageHtml;
+    const keys = pageHtml && typeof pageHtml === "object" ? Object.keys(pageHtml).slice(0, 6).join(",") : "";
+    throw new Error(`web page was empty (${kind}${keys ? ` ${keys}` : ""})`);
+  }
+  return [];
 }
 
 async function wikipediaProcedure(pageUrl, httpRequest) {
@@ -94,19 +110,109 @@ function procedureExcerpt(extract) {
 }
 
 async function collectIssues(problem, httpRequest) {
+  const query = searchQuery(problem);
+  if (!query) return [];
   const payload = await httpRequest({
-    url: `https://api.github.com/search/issues?q=${encodeURIComponent(problem.slice(0, 200))}&per_page=3`,
+    url: `https://api.github.com/search/issues?q=${encodeURIComponent(query)}&per_page=3`,
     headers: { "User-Agent": "CodeMe", Accept: "application/vnd.github+json" },
   });
   return (payload && payload.items || []).slice(0, 3).map((item) => evidenceItem(item.title, item.html_url, item.body, "github.issues")).filter(Boolean);
 }
 
 async function collectAnswers(problem, httpRequest) {
+  const query = searchQuery(problem);
+  if (!query) return [];
   const payload = await httpRequest({
-    url: `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&site=stackoverflow&pagesize=3&q=${encodeURIComponent(problem.slice(0, 160))}`,
+    url: `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&site=stackoverflow&pagesize=3&q=${encodeURIComponent(query)}`,
     headers: { "User-Agent": "CodeMe" },
   });
   return (payload && payload.items || []).slice(0, 3).map((item) => evidenceItem(item.title, item.link, item.title, "stackoverflow")).filter(Boolean);
+}
+
+const SEARCH_STOP = new Set("what does file files need needs first new the and for with your into from that this will have website project workspace create creating want page pages how why when where which can you are not use using about".split(" "));
+
+function webQuery(problem) {
+  const text = String(problem || "").toLowerCase();
+  if (/\b(website|webpage|web page)\b/.test(text) && /\b(file|files|folder|workspace)\b/.test(text)) {
+    return "new website project files index.html css javascript";
+  }
+  return candidateQueries(problem)[0] || problem;
+}
+
+function searchQuery(problem) {
+  return tokens(problem).slice(0, 8).join(" ");
+}
+
+function tokens(value) {
+  return String(value || "").toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 3 && !SEARCH_STOP.has(token));
+}
+
+function relevant(item, problem) {
+  const wanted = new Set(tokens(problem));
+  if (!wanted.size) return false;
+  return tokens(`${item.title} ${item.excerpt}`).some((token) => wanted.has(token));
+}
+
+function asText(payload) {
+  if (typeof payload === "string") return payload;
+  if (payload && typeof payload.body === "string") return payload.body;
+  if (payload && typeof payload.data === "string") return payload.data;
+  return "";
+}
+
+function parseSearchResults(html) {
+  const text = String(html || "");
+  const found = [];
+  const linkRe = /class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  const snippetRe = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+  const links = [];
+  const snippets = [];
+  let link = linkRe.exec(text);
+  while (link) {
+    links.push(link);
+    link = linkRe.exec(text);
+  }
+  let snippet = snippetRe.exec(text);
+  while (snippet) {
+    snippets.push(snippet);
+    snippet = snippetRe.exec(text);
+  }
+  for (let index = 0; index < links.length && found.length < 4; index += 1) {
+    const title = clip(decodeHtml(links[index][2].replace(/<[^>]+>/g, " ")), 180);
+    const excerpt = clip(decodeHtml((snippets[index] ? snippets[index][1] : links[index][2]).replace(/<[^>]+>/g, " ")), 500);
+    const item = evidenceItem(title, resultUrl(links[index][1]), excerpt, "web");
+    if (item) found.push(item);
+  }
+  return found;
+}
+
+function resultUrl(href) {
+  let raw = decodeHtml(href).trim();
+  if (raw.startsWith("//")) raw = `https:${raw}`;
+  const match = /[?&]uddg=([^&]+)/.exec(raw);
+  let target = match ? safeDecode(match[1]) : raw;
+  if (target.startsWith("//")) target = `https:${target}`;
+  if (!/^https?:\/\//i.test(target)) return "";
+  if (/duckduckgo\.com|ad_domain=|bing\.com\/aclick/i.test(target)) return "";
+  return target;
+}
+
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function decodeHtml(value) {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;|&apos;|&#x27;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
 }
 
 function candidateQueries(problem) {

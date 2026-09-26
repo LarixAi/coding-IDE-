@@ -13,6 +13,31 @@ function createWorkspaceHost(root) {
       }
       return { path: filePath, contents: fs.readFileSync(full, "utf8") };
     },
+    async createDirectory(dirPath) {
+      const full = resolveInside(rootReal, dirPath);
+      fs.mkdirSync(full, { recursive: true });
+      return { path: dirPath };
+    },
+    async listDirectory(dirPath) {
+      const full = dirPath === "." ? rootReal : resolveInside(rootReal, dirPath);
+      if (!fs.existsSync(full) || !fs.statSync(full).isDirectory()) {
+        throw Object.assign(new Error(`Folder not found: ${dirPath}`), { code: "not_found" });
+      }
+      const entries = [];
+      const walk = (dir) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (entry.name === ".git" || entry.name === "node_modules") continue;
+          const child = path.join(dir, entry.name);
+          const relative = path.relative(rootReal, child).split(path.sep).join("/");
+          entries.push({ path: relative, type: entry.isDirectory() ? "dir" : "file" });
+          if (entries.length >= 200) return;
+          if (entry.isDirectory()) walk(child);
+          if (entries.length >= 200) return;
+        }
+      };
+      walk(full);
+      return { path: dirPath, entries };
+    },
     async writeFile(filePath, contents) {
       const full = resolveInside(rootReal, filePath);
       fs.mkdirSync(path.dirname(full), { recursive: true });

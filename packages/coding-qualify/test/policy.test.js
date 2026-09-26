@@ -86,6 +86,18 @@ async function main() {
     assert.strictEqual(linked.ok, false);
     assert.strictEqual(linked.error.code, "path_escape");
     assert.strictEqual(fs.existsSync(path.join(path.dirname(workspace), "pwned.txt")), false);
+    const mkdir = await executeControlled(createWorkspaceHost(workspace), "dir.create", { path: "../outside" });
+    assert.strictEqual(mkdir.ok, false);
+    assert.strictEqual(mkdir.error.code, "path_escape");
+    const created = await executeControlled(createWorkspaceHost(workspace), "dir.create", { path: "website test 2" });
+    assert.strictEqual(created.ok, true);
+    assert.ok(fs.statSync(path.join(workspace, "website test 2")).isDirectory());
+    const escapedList = await executeControlled(createWorkspaceHost(workspace), "dir.list", { path: "../outside" });
+    assert.strictEqual(escapedList.ok, false);
+    assert.strictEqual(escapedList.error.code, "path_escape");
+    const listed = await executeControlled(createWorkspaceHost(workspace), "dir.list", { path: "." });
+    assert.strictEqual(listed.ok, true);
+    assert.ok(listed.data.entries.some((entry) => entry.path === "package.json" && entry.type === "file"));
   });
 
   await test("the fixture test fails before any edit", async () => {
@@ -166,7 +178,11 @@ async function main() {
     const readOnly = new ToolRegistry(new ReadOnlyToolProvider({})).definitions().map((tool) => tool.name);
     const controlled = new ToolRegistry(new ControlledToolProvider({})).definitions().map((tool) => tool.name);
     assert.ok(!readOnly.includes("file.write"));
+    assert.ok(!readOnly.includes("dir.create"));
+    assert.ok(readOnly.includes("dir.list"));
     assert.ok(controlled.includes("file.write"));
+    assert.ok(controlled.includes("dir.list"));
+    assert.ok(controlled.includes("dir.create"));
     assert.ok(controlled.includes("tests.run"));
     assert.ok(controlled.includes("browser.check"));
     const hub = new ExternalCapabilityProvider();

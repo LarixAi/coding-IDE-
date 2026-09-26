@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { jobPrompt, PROFILE } = require("./capabilities/identity");
 
 const root = __dirname;
 const workflowDir = path.join(root, "workflows");
@@ -94,9 +95,44 @@ const knowledgeCode = [
 
 const decomposeCode = [
   ...header,
+  `const HUB_BRIEF = ${JSON.stringify(jobPrompt(PROFILE))};`,
   "const complete = async (payload) => helpers.httpRequest({ method: 'POST', url: 'http://host.docker.internal:11434/api/chat', body: payload, json: true, timeout: 70000 });",
   sourceOf("decompose.js"),
-  ...failureTail("decomposeGoal(body, complete)"),
+  ...failureTail("decomposeGoal(body, complete, HUB_BRIEF)"),
+].join("\n");
+
+const identityCode = [
+  ...header,
+  "const store = $getWorkflowStaticData('global');",
+  sourceOf("identity.js"),
+  "const profile = ensureProfile(store);",
+  "const warnings = [];",
+  "if (!store.told) {",
+  "  try {",
+  "    const response = await helpers.httpRequest({",
+  "      method: 'POST',",
+  "      url: profile.model.endpoint + '/api/chat',",
+  "      body: {",
+  "        model: profile.model.name,",
+  "        stream: false,",
+  "        think: false,",
+  "        options: { temperature: 0, num_predict: 180 },",
+  "        messages: [",
+  "          { role: 'system', content: jobPrompt(profile) },",
+  "          { role: 'user', content: 'State your id, your job in one sentence, and name one tool with how you use it. Do not write code.' },",
+  "        ],",
+  "      },",
+  "      json: true,",
+  "      timeout: 70000,",
+  "    });",
+  "    const text = response && response.message && response.message.content ? String(response.message.content) : '';",
+  "    store.acknowledgement = text.replace(/\\s+/g, ' ').trim().slice(0, 600);",
+  "    store.told = Boolean(store.acknowledgement);",
+  "  } catch (error) {",
+  "    warnings.push(String(error && error.message || error).slice(0, 200) || 'The model was unreachable');",
+  "  }",
+  "}",
+  "return [{ json: { protocolVersion: 1, requestId: body.requestId, status: 'ok', data: { profile: store.profile, acknowledgement: store.acknowledgement || '', told: Boolean(store.told) }, sources: [], warnings, error: null, duration: 1 } }];",
 ].join("\n");
 
 const discoveryCode = [
@@ -135,6 +171,15 @@ const files = {
     webhookId: "codeme-task-decompose",
     code: decomposeCode,
     nodePrefix: "c0de4e01-0005-4000-8000-",
+  }),
+  "hub-identity.json": workflow({
+    id: "codemeHub",
+    versionId: "codemeHubV1",
+    name: "CodeMe hub identity",
+    webhookPath: "codeme-hub-identity",
+    webhookId: "codeme-hub-identity",
+    code: identityCode,
+    nodePrefix: "c0de4e01-0006-4000-8000-",
   }),
   "capabilities.json": workflow({
     id: "c0de4e01-2222-4000-8000-000000000020",

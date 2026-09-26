@@ -25,8 +25,16 @@ const DEFINITIONS = {
     description: "Start the workspace preview if needed and check a local page. Use the site URL from the project, or a workspace HTML path.",
     parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
   },
+  "dir.create": {
+    description: "Create one workspace-relative folder. Parent folders are created with it. This does not use the shell.",
+    parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+  },
+  "dir.list": {
+    description: "List files and folders inside the workspace. Use path \".\" for the whole workspace. This does not search file text and does not use the shell.",
+    parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+  },
   "file.write": {
-    description: "Write a workspace-relative text file. The path must stay inside the workspace.",
+    description: "Write a workspace-relative text file. Parent folders are created for the file. The path must stay inside the workspace.",
     parameters: {
       type: "object",
       properties: { path: { type: "string" }, contents: { type: "string" } },

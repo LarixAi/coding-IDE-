@@ -389,8 +389,9 @@ async function main() {
     "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c6360000002000100ffff03000006000557bf0000000049454e44ae426082",
     "hex",
   );
-  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.mkdirSync(path.join(root, "src/styles"), { recursive: true });
   fs.writeFileSync(path.join(root, "src/index.html"), "<html><body>old</body></html>\n");
+  fs.writeFileSync(path.join(root, "src/styles/site.css"), "body{margin:0}\n");
   const layoutHost = workspace(root);
   layoutHost.writeFile = async (file, contents) => {
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
@@ -400,6 +401,7 @@ async function main() {
   layoutHost.browserCheck = async (url) => ({ url, statusCode: 200, title: "CarBid", available: true });
   const coded = sessionFor(root, [
     { text: "Let me search for HTML files", toolCalls: [{ name: "file.read", args: { path: "src/index.html" } }] },
+    { text: "Reading the CSS.", toolCalls: [{ name: "file.read", args: { path: "src/styles/site.css" } }] },
     { text: "Applying a tighter layout.", toolCalls: [{ name: "file.write", args: { path: "src/index.html", contents: "<html><body><header>Showroom</header></body></html>\n" } }] },
     { text: "Checking the preview.", toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:4173/" } }] },
     { text: "The layout is updated on the preview." },
@@ -419,7 +421,9 @@ async function main() {
   assert.ok(layoutRun.toolCalls.some((call) => call.name === "browser.check"));
   assert.ok(layoutRun.toolCalls.every((call) => call.name !== "capability.invoke"));
   assert.ok(!coded.session.thread.some((item) => /let me search/i.test(item.text)));
-  assert.ok(coded.session.thread.some((item) => item.role === "assistant" && item.text.includes("layout is updated")));
+  assert.strictEqual(layoutRun.lifecycle, "completed");
+  assert.strictEqual(coded.session.stage, "Complete");
+  assert.ok(!coded.session.error);
 
   const pngRead = describeFileRead("shot.png", png);
   assert.strictEqual(pngRead.kind, "image");

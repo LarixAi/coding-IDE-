@@ -5,6 +5,7 @@ const path = require("path");
 const { researchProblem } = require("../capabilities/research");
 const { lookupKnowledge } = require("../capabilities/knowledge");
 const { decomposeGoal } = require("../capabilities/decompose");
+const { ensureProfile, jobPrompt, PROFILE } = require("../capabilities/identity");
 const { N8nCapabilityProvider, ROUTES } = require("../index.js");
 
 function body(capability, input) {
@@ -34,7 +35,7 @@ async function main() {
         return { items: [{ title: "Signature mismatch", html_url: "https://github.com/example/repo/issues/4", body: "The timestamp drifted." }] };
       }
       if (options.url.includes("stackoverflow")) {
-        return { items: [{ title: "Verify the header", link: "https://stackoverflow.com/questions/1" }] };
+        return { items: [{ title: "Verify the webhook signature", link: "https://stackoverflow.com/questions/1" }] };
       }
       throw new Error(`unexpected url ${options.url}`);
     };
@@ -98,6 +99,34 @@ async function main() {
     assert.ok(calls.filter((url) => url.includes("duckduckgo")).length >= 2);
   });
 
+  await test("an empty instant answer uses web results and drops unrelated pages", async () => {
+    const html = [
+      '<div class="links_main links_deep result__body"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.w3schools.com%2Fhtml%2Fhtml_intro.asp&amp;rut=abc">Your first web page</a>',
+      '<a class="result__snippet" href="s">Save this file as index.html and link a stylesheet.</a></div>',
+      '<div class="result__body"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fduckduckgo.com%2Fy.js%3Fad_domain%3Dexample.com">Ad</a>',
+      '<a class="result__snippet" href="s">Buy a course</a></div>',
+    ].join("");
+    const httpRequest = async (options) => {
+      if (options.url.includes("api.duckduckgo.com")) return { Heading: "", AbstractText: "", AbstractURL: "", RelatedTopics: [] };
+      if (options.url.includes("html.duckduckgo.com")) {
+        assert.ok(decodeURIComponent(options.url).includes("index.html"));
+        return html;
+      }
+      if (options.url.includes("api.github.com")) {
+        return { items: [{ title: "Unrelated agent workspace", html_url: "https://github.com/example/repo/issues/9", body: "Session directories are reassembled by hand." }] };
+      }
+      if (options.url.includes("stackexchange.com")) return { items: [] };
+      throw new Error(`unexpected url ${options.url}`);
+    };
+    const result = await researchProblem(body("research.problem", { problem: "What files does a new website project need in the workspace first?" }), httpRequest);
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.data.likely_cause, null);
+    assert.strictEqual(result.data.evidence.length, 1);
+    assert.strictEqual(result.data.evidence[0].source, "web");
+    assert.strictEqual(result.data.evidence[0].url, "https://www.w3schools.com/html/html_intro.asp");
+    assert.ok(result.data.evidence[0].excerpt.includes("index.html"));
+  });
+
   await test("a failed source becomes a warning instead of a fabricated cause", async () => {
     const result = await researchProblem(body("research.problem", { problem: "missing docs" }), async () => {
       throw new Error("offline");
@@ -117,6 +146,27 @@ async function main() {
     assert.strictEqual(saved.status, "ok");
     const again = lookupKnowledge(body("knowledge.lookup", { query: "null check" }), store);
     assert.ok(again.data.matches.some((entry) => entry.title === "Retry note"));
+  });
+
+  await test("the hub profile stores its model, id, job, and tool instructions", async () => {
+    const store = {};
+    const profile = ensureProfile(store);
+    assert.strictEqual(profile.id, "codeme-hub");
+    assert.strictEqual(profile.model.name, "qwen3.5:9b");
+    assert.strictEqual(profile.storage.workflowId, "codemeHub");
+    assert.ok(profile.job.includes("CodeMe owns files"));
+    assert.deepStrictEqual(profile.tools.map((tool) => tool.name), ["research.problem", "knowledge.lookup", "task.decompose"]);
+    assert.ok(profile.tools.every((tool) => tool.when && tool.how));
+    const brief = jobPrompt(profile);
+    assert.ok(brief.includes("Your id is codeme-hub"));
+    assert.ok(brief.includes("research.problem"));
+    let seen = "";
+    await decomposeGoal(body("task.decompose", { goal: "Add a health check." }), async (payload) => {
+      seen = payload.messages[0].content;
+      return { message: { content: JSON.stringify({ project: "Health", tasks: [{ id: "1", title: "Add the check", dependsOn: [], objective: "Expose health", doneWhen: "The route responds" }] }) } };
+    }, brief);
+    assert.ok(seen.startsWith("Your id is codeme-hub"));
+    assert.strictEqual(PROFILE.storage.workflowId.length <= 21, true);
   });
 
   await test("decompose keeps a valid graph and rejects a non-plan", async () => {
@@ -179,6 +229,7 @@ async function main() {
     const knowledge = JSON.parse(fs.readFileSync(path.join(__dirname, "../workflows/knowledge-lookup.json"), "utf8"));
     const decompose = JSON.parse(fs.readFileSync(path.join(__dirname, "../workflows/task-decompose.json"), "utf8"));
     const discovery = JSON.parse(fs.readFileSync(path.join(__dirname, "../workflows/capabilities.json"), "utf8"));
+    const identity = JSON.parse(fs.readFileSync(path.join(__dirname, "../workflows/hub-identity.json"), "utf8"));
     const code = (workflow) => workflow.nodes.find((node) => node.type === "n8n-nodes-base.code").parameters.jsCode;
     assert.ok(code(research).includes("research.problem"));
     assert.ok(code(research).includes("api.duckduckgo.com"));
@@ -189,6 +240,11 @@ async function main() {
     assert.ok(code(knowledge).includes("knowledge.lookup"));
     assert.ok(code(decompose).includes("task.decompose"));
     assert.ok(code(decompose).includes("host.docker.internal:11434"));
+    assert.ok(code(decompose).includes("Your id is codeme-hub"));
+    assert.ok(identity.id.length > 0 && identity.id.length <= 21);
+    assert.ok(code(identity).includes("qwen3.5:9b"));
+    assert.ok(code(identity).includes("ensureProfile"));
+    assert.ok(code(identity).includes("$getWorkflowStaticData"));
     assert.ok(code(discovery).includes("research.problem"));
     assert.ok(code(discovery).includes("task.decompose"));
   });

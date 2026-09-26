@@ -32,6 +32,8 @@ async function main() {
       "diagnostics.run",
       "tests.run",
       "browser.check",
+      "dir.create",
+      "dir.list",
     ]) {
       assert.ok(TOOLS.includes(name), name);
     }

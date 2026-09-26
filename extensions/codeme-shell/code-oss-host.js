@@ -24,6 +24,32 @@ async function readFile(filePath) {
   return describeFileRead(filePath, bytes);
 }
 
+async function createDirectory(dirPath) {
+  const uri = vscode.Uri.joinPath(workspaceFolder().uri, dirPath);
+  await vscode.workspace.fs.createDirectory(uri);
+  return { path: dirPath };
+}
+
+async function listDirectory(dirPath) {
+  const root = workspaceFolder().uri;
+  const start = vscode.Uri.joinPath(root, dirPath === "." ? "" : dirPath);
+  const entries = [];
+  async function walk(uri) {
+    const children = await vscode.workspace.fs.readDirectory(uri);
+    for (const [name, type] of children) {
+      if (name === ".git" || name === "node_modules") continue;
+      const child = vscode.Uri.joinPath(uri, name);
+      const kind = type === vscode.FileType.Directory ? "dir" : "file";
+      entries.push({ path: relativePath(child), type: kind });
+      if (entries.length >= 200) return;
+      if (kind === "dir") await walk(child);
+      if (entries.length >= 200) return;
+    }
+  }
+  await walk(start);
+  return { path: dirPath, entries };
+}
+
 async function writeFile(filePath, contents) {
   const uri = vscode.Uri.joinPath(workspaceFolder().uri, filePath);
   const bytes = Buffer.from(contents, "utf8");
@@ -179,6 +205,8 @@ async function browserCheck(url) {
 const host = {
   readFile,
   writeFile,
+  createDirectory,
+  listDirectory,
   search,
   runTerminal,
   gitStatus,

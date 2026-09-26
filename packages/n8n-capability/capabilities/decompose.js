@@ -1,4 +1,4 @@
-async function decomposeGoal(body, complete) {
+async function decomposeGoal(body, complete, brief) {
   const started = Date.now();
   if (body.capability && body.capability !== "task.decompose") {
     return planEnvelope(body, "error", null, { code: "capability_unavailable", message: "This workflow only serves task.decompose" }, started);
@@ -17,7 +17,7 @@ async function decomposeGoal(body, complete) {
       messages: [
         {
           role: "system",
-          content: "Split one software goal into a dependency-ordered task graph for a small coding model. Return JSON only with project and tasks. Each task has id, title, dependsOn, objective, and doneWhen. Use at most 4 tasks. Keep every field short. Do not write code.",
+          content: `${brief ? String(brief).slice(0, 2000) + " " : ""}Split one software goal into a dependency-ordered task graph for a small coding model. Return JSON only with project and tasks. Each task has id, title, dependsOn, objective, and doneWhen. Use at most 4 tasks. Keep every field short. Do not write code.`,
         },
         { role: "user", content: goal },
       ],

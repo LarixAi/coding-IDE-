@@ -102,6 +102,14 @@ async function main() {
     assert.strictEqual(classifyTask("research the website", { taskClass: "plan", mode: "read_only" }), "plan");
     assert.strictEqual(classifyTask("Fix the failing identification check", { mode: "controlled" }), "bug-fix");
     assert.strictEqual(classifyTask("can you find me a better layout for my website", { mode: "controlled" }), "layout");
+    assert.strictEqual(classifyTask("can you create e a folder called website test 2", { mode: "controlled" }), "folder");
+    assert.strictEqual(classifyTask("can you create a folder called website test 2", { mode: "read_only" }), "inspect");
+    assert.strictEqual(classifyTask("can you check what files are missing from inthe folder", { mode: "controlled" }), "inspect");
+    assert.strictEqual(classifyTask("can you continue working on the files thhat are missing and run the website", { mode: "controlled" }), "build");
+    assert.strictEqual(classifyTask("can you create the missing file in the folder", { mode: "controlled" }), "build");
+    assert.strictEqual(classifyTask("can you create me a website about a dealership where I can sell cars", { mode: "controlled" }), "build");
+    assert.strictEqual(classifyTask("can you create me a website about a dealership where I can sell cars", { mode: "read_only" }), "inspect");
+    assert.strictEqual(classifyTask("can you create a folder called ../outside", { mode: "controlled" }), "bug-fix");
     assert.strictEqual(classifyTask("Add registration", { requirements: [{ id: "a" }, { id: "b" }, { id: "c" }] }), "feature");
     const strategy = selectStrategy("Fix the failing test", { mode: "controlled" });
     assert.strictEqual(strategy.id, "bug-fix");
@@ -111,6 +119,171 @@ async function main() {
     assert.strictEqual(run.strategyRecord.version, 1);
     const planned = createRun({ goal: "research the website", model: "scripted", providerName: "scripted", mode: "read_only", taskClass: "plan" });
     assert.strictEqual(planned.taskClass, "plan");
+  });
+
+  await test("creating a named folder writes the directory and finishes", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-folder-"));
+    fs.writeFileSync(path.join(workspace, "README.md"), "workspace\n");
+    const provider = new ScriptedModelProvider([{ text: "this model step must not run" }]);
+    const handle = start({
+      goal: "can you create e a folder called website test 2",
+      mode: "controlled",
+      workspace,
+      provider,
+    });
+    const run = await handle.done;
+    assert.strictEqual(run.lifecycle, "completed");
+    assert.strictEqual(run.taskClass, "folder");
+    assert.strictEqual(provider.calls.length, 0);
+    assert.ok(fs.statSync(path.join(workspace, "website test 2")).isDirectory());
+    assert.ok(run.toolCalls.some((call) => call.name === "dir.create" && call.result && call.result.ok));
+  });
+
+  await test("a missing-files question lists the workspace instead of searching the web", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-list-"));
+    fs.writeFileSync(path.join(workspace, "package.json"), "{}\n");
+    fs.writeFileSync(path.join(workspace, "index.html"), "<html></html>\n");
+    const hub = {
+      invocations: [],
+      async listCapabilities() {
+        return [{ name: "research.problem", category: "research", risk: "read", permissions: ["evidence"], description: "Gather evidence" }];
+      },
+      async invoke() {
+        hub.invocations.push("research.problem");
+        return { protocolVersion: 1, status: "ok", data: { evidence: [] }, error: null };
+      },
+    };
+    const provider = new ScriptedModelProvider([
+      { text: "Listing the folder.", toolCalls: [{ name: "dir.list", args: { path: "." } }] },
+      { text: "The folder has package.json and index.html." },
+    ]);
+    const run = await start({
+      goal: "can you check what files are missing from inthe folder",
+      mode: "controlled",
+      workspace,
+      provider,
+      capabilities: hub,
+    }).done;
+    assert.strictEqual(run.taskClass, "inspect");
+    assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
+    assert.deepStrictEqual(hub.invocations, []);
+    const listed = run.toolCalls.find((call) => call.name === "dir.list");
+    assert.ok(listed && listed.result && listed.result.ok);
+    assert.ok(listed.result.data.entries.some((entry) => entry.path === "package.json"));
+    assert.ok(provider.calls[0].messages.some((message) => String(message.content).includes("dir.list")));
+  });
+
+  await test("finding a missing site file does not finish until that file is written", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-repair-"));
+    fs.mkdirSync(path.join(workspace, "public/css"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "package.json"), "{\"scripts\":{\"start\":\"npx http-server public -p 3000\"}}\n");
+    fs.writeFileSync(path.join(workspace, "public/css/style.css"), "body{}\n");
+    const host = createWorkspaceHost(workspace);
+    host.browserCheck = async (url) => ({ url, statusCode: 200, title: "Dealership", available: true });
+    const provider = new ScriptedModelProvider([
+      { text: "Listing the folder.", toolCalls: [{ name: "dir.list", args: { path: "." } }] },
+      { text: "I can see the public directory is missing index.html. Let me create a proper index.html for the public directory:" },
+      { text: "Writing the missing page.", toolCalls: [{ name: "file.write", args: { path: "public/index.html", contents: "<html><body><h1>Dealership</h1></body></html>\n" } }] },
+      { text: "Checking the site.", toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:3000/" } }] },
+      { text: "The public index is in place and the site responds." },
+    ]);
+    const run = await start({
+      goal: "can you continue working on the files thhat are missing and run the website",
+      mode: "controlled",
+      workspace,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+    }).done;
+    assert.strictEqual(run.taskClass, "build");
+    assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
+    assert.ok(run.messages.some((message) => String(message.content).includes("Write the missing site file")));
+    assert.strictEqual(fs.readFileSync(path.join(workspace, "public/index.html"), "utf8").includes("Dealership"), true);
+    assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.result && call.result.ok));
+    assert.ok(provider.calls[0].messages.some((message) => String(message.content).includes("Workspace files:")));
+  });
+
+  await test("a fix request sees the workspace and does not finish on a promised write", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-fix-write-"));
+    fs.mkdirSync(path.join(workspace, "public/css"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "package.json"), "{\"scripts\":{\"start\":\"npx http-server public -p 3000\",\"test\":\"node public/index.html\"}}\n");
+    fs.writeFileSync(path.join(workspace, "public/css/style.css"), "body{}\n");
+    const host = createWorkspaceHost(workspace);
+    host.browserCheck = async (url) => ({ url, statusCode: 200, title: "Dealership", available: true });
+    host.runTests = async () => ({ command: "npm test", exitCode: 0, stdout: "ok", stderr: "" });
+    host.gitDiff = async () => {
+      throw Object.assign(new Error("The workspace is not a Git repository"), { code: "not_a_repository" });
+    };
+    const hub = {
+      invocations: [],
+      async listCapabilities() {
+        return [{ name: "research.problem", category: "research", risk: "read", permissions: ["evidence"], description: "Gather evidence" }];
+      },
+      async invoke() {
+        hub.invocations.push("research.problem");
+        return { protocolVersion: 1, status: "ok", data: { evidence: [{ title: "Please proceed", excerpt: "email advice" }] }, error: null };
+      },
+    };
+    const provider = new ScriptedModelProvider([
+      { text: "The public directory is missing index.html. Let me create it:" },
+      { text: "Writing the page.", toolCalls: [{ name: "file.write", args: { path: "public/index.html", contents: "<html><body><h1>Dealership</h1></body></html>\n" } }] },
+      { text: "Checking tests.", toolCalls: [{ name: "tests.run", args: { command: "npm test" } }] },
+      { text: "Checking diff.", toolCalls: [{ name: "git.diff", args: {} }] },
+      { text: "The missing page is saved." },
+    ]);
+    const run = await start({
+      goal: "okay can you fix the issue",
+      mode: "controlled",
+      workspace,
+      provider,
+      capabilities: hub,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+    }).done;
+    assert.deepStrictEqual(hub.invocations, []);
+    assert.ok(provider.calls[0].messages.some((message) => String(message.content).includes("package.json")));
+    assert.ok(provider.calls[0].tools.some((tool) => tool.name === "file.write"));
+    assert.ok(provider.calls[1].tools.map((tool) => tool.name).includes("file.write"));
+    assert.ok(!provider.calls[1].tools.some((tool) => tool.name === "repo.search"));
+    assert.strictEqual(fs.existsSync(path.join(workspace, "public/index.html")), true);
+    assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
+  });
+
+  await test("a stalled create-file loop is sent to write instead of stopping", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-stall-write-"));
+    fs.mkdirSync(path.join(workspace, "public/css"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "package.json"), "{}\n");
+    fs.writeFileSync(path.join(workspace, "website/index.html"), "<html></html>\n");
+    fs.writeFileSync(path.join(workspace, "public/css/style.css"), "body{}\n");
+    const hub = {
+      invocations: [],
+      async listCapabilities() {
+        return [{ name: "research.problem", category: "research", risk: "read", permissions: ["evidence"], description: "Gather evidence" }];
+      },
+      async invoke() {
+        hub.invocations.push("research.problem");
+        return { protocolVersion: 1, status: "ok", data: { evidence: [] }, error: null };
+      },
+    };
+    const list = { name: "dir.list", args: { path: "." } };
+    const provider = new ScriptedModelProvider([
+      { text: "Looking again.", toolCalls: [list] },
+      { text: "Looking again.", toolCalls: [list] },
+      { text: "Looking again.", toolCalls: [list] },
+      { text: "Writing the missing page.", toolCalls: [{ name: "file.write", args: { path: "public/index.html", contents: "<html><body>Dealership</body></html>\n" } }] },
+      { text: "The missing file is in the folder." },
+    ]);
+    const run = await start({
+      goal: "can you create the missing file in the folder",
+      mode: "controlled",
+      workspace,
+      provider,
+      capabilities: hub,
+    }).done;
+    assert.strictEqual(run.taskClass, "build");
+    assert.deepStrictEqual(hub.invocations, []);
+    assert.ok(run.messages.some((message) => String(message.content).includes("Call file.write now")));
+    assert.strictEqual(fs.readFileSync(path.join(workspace, "public/index.html"), "utf8").includes("Dealership"), true);
+    assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
+    assert.notStrictEqual(run.outcome && run.outcome.reason, "stagnation");
   });
 
   await test("a follow-up updates requirements and forces a re-plan", async () => {

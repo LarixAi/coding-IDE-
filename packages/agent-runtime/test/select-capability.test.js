@@ -151,6 +151,63 @@ async function main() {
     assert.ok(offered.includes("capability.invoke"));
   });
 
+  await test("a new website prompt is researched before the model starts", async () => {
+    const state = { invocations: [] };
+    const provider = new ScriptedModelProvider([
+      { text: "Listing the workspace.", toolCalls: [{ name: "dir.list", args: { path: "." } }] },
+      { text: "Writing the project file.", toolCalls: [{ name: "file.write", args: { path: "package.json", contents: "{\"scripts\":{\"start\":\"node server.js --port 4173\"}}\n" } }] },
+      { text: "Writing the server.", toolCalls: [{ name: "file.write", args: { path: "server.js", contents: "require(\"http\").createServer((req, res) => res.end(\"ok\")).listen(4173, \"127.0.0.1\");\n" } }] },
+      { text: "Writing the page.", toolCalls: [{ name: "file.write", args: { path: "index.html", contents: "<html><body><h1>Dealership</h1></body></html>\n" } }] },
+      { text: "Checking the preview.", toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:4173/" } }] },
+      { text: "The dealership page can list cars for bid or buy now." },
+    ]);
+    const goal = "can you create me a website about a dealership where I can sell cars, post them so people can bid or buy now, create an account, and post their own cars for sale";
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-build-"));
+    const workspace = path.join(directory, "ws");
+    fs.mkdirSync(workspace);
+    fs.writeFileSync(path.join(workspace, "README.md"), "site notes\n");
+    const host = {
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(workspace, filePath), "utf8") };
+      },
+      async writeFile(filePath, contents) {
+        const full = path.join(workspace, filePath);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, contents);
+        return { path: filePath, bytes: Buffer.byteLength(contents) };
+      },
+      async listDirectory() {
+        return { path: ".", entries: [{ path: "README.md", type: "file" }] };
+      },
+      async search() { return { query: "", matches: [] }; },
+      async gitStatus() { return { branch: "main", changes: [] }; },
+      async gitDiff() { return { diff: "" }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) { return { url, statusCode: 200, title: "Dealership", available: true }; },
+    };
+    const run = await startAgentRun({
+      goal,
+      model: "scripted",
+      providerName: "scripted",
+      mode: "controlled",
+      composerMode: "code",
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store: new RunStore(path.join(directory, "runs")),
+      capabilities: liveHub(state),
+      maxIterations: 8,
+    }).done;
+    assert.strictEqual(run.taskClass, "build");
+    assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
+    assert.deepStrictEqual(state.invocations, ["research.problem"]);
+    const directed = run.toolCalls.find((call) => call.directedBy === "runtime");
+    assert.ok(directed);
+    assert.strictEqual(directed.iteration, 0);
+    assert.strictEqual(directed.args.input.problem, goal);
+    assert.ok(provider.calls[0].messages.some((message) => String(message.content).includes("The hub read this prompt before coding")));
+    assert.ok(provider.calls[0].messages.some((message) => String(message.content).includes("short evidence")));
+  });
+
   await test("a multi-part goal selects the listed decompose capability", async () => {
     const state = { invocations: [] };
     const provider = new ScriptedModelProvider([
@@ -164,11 +221,10 @@ async function main() {
       composerMode: "ask",
     }).done;
     assert.strictEqual(run.lifecycle, "completed");
-    const invoked = run.toolCalls.find((call) => call.name === "capability.invoke");
+    const invoked = run.toolCalls.find((call) => call.name === "capability.invoke" && call.args && call.args.capability === "task.decompose");
     assert.ok(invoked);
-    assert.strictEqual(invoked.args.capability, "task.decompose");
     assert.strictEqual(invoked.directedBy, "runtime");
-    assert.deepStrictEqual(state.invocations, ["task.decompose"]);
+    assert.deepStrictEqual(state.invocations, ["research.problem", "task.decompose"]);
   });
 
   await test("empty discovery offers no capability tools and never invokes", async () => {
@@ -201,8 +257,9 @@ async function main() {
     const state = { invocations: [] };
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-layout-"));
     const workspace = path.join(directory, "ws");
-    fs.mkdirSync(path.join(workspace, "src"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "src/styles"), { recursive: true });
     fs.writeFileSync(path.join(workspace, "src/index.html"), "<html><body>old</body></html>\n");
+    fs.writeFileSync(path.join(workspace, "src/styles/site.css"), "body{margin:0}\n");
     const host = {
       async readFile(filePath) {
         return { path: filePath, contents: fs.readFileSync(path.join(workspace, filePath), "utf8") };
@@ -219,9 +276,10 @@ async function main() {
     };
     const provider = new ScriptedModelProvider([
       { text: "Reading the page.", toolCalls: [{ name: "file.read", args: { path: "src/index.html" } }] },
+      { text: "Reading the CSS.", toolCalls: [{ name: "file.read", args: { path: "src/styles/site.css" } }] },
       { text: "Applying a tighter layout.", toolCalls: [{ name: "file.write", args: { path: "src/index.html", contents: "<html><body><header>Showroom</header></body></html>\n" } }] },
       { text: "Checking the preview.", toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:4173/" } }] },
-      { text: "The layout is updated on the preview." },
+      { text: "" },
     ]);
     const run = await startAgentRun({
       goal: "can you find me a better layout for my website",
@@ -243,8 +301,58 @@ async function main() {
     assert.deepStrictEqual(state.invocations, []);
     assert.ok(run.toolCalls.every((call) => call.name !== "capability.invoke"));
     assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("Apply the layout with file.write"))));
+    const writeTools = (provider.calls[2] && provider.calls[2].tools || []).map((item) => item.name).sort();
+    assert.deepStrictEqual(writeTools, ["browser.check", "file.write"]);
     assert.ok(run.toolCalls.some((call) => call.name === "file.write" && call.args.path === "src/index.html"));
     assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.result && call.result.ok));
+    assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
+  });
+
+  await test("a Code layout goal cannot finish until it writes and previews", async () => {
+    const state = { invocations: [] };
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-layout-verify-"));
+    const workspace = path.join(directory, "ws");
+    fs.mkdirSync(path.join(workspace, "src/styles"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "src/index.html"), "<html><body>old</body></html>\n");
+    fs.writeFileSync(path.join(workspace, "src/styles/site.css"), "body{margin:0}\n");
+    const host = {
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(workspace, filePath), "utf8") };
+      },
+      async writeFile(filePath, contents) {
+        fs.writeFileSync(path.join(workspace, filePath), contents);
+        return { path: filePath, bytes: Buffer.byteLength(contents) };
+      },
+      async search() { return { query: "html", matches: [{ path: "src/index.html", line: 1, text: "<html>" }] }; },
+      async gitStatus() { return { branch: "main", changes: [] }; },
+      async gitDiff() { return { diff: "" }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) { return { url, statusCode: 200, title: "CarBid", available: true }; },
+    };
+    const provider = new ScriptedModelProvider([
+      { text: "Reading the page.", toolCalls: [{ name: "file.read", args: { path: "src/index.html" } }] },
+      { text: "Reading the CSS.", toolCalls: [{ name: "file.read", args: { path: "src/styles/site.css" } }] },
+      { text: "I'll apply a better layout to the HTML and CSS files." },
+      { text: "Applying a tighter layout.", toolCalls: [{ name: "file.write", args: { path: "src/index.html", contents: "<html><body><header>Showroom</header></body></html>\n" } }] },
+      { text: "Checking the preview.", toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:4173/" } }] },
+      { text: "The layout is updated on the preview." },
+    ]);
+    const run = await startAgentRun({
+      goal: "can you find me a better layout for my website",
+      model: "scripted",
+      providerName: "scripted",
+      mode: "controlled",
+      composerMode: "code",
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store: new RunStore(path.join(directory, "runs")),
+      capabilities: liveHub(state),
+      maxIterations: 8,
+    }).done;
+    assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("Apply the layout with file.write"))));
+    assert.ok(run.toolCalls.some((call) => call.name === "file.write"));
+    assert.ok(run.toolCalls.some((call) => call.name === "browser.check"));
+    assert.strictEqual(run.verification.summary, "The layout change is visible in the preview");
     assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
   });
 
@@ -252,8 +360,9 @@ async function main() {
     const state = { invocations: [] };
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-layout-repeat-"));
     const workspace = path.join(directory, "ws");
-    fs.mkdirSync(path.join(workspace, "src"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "src/styles"), { recursive: true });
     fs.writeFileSync(path.join(workspace, "src/index.html"), "<html><body>old</body></html>\n");
+    fs.writeFileSync(path.join(workspace, "src/styles/site.css"), "body{margin:0}\n");
     const host = {
       async readFile(filePath) {
         return { path: filePath, contents: fs.readFileSync(path.join(workspace, filePath), "utf8") };
@@ -271,6 +380,7 @@ async function main() {
     const provider = new ScriptedModelProvider([
       { text: "Let me search for HTML files", toolCalls: [{ name: "repo.search", args: { query: "CarBidDealership" } }] },
       { text: "I need to inspect the current HTML", toolCalls: [{ name: "file.read", args: { path: "src/index.html" } }] },
+      { text: "Let me also read the CSS", toolCalls: [{ name: "file.read", args: { path: "src/styles/site.css" } }] },
       { text: "Let me search for HTML files", toolCalls: [{ name: "repo.search", args: { query: "CarBidDealership" } }] },
       { text: "Applying a tighter layout.", toolCalls: [{ name: "file.write", args: { path: "src/index.html", contents: "<html><body><header>Showroom</header></body></html>\n" } }] },
       { text: "Checking the preview.", toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:4173/" } }] },

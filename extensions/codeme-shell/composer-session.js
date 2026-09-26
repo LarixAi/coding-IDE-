@@ -312,7 +312,7 @@ class ComposerSession {
           type: item.type,
           size: item.size,
         })),
-        timeoutMs: 180000,
+        timeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
       });
     } catch (error) {
       this.failRequest(requestId, error instanceof Error ? error.message : String(error));

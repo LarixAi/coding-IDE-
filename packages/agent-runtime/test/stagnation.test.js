@@ -117,14 +117,12 @@ async function main() {
     const hubState = { invocations: 0 };
     const provider = new ScriptedModelProvider(loopSteps(8));
     const run = await start({ provider, capabilities: researchHub(hubState) }).done;
-    const researchNeeded = run.events.find((event) => event.type === "strategy" && event.to === "research_needed");
     const directed = run.toolCalls.find((call) => call.directedBy === "runtime");
     assert.strictEqual(run.lifecycle, "failed");
     assert.strictEqual(run.error.code, "stagnation");
     assert.ok(run.iteration <= 6);
     assert.ok(run.iteration < run.maxIterations);
-    assert.ok(researchNeeded);
-    assert.strictEqual(researchNeeded.stagnantTurns, 2);
+    assert.strictEqual(directed.iteration, 0);
     assert.ok(run.progress.repeatedIntentCount >= 2);
     assert.strictEqual(hubState.invocations, 1);
     assert.strictEqual(run.progress.researchEscalations, 1);
@@ -185,7 +183,7 @@ async function main() {
     const run = await start({ provider, capabilities: researchHub({ invocations: 0 }) }).done;
     const refused = run.toolCalls.filter((call) => call.name === "terminal.run" && call.result.ok === false);
     assert.strictEqual(refused.length, 2);
-    assert.ok(run.events.some((event) => event.type === "strategy" && event.to === "research_needed" && event.iteration <= 4));
+    assert.ok(run.toolCalls.some((call) => call.directedBy === "runtime" && call.iteration === 0));
   });
 
   await test("reworded reasoning without any action does not buy more turns", async () => {
@@ -200,20 +198,19 @@ async function main() {
     ]);
     const run = await start({ provider, capabilities: researchHub(hubState) }).done;
     const stagnant = run.events.find((event) => event.type === "strategy" && event.to === "stagnant");
-    const escalated = run.events.find((event) => event.type === "strategy" && event.to === "research_needed");
     assert.ok(stagnant, "narration must register as stagnation");
     assert.strictEqual(stagnant.iteration, 3);
-    assert.ok(escalated);
-    assert.strictEqual(escalated.iteration, 4);
     assert.strictEqual(hubState.invocations, 1);
+    assert.ok(run.toolCalls.some((call) => call.directedBy === "runtime" && call.iteration === 0));
     assert.ok(run.messages.some((message) => message.role === "user" && String(message.content).includes("does not change the file")));
   });
 
   await test("research evidence must be followed by new progress", async () => {
     const hubState = { invocations: 0 };
-    const steps = loopSteps(4);
-    steps.push(step("The evidence changes the repair.", { name: "file.write", args: { path: "src/check.js", contents: "module.exports = { validNumber() { return false; } };\n" } }));
-    steps.push(step("repaired after the evidence"));
+    const steps = [
+      step("The evidence changes the repair.", { name: "file.write", args: { path: "src/check.js", contents: "module.exports = { validNumber() { return false; } };\n" } }),
+      step("repaired after the evidence"),
+    ];
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-stagnation-fix-"));
     fs.cpSync(FIXTURE, workspace, { recursive: true });
     const provider = new ScriptedModelProvider(steps);
@@ -240,8 +237,8 @@ async function main() {
     const hubState = { invocations: 0 };
     const limited = await start({
       provider: new ScriptedModelProvider(Array.from({ length: 6 }, (_, index) => step("", { name: "repo.search", args: { query: `validNumber ${index}` } }))),
-      capabilities: researchHub(hubState),
-      maxIterations: 3,
+      capabilities: { async listCapabilities() { return []; }, async invoke() { return { status: "error" }; } },
+      maxIterations: 1,
       maxIdenticalActions: 10,
     }).done;
     assert.strictEqual(limited.outcome.reason, "iteration_limit");
@@ -254,7 +251,7 @@ async function main() {
       maxIdenticalActions: 10,
     }).done;
     assert.strictEqual(retried.outcome.reason, "repeated_action");
-    assert.strictEqual(retried.toolCalls.length, 2);
+    assert.strictEqual(retried.toolCalls.filter((call) => call.name === "file.read").length, 2);
 
     const cancelling = start({
       provider: new ScriptedModelProvider([{ waitForAbort: true }]),

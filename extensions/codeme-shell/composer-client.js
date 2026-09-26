@@ -74,8 +74,8 @@ function stageForTool(name) {
 
 function isProgressTalk(text) {
   const body = String(text || "").replace(/\s+/g, " ").trim();
-  if (!body || body.length > 280) return false;
-  return /^(let me |i'll |i will |great[,!]? |i found |i need to |first,? let me |i'm going to |now (i'll|let me) )/i.test(body);
+  if (!body) return false;
+  return /^(let me |i'll |i will |great[,!]? |i found |i need to |first,? let me |i'm going to |now (i'll|let me) )/i.test(body.slice(0, 280));
 }
 
 function lastProgressTalk(run) {

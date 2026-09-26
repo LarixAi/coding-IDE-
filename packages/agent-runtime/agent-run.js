@@ -1,8 +1,8 @@
 const crypto = require("crypto");
 const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
-const { createProgressState, recommendCapability, selectCapability, isSiteLayoutGoal, capabilityGuidance, writeFindingsNotice, applyEditNotice, alreadySearched, applyIteration, noteResearch, researchQuestion, postResearchBrief, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
+const { createProgressState, recommendCapability, selectCapability, isSiteLayoutGoal, htmlCssRead, capabilityGuidance, writeFindingsNotice, applyEditNotice, alreadySearched, applyIteration, noteResearch, researchQuestion, postResearchBrief, openingResearchBrief, markQuestionSeen, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
 const { lockModel } = require("./model-lock");
-const { selectStrategy, strategyGuidance } = require("./strategy");
+const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isLocalFollowUp } = require("./strategy");
 const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
 
@@ -51,7 +51,7 @@ function createRun(options) {
     actionCounts: {},
     failureCounts: {},
     cancelRequested: false,
-    timeoutMs: options.timeoutMs ?? 180000,
+    timeoutMs: options.timeoutMs ?? (strategy.taskClass === "layout" ? 300000 : 180000),
     inFlight: null,
     error: null,
     messages: [],
@@ -170,9 +170,16 @@ async function executeRun(run, options) {
     }
   }
 
+  const folder = await createRequestedFolder(run, registry, store);
+  if (folder) return folder;
+  if (!cancelled(run, signal)) await prepareResearch(run, capabilityRegistry, options, signal, store);
+  if (!cancelled(run, signal)) await showWorkspace(run, registry, store);
+
   while (!STOPPED.has(run.lifecycle)) {
     if (cancelled(run, signal)) return finishCancelled(run, store);
     if (run.iteration >= run.maxIterations) {
+      const done = maybeFinishLayout(run, store, lastDecisionText(run));
+      if (done) return done;
       return finishFailed(run, store, "iteration_limit", "Maximum iterations reached");
     }
 
@@ -227,6 +234,11 @@ async function executeRun(run, options) {
       run.verificationHistory.push({ ...verification, at: new Date().toISOString() });
       store.save(run);
       if (verification.status === "passed") return finishCompleted(run, store, text);
+      if (run.progress && (/file\.write/i.test(verification.summary) || promisesFile(text))) {
+        run.progress.writeNow = true;
+        run.progress.focus = true;
+        run.progress.semanticStagnation = 0;
+      }
       const settled = await settleTurn(run, store, capabilityRegistry, options, signal);
       if (settled && settled.lifecycle) return settled;
       if (await maybeDirectSelected(run, selected, capabilityRegistry, options, signal, store)) continue;
@@ -249,11 +261,17 @@ async function executeRun(run, options) {
       if ((run.actionCounts[key] || 0) >= run.maxIdenticalActions) {
         return finishFailed(run, store, "repeated_action", `Repeated action ${call.name}`);
       }
-      if (call.name === "repo.search" && isSiteLayoutGoal(run.goal) && ((run.actionCounts[key] || 0) >= 1 || alreadySearched(run.progress, call.args && call.args.query))) {
+      if (isSiteLayoutGoal(run.goal) && shouldSkipLayoutInspect(run, call, key)) {
         const result = {
           ok: true,
-          tool: "repo.search",
-          data: { query: call.args.query, matches: [], repeated: true },
+          tool: call.name,
+          data: {
+            withheld: true,
+            query: call.args && call.args.query,
+            path: call.args && call.args.path,
+            matches: [],
+            repeated: true,
+          },
         };
         const record = {
           id: `call_${crypto.randomBytes(4).toString("hex")}`,
@@ -353,11 +371,13 @@ async function executeRun(run, options) {
         if (!run.progress.searchedQueries) run.progress.searchedQueries = [];
         if (!run.progress.searchedQueries.includes(call.args.query)) run.progress.searchedQueries.push(call.args.query);
       }
-      if (call.name === "file.read" && result && result.ok && call.args && /\.(html?|css)$/i.test(String(call.args.path || ""))) {
+      if (call.name === "file.read" && result && result.ok && !(result.data && result.data.withheld) && call.args && /\.(html?|css)$/i.test(String(call.args.path || ""))) {
         if (!run.progress.filesRead) run.progress.filesRead = [];
         if (!run.progress.filesRead.includes(call.args.path)) run.progress.filesRead.push(call.args.path);
-        run.progress.inspectSatisfied = true;
-        setPlan(run, "inspect", "completed");
+        if (htmlCssRead(run.progress)) {
+          run.progress.inspectSatisfied = true;
+          setPlan(run, "inspect", "completed");
+        }
       }
       if (run.progress && run.progress.inspectSatisfied) setPlan(run, "inspect", "completed");
       if (!result.ok && result.error && result.error.code === "exit_status" && (call.name === "tests.run" || call.name === "terminal.run")) {
@@ -379,12 +399,110 @@ async function executeRun(run, options) {
       }
     }
 
+    const done = maybeFinishLayout(run, store, text);
+    if (done) return done;
+
     const settled = await settleTurn(run, store, capabilityRegistry, options, signal);
     if (settled && settled.lifecycle) return settled;
     if (await maybeDirectSelected(run, selected, capabilityRegistry, options, signal, store)) continue;
   }
 
   return run;
+}
+
+function runIsFolder(options) {
+  return options.taskClass === "folder" || (options.strategyRecord && options.strategyRecord.taskClass === "folder");
+}
+
+function runIsInspect(options) {
+  return options.taskClass === "inspect" || (options.strategyRecord && options.strategyRecord.taskClass === "inspect");
+}
+
+function runIsBuild(options) {
+  return options.taskClass === "build" || (options.strategyRecord && options.strategyRecord.taskClass === "build");
+}
+
+function writtenPaths(run) {
+  return (run.toolCalls || [])
+    .filter((call) => call.name === "file.write" && call.result && call.result.ok)
+    .map((call) => String(call.args && call.args.path || "").replace(/\\/g, "/"));
+}
+
+function hasWritten(paths, name) {
+  return paths.some((file) => file === name || file.endsWith(`/${name}`));
+}
+
+function verifyBuild(run) {
+  const paths = writtenPaths(run);
+  const preview = (run.toolCalls || []).some((call) => call.name === "browser.check" && call.result && call.result.ok);
+  if (isNewWebsite(run.goal)) {
+    const missing = ["package.json", "server.js", "index.html"].filter((name) => !hasWritten(paths, name));
+    if (!missing.length && preview) {
+      return {
+        status: "passed",
+        summary: "The site files exist and the preview check succeeded",
+        evidence: ["file.write", "browser.check"],
+      };
+    }
+    const needed = missing.length ? `Still write ${missing.join(", ")} with file.write.` : "Call browser.check with http://127.0.0.1:4173/.";
+    return { status: "failed", summary: needed, evidence: paths.length ? ["file.write"] : [] };
+  }
+  if (isWebsiteBuild(run.goal)) {
+    const wrotePage = paths.some((file) => /\.(html?|css|js)$/i.test(file));
+    if (wrotePage && preview) {
+      return {
+        status: "passed",
+        summary: "The missing site file was written and the preview check succeeded",
+        evidence: ["file.write", "browser.check"],
+      };
+    }
+    if (!wrotePage) {
+      return { status: "failed", summary: "Write the missing site file with file.write, then call browser.check.", evidence: [] };
+    }
+    return { status: "failed", summary: "Call browser.check with the local site URL.", evidence: ["file.write"] };
+  }
+  if (paths.length) {
+    return { status: "passed", summary: "The requested files were written", evidence: ["file.write"] };
+  }
+  return { status: "failed", summary: "Write each file the request needs with file.write", evidence: [] };
+}
+
+async function createRequestedFolder(run, registry, store) {
+  if (run.mode !== "controlled" || run.taskClass !== "folder") return null;
+  const name = folderNameFromGoal(run.goal);
+  if (!name) return null;
+  run.iteration += 1;
+  const call = { name: "dir.create", args: { path: name } };
+  touch(run, "executing_tool", call.name);
+  setPlan(run, "edit", "in_progress");
+  let result;
+  try {
+    result = await registry.call(call.name, call.args);
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: call.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+  run.toolCalls.push({
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    result,
+  });
+  run.observations.push(observe(call, result));
+  if (result.ok) addChanged(run, name);
+  store.save(run);
+  if (!result.ok) {
+    const error = result.error || {};
+    return finishFailed(run, store, error.code || "tool_failed", error.message || "The folder was not created");
+  }
+  const summary = `Created the folder ${name}.`;
+  run.verification = { status: "passed", summary, evidence: ["dir.create"] };
+  run.verificationHistory.push({ ...run.verification, at: new Date().toISOString() });
+  return finishCompleted(run, store, summary);
 }
 
 function systemPrompt(options) {
@@ -400,8 +518,18 @@ function systemPrompt(options) {
       "Commands have no shell. Pipes, redirects, and paths outside the workspace are rejected.",
       "A failing test is an observation. Repair the source and run the test again.",
       "Describing a file change or a capability call does not perform it. Use the matching tool.",
-      "Edits require file.write. To run or inspect the local site, call browser.check.",
-      "Finish only after a passing test and a git diff that shows the final edit.",
+      "Edits require file.write. Create a folder with dir.create. Do not use terminal.run for mkdir, ls, or node -e.",
+      "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
+      "To run or inspect the local site, call browser.check.",
+      isLayoutJob(options)
+        ? "This is a layout job. After the HTML and CSS are read, call file.write with the full new contents, then browser.check. Do not wait for tests or git."
+        : runIsFolder(options)
+          ? "This job only creates the named folder with dir.create. Do not use the terminal."
+          : runIsInspect(options)
+            ? "This job lists the workspace. Call dir.list with path \".\" and answer from that list. Do not edit files."
+            : runIsBuild(options)
+              ? "This job creates or repairs the project files. Call dir.list first. When a file is missing, call file.write in that same turn. A sentence does not create the file. For a new website, write package.json, server.js, and index.html, then call browser.check with http://127.0.0.1:4173/. If a start script already exists, keep it and write only the missing files, then call browser.check on that local URL."
+              : "Finish only after a passing test and a git diff that shows the final edit.",
       "A claim of success is not evidence.",
       strategyGuidance(options.strategyRecord),
       hub,
@@ -411,6 +539,7 @@ function systemPrompt(options) {
     "You are a CodeMe agent run.",
     "The original user goal stays in the conversation.",
     strategyGuidance(options.strategyRecord),
+    "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
     "Use tools for repository facts.",
     "A tool result is an observation. It does not by itself finish the goal.",
     "If a tool fails, report the failure and do not invent file contents or a successful command.",
@@ -428,10 +557,52 @@ function defaultVerify(run, text) {
   if (!run.observations.length) {
     return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
   }
-  if (!String(text).trim()) {
-    return { status: "failed", summary: "The answer was empty", evidence: [] };
-  }
   const writes = (run.toolCalls || []).filter((call) => call.name === "file.write" && call.result && call.result.ok);
+  if (run.taskClass === "inspect" && run.mode === "controlled") {
+    const listed = (run.toolCalls || []).some((call) => call.name === "dir.list" && call.result && call.result.ok);
+    if (listed && String(text).trim()) {
+      return {
+        status: "passed",
+        summary: "The file list follows the workspace listing",
+        evidence: ["dir.list"],
+      };
+    }
+    return {
+      status: "failed",
+      summary: "Call dir.list with path \".\" and answer from that list",
+      evidence: [],
+    };
+  }
+  if (run.taskClass === "build" && run.mode === "controlled") {
+    return verifyBuild(run);
+  }
+  if (run.taskClass === "layout" || isSiteLayoutGoal(run.goal)) {
+    if (run.mode !== "controlled") {
+      return {
+        status: "passed",
+        summary: "The answer follows recorded observations",
+        evidence: run.observations.map((item) => item.tool),
+      };
+    }
+    const htmlWrite = writes.some((call) => /\.(html?|css)$/i.test(String(call.args && call.args.path || "")));
+    const lastWrite = writes[writes.length - 1];
+    const after = lastWrite ? (run.toolCalls || []).filter((call) => call.iteration > lastWrite.iteration) : [];
+    const preview = after.find((call) => call.name === "browser.check" && call.result && call.result.ok);
+    if (htmlWrite && preview) {
+      return {
+        status: "passed",
+        summary: "The layout change is visible in the preview",
+        evidence: ["file.write", "browser.check"],
+      };
+    }
+    return {
+      status: "failed",
+      summary: htmlWrite
+        ? "The layout write is not complete until browser.check succeeds"
+        : "Apply the layout with file.write on the HTML or CSS, then call browser.check",
+      evidence: htmlWrite ? ["file.write"] : [],
+    };
+  }
   if ((run.mode === "read_only" || run.taskClass === "plan") && trustedObservation(run) && String(text).trim()) {
     const summary = run.taskClass === "plan"
       ? (hasSequencedPlan(text) ? "The plan follows recorded observations" : "The answer follows recorded observations")
@@ -460,6 +631,20 @@ function defaultVerify(run, text) {
       && call.result.ok
     ));
     const diff = after.find((call) => call.name === "git.diff" && call.result && call.result.ok);
+    const notRepo = after.find((call) => (
+      call.name === "git.diff"
+      && call.result
+      && call.result.ok === false
+      && call.result.error
+      && call.result.error.code === "not_a_repository"
+    ));
+    if (passedTest && !diff && notRepo) {
+      return {
+        status: "passed",
+        summary: "The edit is saved. This folder is not a git repository, so there is no diff.",
+        evidence: ["file.write", "tests.run"],
+      };
+    }
     if (!passedTest || !diff) {
       return {
         status: "failed",
@@ -467,6 +652,13 @@ function defaultVerify(run, text) {
         evidence: ["file.write"],
       };
     }
+  }
+  if (run.mode === "controlled" && writes.length === 0 && promisesFile(text)) {
+    return {
+      status: "failed",
+      summary: "Call file.write with the full file contents. A sentence does not change the workspace.",
+      evidence: [],
+    };
   }
   return {
     status: "passed",
@@ -479,9 +671,27 @@ function finishCompleted(run, store, text) {
   for (const step of run.plan) step.status = "completed";
   touch(run, "completed");
   run.inFlight = null;
-  run.outcome = { status: "completed", summary: text };
+  run.outcome = {
+    status: "completed",
+    summary: String(text || "").trim() || (run.verification && run.verification.summary) || "Complete",
+  };
   store.save(run);
   return run;
+}
+
+function lastDecisionText(run) {
+  const decision = run.decisions && run.decisions[run.decisions.length - 1];
+  return decision && decision.text ? String(decision.text) : "";
+}
+
+function maybeFinishLayout(run, store, text) {
+  if (run.mode !== "controlled") return null;
+  if (run.taskClass !== "layout" && !isSiteLayoutGoal(run.goal)) return null;
+  const verification = defaultVerify(run, text || "The layout change is visible in the preview");
+  if (verification.status !== "passed") return null;
+  run.verification = verification;
+  run.verificationHistory.push({ ...verification, at: new Date().toISOString() });
+  return finishCompleted(run, store, text || verification.summary);
 }
 
 function finishCancelled(run, store) {
@@ -530,6 +740,7 @@ function touch(run, lifecycle, detail) {
 
 function recordChange(run, call, result) {
   if (result.ok && call.name === "file.write" && call.args && call.args.path) {
+    if (run.progress) run.progress.writeNow = false;
     addChanged(run, call.args.path);
     setPlan(run, "edit", "in_progress");
     const priorFail = [...run.toolCalls].reverse().find((item) => item !== run.toolCalls[run.toolCalls.length - 1] && (item.name === "tests.run" || item.name === "terminal.run") && item.result && item.result.ok === false && item.result.error && item.result.error.code === "exit_status");
@@ -630,8 +841,12 @@ async function settleTurn(run, store, registry, options, signal) {
     return { researched: true };
   }
   if (outcome.action === "replan" || (run.progress.writeNow && run.mode === "controlled")) {
-    run.progress.writeNow = false;
-    run.messages.push({ role: "user", content: applyEditNotice() });
+    const notice = run.progress.writeNow && run.taskClass !== "layout" && !isSiteLayoutGoal(run.goal)
+      ? `Call file.write now. ${run.verification && run.verification.summary ? run.verification.summary : "Put the full file contents in that tool call."} A sentence does not change the workspace.`
+      : applyEditNotice(run.progress);
+    if (!run.progress.writeNow) run.progress.writeNow = false;
+    if (run.taskClass === "layout" || isSiteLayoutGoal(run.goal)) run.progress.writeNow = false;
+    run.messages.push({ role: "user", content: notice });
     store.save(run);
     return { focused: true };
   }
@@ -666,10 +881,57 @@ async function maybeDirectSelected(run, selected, registry, options, signal, sto
   return true;
 }
 
-async function directResearch(run, registry, options, signal, store) {
+async function showWorkspace(run, registry, store) {
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return;
+  if (run.taskClass === "folder") return;
+  if (!registry.definitions().some((tool) => tool.name === "dir.list")) return;
+  let result;
+  try {
+    result = await registry.call("dir.list", { path: "." });
+  } catch {
+    return;
+  }
+  if (!result || !result.ok) return;
+  const entries = result.data && Array.isArray(result.data.entries) ? result.data.entries : [];
+  const files = entries.slice(0, 80).map((entry) => entry.path).filter(Boolean);
+  run.messages.push({
+    role: "user",
+    content: `Workspace files: ${files.join(", ") || "none"}. This is the open folder. Use these paths. Do not invent a different project.`,
+  });
+  store.save(run);
+}
+
+function promisesFile(text) {
+  return /\b(let me|i'll|i will|i need to|going to)\b[\s\S]{0,80}\b(create|write|add)\b/i.test(String(text || ""));
+}
+
+async function prepareResearch(run, capabilityRegistry, options, signal, store) {
+  if (run.taskClass === "layout" || run.taskClass === "folder" || isSiteLayoutGoal(run.goal) || isWorkspaceInventory(run.goal) || isLocalFollowUp(run.goal)) return;
+  if (run.progress && run.progress.runtimeDirectedEscalation) return;
+  const listed = capabilityRegistry && typeof capabilityRegistry.list === "function" ? capabilityRegistry.list() : [];
+  const research = recommendCapability(listed);
+  if (!research || !research.name) return;
+  const selected = selectCapability(run.goal, listed, {
+    composerMode: options.composerMode || run.composerMode,
+    taskClass: run.taskClass,
+  });
+  run.progress.recommendedName = research.name;
+  run.progress.recommendedDescription = research.description || "";
+  run.progress.recommendedFields = (research.inputSchema && research.inputSchema.required) || [];
+  await directResearch(run, capabilityRegistry, options, signal, store, true);
+  if (!run.progress) return;
+  run.progress.focus = false;
+  if (selected && selected.category && selected.category !== "research") {
+    run.progress.runtimeDirectedEscalation = false;
+  }
+}
+
+async function directResearch(run, registry, options, signal, store, opening) {
   const progress = run.progress;
   const name = progress.recommendedName;
-  const question = researchQuestion(progress, run.goal);
+  const question = opening
+    ? String(run.goal || "").replace(/\s+/g, " ").trim().slice(0, 1500)
+    : researchQuestion(progress, run.goal);
   const input = {};
   for (const field of progress.recommendedFields) input[field] = question;
   if (!Object.keys(input).length) input.question = question;
@@ -714,13 +976,19 @@ async function directResearch(run, registry, options, signal, store) {
     trusted: false,
     directedBy: "runtime",
     evidence: observation.evidence,
-    reason: "CodeMe requested this read-only capability because the run was stagnant. The model did not select it.",
+    reason: opening
+      ? "CodeMe sent the prompt to the hub before the model started. The hub returned untrusted research."
+      : "CodeMe requested this read-only capability because the run was stagnant. The model did not select it.",
   });
+  if (opening) markQuestionSeen(progress, run.goal);
   for (const event of noteResearch(progress, { iteration: run.iteration, result })) {
     run.events.push({ ...event, runId: run.id });
   }
   run.strategy = progress.strategy;
-  run.messages.push({ role: "user", content: postResearchBrief(progress, result) });
+  run.messages.push({
+    role: "user",
+    content: opening ? openingResearchBrief(run.goal, result) : postResearchBrief(progress, result),
+  });
   store.save(run);
 }
 
@@ -827,6 +1095,28 @@ function boundEvidenceItem(item) {
 
 function clipText(value, limit) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function isLayoutJob(options) {
+  return options.taskClass === "layout"
+    || (options.strategyRecord && options.strategyRecord.taskClass === "layout")
+    || isSiteLayoutGoal(options.goal);
+}
+
+function shouldSkipLayoutInspect(run, call, key) {
+  if (!call || !call.name) return false;
+  const inspected = Boolean(run.progress && run.progress.inspectSatisfied);
+  if (call.name === "repo.search") {
+    return inspected
+      || (run.actionCounts[key] || 0) >= 1
+      || alreadySearched(run.progress, call.args && call.args.query);
+  }
+  if (call.name === "file.read") {
+    const file = call.args && call.args.path;
+    if (inspected) return true;
+    return Boolean(file && run.progress && Array.isArray(run.progress.filesRead) && run.progress.filesRead.includes(file));
+  }
+  return inspected && (call.name === "capability.invoke" || call.name === "capability.list");
 }
 
 function summarize(result) {

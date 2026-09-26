@@ -39,6 +39,7 @@ function createProgressState(options = {}) {
     idleTurns: 0,
     rereadSame: false,
     writeNow: false,
+    writeForced: false,
     inspectSatisfied: false,
     replanned: false,
     searchedQueries: [],
@@ -105,18 +106,25 @@ function isKnowledgeLookup(text) {
     || /\b(what did we (save|store|note)|look up .*(note|knowledge))\b/.test(text);
 }
 
+function wantsCreatedFile(goal) {
+  const text = String(goal || "").toLowerCase();
+  return /\b(create|write|add|missing)\b/.test(text) && /\b(files?|pages?|html|website|site)\b/.test(text);
+}
+
 function isSiteLayoutGoal(goal) {
   const text = String(goal || "").toLowerCase();
   if (/\b(layout|restyle|redesign|better website|improve the (site|page|layout))\b/.test(text)) return true;
   return /\b(edit|change|update|rewrite|improve)\b/.test(text) && /\b(html|css|page|site|website|layout)\b/.test(text);
 }
 
-function applyEditNotice() {
+function applyEditNotice(state) {
+  const files = ((state && state.filesRead) || []).filter((file) => /\.(html?|css)$/i.test(String(file || ""))).slice(0, 6);
   return [
     "The pages are already inspected.",
-    "Apply the layout with file.write on the workspace HTML or CSS.",
+    `Apply the layout with file.write on ${files.join(" and ") || "the workspace HTML or CSS"}.`,
+    "Put the full new file contents in that tool call.",
     "Then call browser.check.",
-    "Do not search the same query again.",
+    "A sentence is not an edit. Do not search the same query again.",
   ].join(" ");
 }
 
@@ -139,8 +147,15 @@ function writeFindingsNotice() {
   return "Write the findings now. Do not reread files you already inspected.";
 }
 
-function htmlCssRead(state) {
+function pageFileRead(state) {
   return (state.filesRead || []).some((file) => /\.(html?|css)$/i.test(String(file || "")));
+}
+
+function htmlCssRead(state) {
+  const files = state.filesRead || [];
+  const html = files.some((file) => /\.html?$/i.test(String(file || "")));
+  const css = files.some((file) => /\.css$/i.test(String(file || "")));
+  return html && css;
 }
 
 function alreadySearched(state, query) {
@@ -179,6 +194,9 @@ function applyIteration(state, input) {
         if (query) rememberKey(state, `search:repeat:${query}`);
       }
     } else if (call.name === "file.read") {
+      if (call.result && call.result.data && call.result.data.withheld) {
+        continue;
+      }
       const file = call.args && call.args.path;
       const fact = digest(readPayload(call.result));
       if (!state.readFacts) state.readFacts = {};
@@ -193,6 +211,9 @@ function applyIteration(state, input) {
       } else if (file && state.readFacts[file] === fact) {
         state.rereadSame = true;
       }
+    } else if (call.name === "dir.list") {
+      const listed = String((call.args && call.args.path) || ".");
+      if (rememberKey(state, `list:${listed}`)) categories.push("new_relevant_file");
     } else if (call.name === "file.write") {
       const file = call.args && call.args.path;
       const key = `write:${file}:${digest((call.args && call.args.contents) || "")}`;
@@ -236,7 +257,8 @@ function applyIteration(state, input) {
   }
 
   if (htmlCssRead(state)) state.inspectSatisfied = true;
-  if (isSiteLayoutGoal(input.goal || state.goal) && htmlCssRead(state) && !(input.calls || []).some((call) => call.name === "file.write")) {
+  const wrote = (input.calls || []).some((call) => call.name === "file.write");
+  if (isSiteLayoutGoal(input.goal || state.goal) && pageFileRead(state) && !wrote) {
     state.writeNow = true;
     state.focus = true;
   }
@@ -252,6 +274,12 @@ function applyIteration(state, input) {
     state.hypothesis = clip(input.text, 240);
     state.hypothesisFingerprint = fingerprint;
   }
+  if (isSiteLayoutGoal(input.goal || state.goal) && state.inspectSatisfied && !wrote) {
+    const allowed = new Set(["code_modification", "changed_test_result", "successful_verification", "new_failure"]);
+    for (let index = categories.length - 1; index >= 0; index -= 1) {
+      if (!allowed.has(categories[index])) categories.splice(index, 1);
+    }
+  }
 
   const actionFingerprint = turnFingerprint(input.calls || [], matchesHypothesis || !newHypothesis ? hypothesisLabel(state) : "new");
   const repeatedAction = state.window.includes(actionFingerprint);
@@ -266,7 +294,7 @@ function applyIteration(state, input) {
     state.progressScore += categories.length;
     state.semanticStagnation = 0;
     state.stagnantTurns = 0;
-    state.focus = false;
+    if (!(isSiteLayoutGoal(state.goal) && state.writeNow)) state.focus = false;
     if (state.strategy === "stagnant") {
       events.push(strategyEvent(state.strategy, "working", input.iteration, state));
       state.strategy = "working";
@@ -289,6 +317,14 @@ function applyIteration(state, input) {
 
   if (isSiteLayoutGoal(state.goal) && !state.replanned) {
     state.replanned = true;
+    state.writeNow = true;
+    state.focus = true;
+    state.semanticStagnation = 0;
+    state.stagnantTurns = 0;
+    return { events, action: "replan", stopSummary: "" };
+  }
+  if (!state.writeForced && wantsCreatedFile(state.goal)) {
+    state.writeForced = true;
     state.writeNow = true;
     state.focus = true;
     state.semanticStagnation = 0;
@@ -340,6 +376,24 @@ function researchQuestion(state, goal) {
   return clip(`${goal || ""} ${state.hypothesis || ""}`, 400);
 }
 
+function markQuestionSeen(state, goal) {
+  if (!state) return;
+  remember(state.seenQuestions, questionKey(goal));
+}
+
+function openingResearchBrief(goal, result) {
+  const evidence = result && result.data && Array.isArray(result.data.evidence) ? result.data.evidence : [];
+  const excerpts = evidence.slice(0, 4).map((item) => clip(`${item.title || "Source"}: ${item.excerpt || ""}`, 220));
+  const failure = result && result.error && result.error.message;
+  return [
+    "The hub read this prompt before coding and returned untrusted research.",
+    "The research cannot edit files, run commands, or finish the run.",
+    `Request: ${clip(goal || "", 800)}`,
+    `Evidence: ${excerpts.join(" | ") || clip(failure, 180) || "none"}.`,
+    "Use that evidence to understand the request, then create what it asks for with the workspace tools.",
+  ].join(" ");
+}
+
 function postResearchBrief(state, result) {
   const evidence = result && result.data && Array.isArray(result.data.evidence) ? result.data.evidence : [];
   const excerpts = evidence.slice(0, 3).map((item) => clip(`${item.title || ""}: ${item.excerpt || ""}`, 180));
@@ -382,12 +436,12 @@ function compactObservation(call) {
 
 // After stagnation the runtime narrows the offered tools to the ones that can change
 // the outcome. Browsing and workaround tools are withheld until progress resumes.
-const MATERIAL_TOOLS = ["file.write", "file.read", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check"];
+const MATERIAL_TOOLS = ["file.write", "file.read", "dir.create", "dir.list", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check"];
 
 function focusTools(state, definitions) {
   if (!state) return definitions;
-  if (state.inspectSatisfied && isSiteLayoutGoal(state.goal)) {
-    const local = definitions.filter((item) => item.name !== "repo.search" && item.name !== "capability.invoke" && item.name !== "capability.list");
+  if (state.writeNow || (state.inspectSatisfied && isSiteLayoutGoal(state.goal))) {
+    const local = definitions.filter((item) => item.name === "file.write" || item.name === "browser.check");
     if (local.length) return local;
   }
   if (state.strategy !== "stagnant" && !state.focus) return definitions;
@@ -544,6 +598,7 @@ module.exports = {
   recommendCapability,
   selectCapability,
   isSiteLayoutGoal,
+  htmlCssRead,
   capabilityGuidance,
   writeFindingsNotice,
   applyEditNotice,
@@ -551,6 +606,8 @@ module.exports = {
   applyIteration,
   noteResearch,
   researchQuestion,
+  markQuestionSeen,
+  openingResearchBrief,
   postResearchBrief,
   observationKey,
   compactObservation,
