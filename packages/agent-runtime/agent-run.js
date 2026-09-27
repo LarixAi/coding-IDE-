@@ -579,6 +579,64 @@ function verifyBuild(run) {
   return { status: "failed", summary: "Write each file the request needs with file.write", evidence: [] };
 }
 
+function changedWebAssetsNotLoaded(changed, previewCall) {
+  const required = (changed || []).filter((file) => /\.(css|js|mjs)$/i.test(String(file || "")));
+  if (!required.length) return [];
+  const data = previewCall && previewCall.result && previewCall.result.data;
+  const assets = data && Array.isArray(data.assets) ? data.assets : [];
+  const loaded = new Set(
+    assets
+      .filter((asset) => asset && asset.ok)
+      .map((asset) => String(asset.path || "").replace(/^\/+/, "").replace(/\\/g, "/")),
+  );
+  return required.filter((file) => !loaded.has(String(file).replace(/^\/+/, "").replace(/\\/g, "/")));
+}
+
+function latestReadContents(run, file) {
+  const calls = run && Array.isArray(run.toolCalls) ? run.toolCalls : [];
+  const target = String(file || "").replace(/\\/g, "/");
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call.name !== "file.read" || !call.result || !call.result.ok) continue;
+    const path = String(call.args && call.args.path || "").replace(/\\/g, "/");
+    if (path !== target) continue;
+    const contents = call.result.data && call.result.data.contents;
+    if (typeof contents === "string") return contents;
+  }
+  return "";
+}
+
+function webInteractionIssue(run, changed) {
+  const goal = String(run && run.goal || "").toLowerCase();
+  if (!/\b(click|button|tap|interaction|interactive)\b/.test(goal)) return "";
+
+  const htmlFiles = (changed || []).filter((file) => /\.html?$/i.test(String(file || "")));
+  const jsFiles = (changed || []).filter((file) => /\.(js|mjs)$/i.test(String(file || "")));
+  if (!jsFiles.length) return "This task asks for an interaction, but no JavaScript file was changed or created.";
+
+  const html = htmlFiles.map((file) => latestReadContents(run, file)).join("\n");
+  const scripts = jsFiles.map((file) => latestReadContents(run, file)).join("\n");
+
+  if (!/addEventListener\s*\(\s*["']click["']|\.onclick\s*=|onclick\s*=/.test(scripts + "\n" + html)) {
+    return "The page loads, but the requested click interaction is not wired to a click handler.";
+  }
+
+  const ids = [];
+  for (const match of scripts.matchAll(/getElementById\s*\(\s*["']([^"']+)["']\s*\)/g)) ids.push(match[1]);
+  for (const match of scripts.matchAll(/querySelector\s*\(\s*["']#([^"']+)["']\s*\)/g)) ids.push(match[1]);
+
+  for (const id of ids) {
+    const escaped = id.replace(/[.*+?^$(){}|[\]\\]/g, "\\function uniqueWrittenPaths(writes) {
+");
+    const pattern = new RegExp(`\\bid\\s*=\\s*["']${escaped}["']`, "i");
+    if (!pattern.test(html)) {
+      return `The JavaScript targets #${id}, but that element ID is not present in the changed HTML.`;
+    }
+  }
+
+  return "";
+}
+
 function uniqueWrittenPaths(writes) {
   const paths = [];
   for (const call of writes || []) {
@@ -896,6 +954,25 @@ function defaultVerify(run, text) {
           evidence: ["file.patch", "file.read"],
         };
       }
+
+      const missingAssets = changedWebAssetsNotLoaded(changed, preview);
+      if (missingAssets.length) {
+        return {
+          status: "failed",
+          summary: `The page opened, but these changed assets were not loaded by the browser preview: ${missingAssets.join(", ")}. Link them from the HTML and verify again.`,
+          evidence: ["file.patch", "file.read", "browser.check"],
+        };
+      }
+
+      const interactionIssue = webInteractionIssue(run, changed);
+      if (interactionIssue) {
+        return {
+          status: "failed",
+          summary: interactionIssue,
+          evidence: ["file.patch", "file.read", "browser.check"],
+        };
+      }
+
       return {
         status: "passed",
         summary: "The web edit was saved, read back, and verified in the browser.",
