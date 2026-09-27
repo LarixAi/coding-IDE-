@@ -179,8 +179,7 @@ function createBrowserInteractionRunner(options = {}) {
           };
         }
 
-        await delay(ACTION_WAIT_MS);
-        const observed = await client.evaluate(observeExpression(expectedText));
+        const observed = await waitForObservedResult(client, expectedText, expectedText ? 2500 : ACTION_WAIT_MS);
         const afterText = observed && typeof observed.afterText === "string" ? observed.afterText : "";
         const matched = expectedText ? Boolean(observed && observed.matched) : true;
 
@@ -293,6 +292,7 @@ function collectBrowserError(message, errors) {
   } else if (message.method === "Log.entryAdded") {
     const entry = message.params && message.params.entry;
     if (!entry || entry.level !== "error") return;
+    if (/favicon\.ico(?:\?|$)/i.test(String(entry.url || ""))) return;
     text = entry.text || "";
   }
   text = String(text || "").trim();
@@ -391,7 +391,7 @@ class CdpClient {
   }
 
   send(method, params = {}) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+    if (!this.socket || this.socket.readyState !== 1) {
       return Promise.reject(Object.assign(new Error("Browser automation is not connected."), { code: "browser_driver_failed" }));
     }
     const id = this.nextId++;
@@ -425,6 +425,21 @@ class CdpClient {
   }
 }
 
+async function waitForObservedResult(client, expectedText, timeoutMs) {
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
+  let observed = await client.evaluate(observeExpression(expectedText));
+  if (!expectedText) {
+    if (timeoutMs > 0) await delay(timeoutMs);
+    return await client.evaluate(observeExpression(expectedText));
+  }
+  while (Date.now() < deadline) {
+    if (observed && observed.matched) return observed;
+    await delay(80);
+    observed = await client.evaluate(observeExpression(expectedText));
+  }
+  return observed;
+}
+
 async function waitForDocumentReady(client, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -446,5 +461,6 @@ module.exports = {
   clickExpression,
   observeExpression,
   collectBrowserError,
+  waitForObservedResult,
   createBrowserInteractionRunner,
 };
