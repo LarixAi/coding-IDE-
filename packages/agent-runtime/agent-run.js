@@ -195,7 +195,8 @@ async function executeRun(run, options) {
     store.save(run);
   }
 
-  const capabilityRegistry = await loadCapabilityRegistry(isDependencyFreeStatic(run.projectDecision) ? null : options.capabilities);
+  const capabilitiesDisabled = isDependencyFreeStatic(run.projectDecision) || isLocalRepairWithoutOutsideEvidence(run);
+  const capabilityRegistry = await loadCapabilityRegistry(capabilitiesDisabled ? null : options.capabilities);
   const capabilityRecords = capabilityRegistry.list();
   const capabilityTools = capabilityRecords.length ? capabilityToolDefinitions(capabilityRecords) : [];
   if (!run.progress) run.progress = createProgressState(options);
@@ -832,6 +833,12 @@ function needsOutsideEvidence(goal) {
   return /\b(research|documentation|docs|latest|current api|best practice|external|look up|lookup|search the web|web research)\b/.test(text);
 }
 
+function isLocalRepairWithoutOutsideEvidence(run) {
+  if (!run || !run.workspace || run.workspace.state === "empty") return false;
+  if (!requiresWorkspaceRepair(run)) return false;
+  return !needsOutsideEvidence(run.goal);
+}
+
 function isSimpleLocalWorkspaceTask(run) {
   if (!run || !run.workspace || run.workspace.state === "empty") return false;
   if (needsOutsideEvidence(run.goal)) return false;
@@ -1356,7 +1363,12 @@ async function settleTurn(run, store, registry, options, signal) {
   const outcome = closeIteration(run, registry);
   store.save(run);
   if (outcome.action === "stop") return finishFailed(run, store, "stagnation", outcome.stopSummary);
-  if (outcome.action === "research" && !isSiteLayoutGoal(run.goal) && run.taskClass !== "layout") {
+  if (
+    outcome.action === "research"
+    && !isLocalRepairWithoutOutsideEvidence(run)
+    && !isSiteLayoutGoal(run.goal)
+    && run.taskClass !== "layout"
+  ) {
     await directResearch(run, registry, options, signal, store);
     return { researched: true };
   }
@@ -1385,6 +1397,7 @@ async function settleTurn(run, store, registry, options, signal) {
 }
 
 async function maybeDirectSelected(run, selected, registry, options, signal, store) {
+  if (isLocalRepairWithoutOutsideEvidence(run)) return false;
   if (!selected || !selected.name) return false;
   if (run.iteration !== 1) return false;
   if (run.progress.runtimeDirectedEscalation) return false;
@@ -1470,6 +1483,7 @@ function promisesFile(text) {
 
 async function prepareResearch(run, capabilityRegistry, options, signal, store) {
   if (isDependencyFreeStatic(run && run.projectDecision)) return;
+  if (isLocalRepairWithoutOutsideEvidence(run)) return;
   if (!needsOutsideEvidence(run && run.goal)) return;
   if (run.taskClass === "layout" || run.taskClass === "folder" || isSiteLayoutGoal(run.goal) || isWorkspaceInventory(run.goal) || isLocalFollowUp(run.goal)) return;
   if (run.progress && run.progress.runtimeDirectedEscalation) return;
@@ -1559,7 +1573,14 @@ async function directResearch(run, registry, options, signal, store, opening) {
 
 function closeIteration(run, registry) {
   if (!run.progress) run.progress = createProgressState();
-  if (!run.progress.recommendedName && !isSiteLayoutGoal(run.goal) && run.taskClass !== "layout" && registry && typeof registry.list === "function") {
+  if (
+    !isLocalRepairWithoutOutsideEvidence(run)
+    && !run.progress.recommendedName
+    && !isSiteLayoutGoal(run.goal)
+    && run.taskClass !== "layout"
+    && registry
+    && typeof registry.list === "function"
+  ) {
     const recommended = recommendCapability(registry.list());
     if (recommended) {
       run.progress.recommendedName = recommended.name;
