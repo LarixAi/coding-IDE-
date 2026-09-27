@@ -23,6 +23,7 @@ async function test(name, fn) {
 async function main() {
   await test("lists the stable tool names", () => {
     for (const name of [
+      "workspace.inspect",
       "file.read",
       "file.write",
       "repo.search",
@@ -37,6 +38,24 @@ async function main() {
     ]) {
       assert.ok(TOOLS.includes(name), name);
     }
+  });
+
+
+  await test("workspace inspection is allowed in read-only mode", async () => {
+    let called = false;
+    const result = await executeReadOnly(
+      {
+        async inspectWorkspace() {
+          called = true;
+          return { state: "empty", root: "demo" };
+        },
+      },
+      "workspace.inspect",
+      {},
+    );
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(called, true);
+    assert.strictEqual(result.data.state, "empty");
   });
 
   await test("rejects an unknown tool", async () => {
