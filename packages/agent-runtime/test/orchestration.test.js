@@ -737,6 +737,25 @@ async function main() {
           ],
         };
       },
+      async browserInteract(args) {
+        return {
+          available: true,
+          url: args.url,
+          action: "click",
+          targetText: args.targetText,
+          expectedText: args.expectedText,
+          beforeText: "Click Me",
+          afterText: "It works!",
+          matched: true,
+          consoleErrors: [],
+          statusCode: 200,
+          title: "Already fixed",
+          assets: [
+            { kind: "style", path: "styles.css", statusCode: 200, contentType: "text/css", ok: true },
+            { kind: "script", path: "script.js", statusCode: 200, contentType: "text/javascript", ok: true },
+          ],
+        };
+      },
     };
 
     const provider = new ScriptedModelProvider([
@@ -748,6 +767,17 @@ async function main() {
         ],
       },
       { toolCalls: [{ name: "browser.check", args: { url: "styles.css" } }] },
+      {
+        toolCalls: [{
+          name: "browser.interact",
+          args: {
+            url: "index.html",
+            action: "click",
+            targetText: "Click Me",
+            expectedText: "It works!",
+          },
+        }],
+      },
       { text: "This should never be needed because the run should auto-complete." },
     ]);
 
@@ -766,9 +796,16 @@ async function main() {
     assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
     assert.strictEqual(run.filesChanged.length, 0);
     assert.strictEqual(run.verification.status, "passed");
-    assert.ok(run.verification.summary.includes("already satisfies"));
-    assert.strictEqual(provider.calls.length, 2);
+    assert.ok(/already satisfied|real browser/i.test(run.verification.summary));
+    assert.strictEqual(provider.calls.length, 3);
     assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.result && call.result.ok));
+    assert.ok(run.toolCalls.some((call) => (
+      call.name === "browser.interact"
+      && call.result
+      && call.result.ok
+      && call.result.data
+      && call.result.data.afterText === "It works!"
+    )));
   });
 
   await test("failed web assets force server repair before completion", async () => {
@@ -870,6 +907,25 @@ async function main() {
           ],
         };
       },
+      async browserInteract(args) {
+        return {
+          available: true,
+          url: args.url,
+          action: "click",
+          targetText: args.targetText,
+          expectedText: args.expectedText,
+          beforeText: "Click Me",
+          afterText: "It works!",
+          matched: true,
+          consoleErrors: [],
+          statusCode: 200,
+          title: "Button demo",
+          assets: [
+            { kind: "style", path: "styles.css", statusCode: 200, contentType: "text/css", ok: true },
+            { kind: "script", path: "script.js", statusCode: 200, contentType: "text/javascript", ok: true },
+          ],
+        };
+      },
     };
 
     const brokenServer = fs.readFileSync(path.join(root, "server.js"), "utf8");
@@ -911,6 +967,17 @@ async function main() {
       },
       { toolCalls: [{ name: "file.read", args: { path: "server.js" } }] },
       { toolCalls: [{ name: "browser.check", args: { url: "index.html" } }] },
+      {
+        toolCalls: [{
+          name: "browser.interact",
+          args: {
+            url: "index.html",
+            action: "click",
+            targetText: "Click Me",
+            expectedText: "It works!",
+          },
+        }],
+      },
       { text: "Fixed the server so the page assets load and the button can run its click handler." },
     ]);
 
@@ -945,6 +1012,13 @@ async function main() {
     assert.ok(failedPreviewIndex >= 0);
     assert.ok(patchIndex > failedPreviewIndex);
     assert.ok(passedPreviewIndex > patchIndex);
+    const interactionIndex = run.toolCalls.findIndex((call, index) => (
+      index > passedPreviewIndex
+      && call.name === "browser.interact"
+      && call.result
+      && call.result.ok
+    ));
+    assert.ok(interactionIndex > passedPreviewIndex);
 
     for (const modelCall of provider.calls) {
       const names = modelCall.tools.map((tool) => tool.name);
