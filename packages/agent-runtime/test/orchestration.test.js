@@ -1296,6 +1296,72 @@ async function main() {
     assert.ok(resumed.observations.some((item) => item.summary.includes("not replayed")));
   });
 
+  await test("sandbox.run is model-visible verification and never counts as a workspace edit", async () => {
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "sandbox.run", args: { command: "node --check src/components/Badge.tsx" } }] },
+      { text: "Sandbox verification finished." },
+    ]);
+    const host = workspaceHost(FIXTURE);
+    let sandboxCalls = 0;
+    host.runSandbox = async (args) => {
+      sandboxCalls += 1;
+      return {
+        command: args.command,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        output: "",
+        isolation: "workspace-copy",
+        securityBoundary: false,
+        network: "best_effort_blocked",
+        workspace: "ephemeral_copy",
+        discarded: true,
+        changedPaths: ["temporary-output.txt"],
+      };
+    };
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: "Run a disposable sandbox syntax check and report the result.",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 4,
+      verify(runState, text) {
+        const sandboxCall = runState.toolCalls.find((call) => (
+          call.name === "sandbox.run" && call.result && call.result.ok
+        ));
+        if (sandboxCall && text.includes("Sandbox verification finished")) {
+          return { status: "passed", summary: "sandbox evidence recorded", evidence: ["sandbox.run"] };
+        }
+        return { status: "failed", summary: "sandbox evidence missing", evidence: [] };
+      },
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(sandboxCalls, 1);
+    assert.strictEqual(run.filesChanged.length, 0);
+    assert.ok(run.toolCalls.some((call) => (
+      call.name === "sandbox.run"
+      && call.result
+      && call.result.ok
+      && call.result.data
+      && call.result.data.discarded === true
+    )));
+    assert.ok(run.progress.progressScore > 0);
+    assert.ok(provider.calls[0].tools.some((tool) => tool.name === "sandbox.run"));
+    assert.ok(provider.calls.slice(1).some((call) => (
+      call.messages.some((message) => (
+        message.role === "tool"
+        && message.name === "sandbox.run"
+        && String(message.content).includes('"discarded":true')
+      ))
+    )));
+  });
+
   await test("tool registry does not invent definitions for undeclared providers", async () => {
     const provider = {
       async call() {
