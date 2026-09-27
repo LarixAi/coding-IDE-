@@ -302,7 +302,7 @@ async function main() {
     assert.ok(run.toolCalls.every((call) => call.name !== "capability.invoke"));
     assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("Apply the layout with file.write"))));
     const writeTools = (provider.calls[2] && provider.calls[2].tools || []).map((item) => item.name).sort();
-    assert.deepStrictEqual(writeTools, ["browser.check", "file.write"]);
+    assert.deepStrictEqual(writeTools, ["browser.check", "file.read", "file.write"]);
     assert.ok(run.toolCalls.some((call) => call.name === "file.write" && call.args.path === "src/index.html"));
     assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.result && call.result.ok));
     assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);

@@ -82,6 +82,20 @@ async function main() {
 
   {
     const decision = resolve(
+      { name: "file.patch", args: { path: "server.js", oldText: "broken", newText: "fixed" } },
+      {
+        mode: "controlled",
+        failedProcessNeedsLogs: true,
+        registeredToolNames: ["file.patch", "process.logs"],
+      },
+    );
+    assert.strictEqual(decision.rule, "recovery.process_logs_required");
+    assert.strictEqual(decision.priority, RULE_PRIORITY.recovery);
+    assert.strictEqual(decision.action, "deny");
+  }
+
+  {
+    const decision = resolve(
       { name: "capability.invoke", args: { capability: "research" } },
       {
         mode: "controlled",

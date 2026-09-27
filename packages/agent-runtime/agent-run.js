@@ -6,7 +6,7 @@ const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, is
 const { decideProject, isDependencyFreeStatic, projectDecisionContext } = require("./project-decision");
 const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
-const { resolveRuleDecision, isStaticScaffoldTool } = require("./rule-decision");
+const { RULE_PRIORITY, resolveRuleDecision, isStaticScaffoldTool } = require("./rule-decision");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 const STOPPED = new Set(["completed", "cancelled", "failed", "awaiting_user"]);
@@ -53,6 +53,8 @@ function createRun(options) {
     maxIterations: options.maxIterations ?? 8,
     repairReserve: options.repairReserve ?? 4,
     repairReserveUsed: 0,
+    recoveryReserve: options.recoveryReserve ?? 2,
+    recoveryReserveUsed: 0,
     maxRetries: options.maxRetries ?? 2,
     maxIdenticalActions: options.maxIdenticalActions ?? 4,
     actionCounts: {},
@@ -198,6 +200,8 @@ async function executeRun(run, options) {
     store.save(run);
   }
 
+  // Simple local repairs stay fully local until they actually stagnate.
+  // If that happens, settleTurn lazily discovers a read-only research capability.
   const capabilitiesDisabled = isDependencyFreeStatic(run.projectDecision) || isLocalRepairWithoutOutsideEvidence(run);
   const capabilityRegistry = await loadCapabilityRegistry(capabilitiesDisabled ? null : options.capabilities);
   const capabilityRecords = capabilityRegistry.list();
@@ -232,6 +236,7 @@ async function executeRun(run, options) {
     if (run.iteration >= run.maxIterations) {
       const done = maybeFinishVerifiedWork(run, store, lastDecisionText(run));
       if (done) return done;
+      if (grantRecoveryEvidenceReserve(run, store)) continue;
       if (grantRepairReserve(run, store)) continue;
       const probe = defaultVerify(run, lastDecisionText(run) || "Verification incomplete.");
       run.verification = probe;
@@ -1065,6 +1070,33 @@ function latestProcessEvidence(run) {
   return { status: null, logsReadAfter: false };
 }
 
+function failedProcessNeedsLogs(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (!call || !call.result) continue;
+
+    if (call.name === "process.logs" && call.result.ok) return false;
+
+    if (
+      call.name === "process.status"
+      && call.result.ok
+      && call.result.data
+    ) {
+      if (call.result.data.status === "failed") return true;
+      if (call.result.data.status === "running") return false;
+    }
+
+    if (call.name === "process.start") {
+      if (call.result.ok === false) return true;
+      const data = call.result.data || {};
+      if (data.requiresLogs || data.status === "failed") return true;
+      if (data.started || data.reused || data.status === "running") return false;
+    }
+  }
+  return false;
+}
+
 async function guardProcessStart(run, registry) {
   let evidence = latestProcessEvidence(run);
   let status = evidence.status;
@@ -1173,6 +1205,7 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
       previewTarget: previewTargetFromRun(run),
       requireFailureBeforeEdit: requiresFailureBeforeEdit(run && run.goal),
       browserFailureObserved: browserFailureObserved(run),
+      failedProcessNeedsLogs: failedProcessNeedsLogs(run),
       registeredToolNames,
     },
   });
@@ -1244,6 +1277,94 @@ function isSimpleLocalWorkspaceTask(run) {
   const text = String(run.goal || "").toLowerCase();
   if (/\b(create|scaffold|new project|new app|new website|database|backend|api integration)\b/.test(text)) return false;
   return /\b(change|edit|update|set|make|fix|repair|heading|title|button|text|colour|color|centre|center|style|css|html|spacing|font|background)\b/.test(text);
+}
+
+function latestUnconsumedRecoveryEvidence(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    const researchEvidence = (
+      call
+      && call.name === "capability.invoke"
+      && call.directedBy === "runtime"
+      && Number(call.iteration || 0) > 0
+      && call.result
+      && call.result.ok
+    );
+    const processEvidence = (
+      call
+      && call.name === "process.logs"
+      && call.result
+      && call.result.ok
+    );
+    if (!researchEvidence && !processEvidence) continue;
+
+    const laterAction = calls.slice(index + 1).some((item) => (
+      item
+      && item.result
+      && item.result.ok
+      && ["file.write", "file.patch", "tests.run", "diagnostics.run", "browser.check", "browser.interact", "process.start"].includes(item.name)
+    ));
+    const laterDecision = (run.decisions || []).some((decision) => (
+      Number(decision && decision.iteration || 0) > Number(call.iteration || 0)
+    ));
+    if (laterAction || laterDecision) return null;
+
+    return {
+      call,
+      kind: researchEvidence ? "research" : "process_logs",
+    };
+  }
+  return null;
+}
+
+function grantRecoveryEvidenceReserve(run, store) {
+  if (!run || run.mode !== "controlled") return false;
+  const total = Number(run.recoveryReserve || 0);
+  const used = Number(run.recoveryReserveUsed || 0);
+  if (total <= used) return false;
+
+  const evidence = latestUnconsumedRecoveryEvidence(run);
+  if (!evidence) return false;
+
+  const grant = Math.min(2, total - used);
+  run.recoveryReserveUsed = used + grant;
+  run.maxIterations += grant;
+  const reason = evidence.kind === "research"
+    ? "Fresh external evidence arrived after local stagnation."
+    : "Fresh process logs arrived after a failed CodeMe-owned process.";
+  const instruction = evidence.kind === "research"
+    ? "Use the evidence to make or verify the repair now; do not restart the same local investigation."
+    : "Use the recorded process error to repair or verify the implementation now; do not restart the process blindly.";
+
+  run.messages.push({
+    role: "user",
+    content: `Recovery reserve granted: ${grant} additional model turns. ${reason} ${instruction}`,
+  });
+
+  const decision = {
+    iteration: run.iteration,
+    requestedTool: "",
+    resolvedTool: "",
+    tier: "budget",
+    priority: RULE_PRIORITY.budget,
+    rule: "budget.recovery_evidence_reserve",
+    action: "extend",
+    reason,
+    at: new Date().toISOString(),
+  };
+  if (!Array.isArray(run.ruleDecisions)) run.ruleDecisions = [];
+  run.ruleDecisions.push(decision);
+  if (!Array.isArray(run.events)) run.events = [];
+  run.events.push({
+    type: "rule_decision",
+    ...decision,
+    granted: grant,
+    used: run.recoveryReserveUsed,
+    evidenceKind: evidence.kind,
+  });
+  store.save(run);
+  return true;
 }
 
 function grantRepairReserve(run, store) {
@@ -1943,7 +2064,12 @@ function pushObservation(run, call, result) {
 async function settleTurn(run, store, registry, options, signal) {
   const outcome = closeIteration(run, registry);
   store.save(run);
-  if (outcome.action === "stop") return finishFailed(run, store, "stagnation", outcome.stopSummary);
+  if (outcome.action === "stop") {
+    if (await maybeEscalateStagnantLocalRepair(run, options, signal, store)) {
+      return { researched: true };
+    }
+    return finishFailed(run, store, "stagnation", outcome.stopSummary);
+  }
   if (
     outcome.action === "research"
     && !isLocalRepairWithoutOutsideEvidence(run)
@@ -1975,6 +2101,36 @@ async function settleTurn(run, store, registry, options, signal) {
     return { focused: true };
   }
   return null;
+}
+
+async function maybeEscalateStagnantLocalRepair(run, options, signal, store) {
+  if (!isLocalRepairWithoutOutsideEvidence(run)) return false;
+  if (!run || !run.progress || run.progress.runtimeDirectedEscalation) return false;
+  if (isDependencyFreeStatic(run.projectDecision)) return false;
+  if (run.taskClass === "layout" || isSiteLayoutGoal(run.goal)) return false;
+  if (!options || !options.capabilities) return false;
+
+  let registry;
+  try {
+    registry = await loadCapabilityRegistry(options.capabilities);
+  } catch {
+    return false;
+  }
+
+  const listed = registry && typeof registry.list === "function" ? registry.list() : [];
+  const research = recommendCapability(listed);
+  if (!research || !research.name) return false;
+
+  run.progress.recommendedName = research.name;
+  run.progress.recommendedDescription = research.description || "";
+  run.progress.recommendedFields = (research.inputSchema && research.inputSchema.required) || [];
+  run.messages.push({
+    role: "user",
+    content: "Local repair attempts have genuinely stagnated. CodeMe is escalating once to the read-only evidence hub before deciding to stop.",
+  });
+  store.save(run);
+  await directResearch(run, registry, options, signal, store, false);
+  return true;
 }
 
 async function maybeDirectSelected(run, selected, registry, options, signal, store) {
@@ -2084,16 +2240,23 @@ function promisesFile(text) {
 async function prepareResearch(run, capabilityRegistry, options, signal, store) {
   if (isDependencyFreeStatic(run && run.projectDecision)) return;
   if (isLocalRepairWithoutOutsideEvidence(run)) return;
-  if (!needsOutsideEvidence(run && run.goal)) return;
   if (run.taskClass === "layout" || run.taskClass === "folder" || isSiteLayoutGoal(run.goal) || isWorkspaceInventory(run.goal) || isLocalFollowUp(run.goal)) return;
   if (run.progress && run.progress.runtimeDirectedEscalation) return;
+
   const listed = capabilityRegistry && typeof capabilityRegistry.list === "function" ? capabilityRegistry.list() : [];
-  const research = recommendCapability(listed);
-  if (!research || !research.name) return;
   const selected = selectCapability(run.goal, listed, {
     composerMode: options.composerMode || run.composerMode,
     taskClass: run.taskClass,
   });
+  const needsOpeningEvidence = (
+    needsOutsideEvidence(run && run.goal)
+    || run.taskClass === "build"
+    || Boolean(selected && selected.category === "task")
+  );
+  if (!needsOpeningEvidence) return;
+
+  const research = recommendCapability(listed);
+  if (!research || !research.name) return;
   run.progress.recommendedName = research.name;
   run.progress.recommendedDescription = research.description || "";
   run.progress.recommendedFields = (research.inputSchema && research.inputSchema.required) || [];
