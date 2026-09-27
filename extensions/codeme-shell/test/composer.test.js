@@ -246,6 +246,10 @@ async function main() {
   assert.ok(html.includes('id="history-panel"'));
   assert.ok(html.includes("Chat history"));
   assert.ok(html.includes("hasFinalAssistant"));
+  assert.ok(html.includes("clearSendPending"));
+  assert.ok(html.includes('message.type === "submitting"'));
+  assert.ok(html.includes('message.type === "accepted" && current(message)'));
+  assert.ok(!html.includes("sameRequest("));
   assert.ok(html.includes("Verified"));
   assert.ok(!html.includes("qwen3.5:9b"));
   assert.ok(!html.includes("workbench.action.chat.open"));
