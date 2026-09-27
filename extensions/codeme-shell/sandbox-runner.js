@@ -17,7 +17,7 @@ function sandboxError(code, message) {
 
 function safeRelative(value) {
   const text = String(value || "").trim();
-  if (!text || path.isAbsolute(text) || /^[A-Za-z]:[\\/]/.test(text) || text.includes("\0")) return false;
+  if (!text || text.startsWith("-") || path.isAbsolute(text) || /^[A-Za-z]:[\\/]/.test(text) || text.includes("\0")) return false;
   const normalized = path.normalize(text);
   return normalized !== ".." && !normalized.startsWith(`..${path.sep}`);
 }
@@ -243,7 +243,7 @@ function sandboxEnvironment(root) {
   };
 }
 
-function macProfile(root, runtimeRoot) {
+function macProfile(root, runtimeRoot, extraReadRoots = []) {
   const quote = (value) => String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const readable = [
     root,
@@ -258,6 +258,9 @@ function macProfile(root, runtimeRoot) {
     "/dev",
   ];
   if (runtimeRoot) readable.push(runtimeRoot);
+  for (const item of extraReadRoots) {
+    if (item) readable.push(item);
+  }
   const readRules = [...new Set(readable)]
     .filter((item) => item && fs.existsSync(item))
     .map((item) => `(subpath "${quote(item)}")`)
@@ -275,12 +278,12 @@ function macProfile(root, runtimeRoot) {
   ].join("");
 }
 
-function commandForBackend(backend, sandboxRoot, parsed) {
+function commandForBackend(backend, sandboxRoot, parsed, extraReadRoots = []) {
   const program = executableInfo(parsed.program);
   if (backend.kind === "macos-sandbox-exec") {
     return {
       executable: backend.executable,
-      args: ["-p", macProfile(sandboxRoot, program.readRoot), program.executable, ...parsed.args],
+      args: ["-p", macProfile(sandboxRoot, program.readRoot, extraReadRoots), program.executable, ...parsed.args],
     };
   }
   if (backend.kind === "bubblewrap-readonly-host") {
@@ -366,15 +369,15 @@ function executeCommand(spec, options) {
 }
 
 function linkDependencies(workspaceRoot, sandboxRoot, backend) {
-  if (!backend.securityBoundary) return false;
+  if (!backend.securityBoundary) return "";
   const source = path.join(workspaceRoot, "node_modules");
   const target = path.join(sandboxRoot, "node_modules");
-  if (!fs.existsSync(source) || fs.existsSync(target)) return false;
+  if (!fs.existsSync(source) || fs.existsSync(target)) return "";
   try {
     fs.symlinkSync(source, target, "dir");
-    return true;
+    return source;
   } catch {
-    return false;
+    return "";
   }
 }
 
@@ -416,9 +419,15 @@ function createSandboxRunner(options = {}) {
             changedPaths: [],
           };
         }
-        const dependenciesAvailable = linkDependencies(root, sandboxRoot, backend);
+        const dependencyRoot = linkDependencies(root, sandboxRoot, backend);
+        const dependenciesAvailable = Boolean(dependencyRoot);
         const env = sandboxEnvironment(sandboxRoot);
-        const spec = commandForBackend(backend, sandboxRoot, parsed);
+        const spec = commandForBackend(
+          backend,
+          sandboxRoot,
+          parsed,
+          dependencyRoot ? [dependencyRoot] : [],
+        );
         const executed = await executeCommand(spec, { cwd: sandboxRoot, env, timeoutMs });
         const after = snapshotFiles(sandboxRoot);
         const changes = changedPaths(copied.hashes, after);
