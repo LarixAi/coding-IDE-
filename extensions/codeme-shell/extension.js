@@ -287,26 +287,15 @@ function hasWorkspaceEditor() {
 }
 
 async function createProject() {
-  const name = await vscode.window.showInputBox({
+  const selected = await vscode.window.showOpenDialog({
     title: "Create Project",
-    prompt: "Project folder name",
-    placeHolder: "my-project",
-  });
-  const folderName = String(name || "").trim();
-  if (!folderName || folderName.includes("/") || folderName.includes("\\")) return;
-  const parent = await vscode.window.showOpenDialog({
-    title: "Parent directory",
     canSelectFiles: false,
     canSelectFolders: true,
     canSelectMany: false,
-    openLabel: "Create here",
+    openLabel: "Open Project",
   });
-  if (!parent || !parent[0]) return;
-  const root = vscode.Uri.joinPath(parent[0], folderName);
-  await vscode.workspace.fs.createDirectory(root);
-  await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, "README.md"), Buffer.from(`# ${folderName}\n`, "utf8"));
-  await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, ".gitignore"), Buffer.from("node_modules/\n", "utf8"));
-  await vscode.commands.executeCommand("vscode.openFolder", root);
+  if (!selected || !selected[0]) return;
+  await vscode.commands.executeCommand("vscode.openFolder", selected[0]);
 }
 
 async function probeHub() {
