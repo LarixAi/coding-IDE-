@@ -604,14 +604,18 @@ function renderComposer(nonce) {
       title.className = "result-title";
       title.textContent = state.stage === "Complete" ? "Complete" : (state.stage === "Cancelled" ? "Stopped" : (state.stage || ""));
       result.appendChild(title);
-      const summary = document.createElement("p");
-      summary.className = "result-summary";
-      summary.textContent = outcomeText(state);
-      result.appendChild(summary);
+      const hasFinalAssistant = (state.thread || []).some((item) => item.role === "assistant" && String(item.text || "").trim());
+      if (state.stage !== "Complete" || !hasFinalAssistant) {
+        const summary = document.createElement("p");
+        summary.className = "result-summary";
+        summary.textContent = outcomeText(state);
+        result.appendChild(summary);
+      }
       if (state.verification && state.verification.status && state.verification.status !== "pending") {
         const verify = document.createElement("p");
         verify.className = "result-count";
-        verify.textContent = "Verification " + state.verification.status + (state.verification.summary ? ": " + state.verification.summary : "");
+        const label = state.verification.status === "passed" ? "Verified" : "Verification issue";
+        verify.textContent = label + (state.verification.summary ? " — " + state.verification.summary : "");
         result.appendChild(verify);
       }
       if (files.length) {
