@@ -232,6 +232,9 @@ async function main() {
   assert.ok(html.includes("dataset.source"));
   assert.ok(html.includes("code-preview"));
   assert.ok(html.includes("tool-stats"));
+  assert.ok(html.includes("project-decision"));
+  assert.ok(html.includes("renderProjectDecision"));
+  assert.ok(html.includes("No dependencies required"));
   assert.ok(html.includes("Created "));
   assert.ok(html.includes("Edited "));
   assert.ok(html.includes("Patched "));
@@ -278,6 +281,17 @@ async function main() {
   assert.strictEqual(first.session.selectMode("code").ok, true);
   assert.strictEqual(first.session.composerMode, "code");
   assert.strictEqual(first.session.mode, "controlled");
+  first.session.projectDecision = {
+    kind: "static_site",
+    label: "Static website",
+    workspaceState: "empty",
+    framework: null,
+    dependenciesRequired: false,
+    reason: "No framework is needed.",
+  };
+  const decisionSnapshot = first.session.snapshot();
+  assert.strictEqual(decisionSnapshot.projectDecision.kind, "static_site");
+  assert.strictEqual(decisionSnapshot.projectDecision.dependenciesRequired, false);
   const chip = first.session.attach({ path: "README.md", name: "README.md", size: 12, type: "text/markdown" });
   assert.strictEqual(first.session.detach(chip.attachment.id).ok, true);
   assert.strictEqual(first.session.attachments.length, 0);
