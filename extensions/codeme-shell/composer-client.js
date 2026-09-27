@@ -63,8 +63,8 @@ function composerStage(run) {
 
 function stageForTool(name) {
   if (name === "repo.search") return "Searching";
-  if (name === "file.read") return "Reading";
-  if (name === "file.write") return "Editing";
+  if (name === "workspace.inspect" || name === "dir.list" || name === "file.read") return "Reading";
+  if (name === "file.write" || name === "dir.create") return "Editing";
   if (name === "tests.run" || name === "terminal.run") return "Testing";
   if (name === "capability.invoke" || name === "capability.list") return "Researching";
   if (name === "browser.check") return "Testing";
@@ -96,8 +96,17 @@ function composerActivity(run) {
   if (stage === "Understanding") return "Understanding…";
   if (stage === "Planning") return "Planning…";
   if (stage === "Searching") return target ? `Searching ${target}` : "Searching…";
-  if (stage === "Reading") return target ? `Reading ${target}` : "Reading…";
-  if (stage === "Editing") return target ? `Editing ${target}` : "Editing…";
+  if (stage === "Reading") {
+    const tool = run && run.inFlight && run.inFlight.name;
+    if (tool === "workspace.inspect") return "Inspecting workspace…";
+    if (tool === "dir.list") return target ? `Listing ${target}` : "Listing workspace…";
+    return target ? `Reading ${target}` : "Reading…";
+  }
+  if (stage === "Editing") {
+    const tool = run && run.inFlight && run.inFlight.name;
+    if (tool === "dir.create") return target ? `Creating folder ${target}` : "Creating folder…";
+    return target ? `Writing ${target}` : "Writing file…";
+  }
   if (stage === "Testing") {
     const tool = run && run.inFlight && run.inFlight.name;
     return tool === "browser.check" ? (target ? `Checking ${target}` : "Checking preview") : "Running tests";
@@ -112,11 +121,116 @@ function composerActivity(run) {
 }
 
 function compactTools(run) {
-  return ((run && run.toolCalls) || []).map((call) => ({
+  const calls = (run && run.toolCalls) || [];
+  const items = calls.map((call, index) => compactTool(run, call, index, "done"));
+  const active = run && run.inFlight && run.inFlight.kind === "tool" ? run.inFlight : null;
+  if (active && active.name) {
+    items.push(compactTool(run, { name: active.name, args: active.args || {}, result: null }, calls.length, "running"));
+  }
+  return items.slice(-40);
+}
+
+function compactTool(run, call, index, status) {
+  const args = call.args || {};
+  const result = call.result || null;
+  const item = {
     name: call.name,
-    path: (call.args && (call.args.path || call.args.query || call.args.url)) || "",
-    ok: Boolean(call.result && call.result.ok),
-  }));
+    path: args.path || args.query || args.url || "",
+    ok: status === "running" ? null : Boolean(result && result.ok),
+    status: status === "running" ? "running" : (result && result.ok ? "done" : "failed"),
+  };
+  if (call.name === "file.write") {
+    item.operation = fileWriteOperation(run, call, index);
+    item.preview = fileWritePreview(run, call, index);
+  }
+  return item;
+}
+
+function fileWriteOperation(run, call, index) {
+  const file = String(call.args && call.args.path || "");
+  if (!file) return "write";
+  const priorWrite = ((run && run.toolCalls) || []).slice(0, index).some((item) => (
+    item.name === "file.write"
+    && item.result
+    && item.result.ok
+    && String(item.args && item.args.path || "") === file
+  ));
+  if (priorWrite) return "edit";
+  if (previousFileContents(run, file, index) !== null) return "edit";
+  if (run && run.workspace && run.workspace.state === "empty") return "create";
+  return "write";
+}
+
+function previousFileContents(run, file, beforeIndex) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = Math.min(beforeIndex, calls.length) - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call.name !== "file.read" || !call.result || !call.result.ok) continue;
+    if (String(call.args && call.args.path || "") !== file) continue;
+    const contents = call.result.data && call.result.data.contents;
+    if (typeof contents === "string") return contents;
+  }
+  return null;
+}
+
+function fileWritePreview(run, call, index) {
+  const after = String(call.args && call.args.contents || "");
+  const before = previousFileContents(run, String(call.args && call.args.path || ""), index);
+  return linePreview(before, after);
+}
+
+function sourceLines(value) {
+  if (value === null || value === undefined || value === "") return [];
+  const lines = String(value).replace(/\r\n/g, "\n").split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+function linePreview(beforeText, afterText) {
+  const before = sourceLines(beforeText);
+  const after = sourceLines(afterText);
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
+
+  let suffix = 0;
+  while (
+    suffix < before.length - prefix
+    && suffix < after.length - prefix
+    && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) suffix += 1;
+
+  const removed = before.slice(prefix, before.length - suffix);
+  const added = after.slice(prefix, after.length - suffix);
+  const lines = [];
+  const contextBefore = before.slice(Math.max(0, prefix - 2), prefix);
+  for (let i = 0; i < contextBefore.length; i += 1) {
+    lines.push({
+      type: "context",
+      text: contextBefore[i],
+      oldNumber: prefix - contextBefore.length + i + 1,
+      newNumber: prefix - contextBefore.length + i + 1,
+    });
+  }
+  for (let i = 0; i < removed.length; i += 1) {
+    lines.push({ type: "remove", text: removed[i], oldNumber: prefix + i + 1, newNumber: null });
+  }
+  for (let i = 0; i < added.length; i += 1) {
+    lines.push({ type: "add", text: added[i], oldNumber: null, newNumber: prefix + i + 1 });
+  }
+  const contextAfter = after.slice(after.length - suffix, after.length - suffix + Math.min(2, suffix));
+  for (let i = 0; i < contextAfter.length; i += 1) {
+    const newNumber = after.length - suffix + i + 1;
+    const oldNumber = before.length - suffix + i + 1;
+    lines.push({ type: "context", text: contextAfter[i], oldNumber, newNumber });
+  }
+
+  const maxLines = 180;
+  return {
+    additions: added.length,
+    removals: removed.length,
+    truncated: lines.length > maxLines,
+    lines: lines.slice(0, maxLines),
+  };
 }
 
 function diffsByFile(diff, files) {
@@ -210,6 +324,7 @@ if (typeof module !== "undefined" && module.exports) {
     composerStage,
     composerActivity,
     compactTools,
+    linePreview,
     diffsByFile,
     formatGoal,
     sameRequest,
