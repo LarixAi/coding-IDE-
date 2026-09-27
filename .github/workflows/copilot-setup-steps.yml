@@ -1,5 +1,7 @@
 name: Copilot Setup Steps
 
+# CodeMe Copilot environment smoke test: keep this aligned with scripts/test-ci.sh.
+
 on:
   workflow_dispatch:
   push:
