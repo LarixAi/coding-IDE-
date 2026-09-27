@@ -522,6 +522,25 @@ function renderComposer(nonce) {
         summary.appendChild(state);
         row.appendChild(summary);
 
+        const detailParts = [];
+        if (item.command) detailParts.push("Command\n" + item.command);
+        if (item.targetText || item.expectedText || item.beforeText || item.afterText) {
+          const interaction = [];
+          if (item.targetText) interaction.push("Target: " + item.targetText);
+          if (item.beforeText) interaction.push("Before: " + item.beforeText);
+          if (item.afterText) interaction.push("After: " + item.afterText);
+          if (item.expectedText) interaction.push("Expected: " + item.expectedText);
+          if (interaction.length) detailParts.push(interaction.join("\n"));
+        }
+        if (item.error) detailParts.push("Error\n" + item.error);
+        if (item.output) detailParts.push("Output\n" + item.output);
+        if (!hasPreview && detailParts.length) {
+          const detail = document.createElement("pre");
+          detail.className = "tool-detail";
+          detail.textContent = detailParts.join("\n\n");
+          row.appendChild(detail);
+        }
+
         if (hasPreview) {
           const preview = document.createElement("div");
           preview.className = "code-preview";
@@ -587,7 +606,7 @@ function renderComposer(nonce) {
       if (item.name === "file.patch") return (live ? "Patching " : "Patched ") + (item.path || "file");
       if (item.name === "repo.search") return (live ? "Searching " : "Searched ") + (item.path || "workspace");
       if (item.name === "tests.run") return live ? "Running tests" : "Ran tests";
-      if (item.name === "terminal.run") return live ? "Running command" : "Ran command";
+      if (item.name === "terminal.run") return (live ? "Running " : "Ran ") + (item.command || "command");
       if (item.name === "process.start") {
         if (!live && item.suppressed && item.reused) return "Reused running preview";
         if (!live && item.suppressed && item.requiresLogs) return "Skipped restart until logs are read";
@@ -597,7 +616,7 @@ function renderComposer(nonce) {
       if (item.name === "process.status") return live ? "Checking process status" : "Checked process status";
       if (item.name === "process.logs") return live ? "Reading process logs" : "Read process logs";
       if (item.name === "browser.check") return live ? "Checking preview" : "Checked preview";
-      if (item.name === "browser.interact") return live ? "Testing browser interaction" : "Verified browser interaction";
+      if (item.name === "browser.interact") return live ? "Testing browser interaction" : (item.afterText ? `Observed ${item.afterText}` : "Verified browser interaction");
       if (item.name === "diagnostics.run") return live ? "Checking diagnostics" : "Checked diagnostics";
       if (item.name === "git.diff") return live ? "Reviewing changes" : "Reviewed changes";
       if (item.name === "git.status") return live ? "Checking Git status" : "Checked Git status";
