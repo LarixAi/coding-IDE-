@@ -944,6 +944,12 @@ function webInteractionIssue(run, changed, calls) {
   const goal = String(run && run.goal || "").toLowerCase();
   if (!isInteractiveBrowserGoal(goal)) return "";
 
+  // Real browser evidence is authoritative for an interactive requirement.
+  // Source inspection is a diagnostic fallback when the interaction is missing
+  // or failed; it must never override a successful observed click result.
+  const interactionIssue = browserInteractionEvidenceIssue(run, calls);
+  if (!interactionIssue) return "";
+
   const htmlFiles = readPaths(run, /\.html?$/i);
   const jsFiles = readPaths(run, /\.(js|mjs)$/i).filter((file) => !isServerRuntimeFile(run, file));
   if (!jsFiles.length) return "This task asks for an interaction, but no client JavaScript file was inspected.";
@@ -959,11 +965,15 @@ function webInteractionIssue(run, changed, calls) {
   for (const match of scripts.matchAll(/getElementById\s*\(\s*["']([^"']+)["']\s*\)/g)) ids.push(match[1]);
   for (const match of scripts.matchAll(/querySelector\s*\(\s*["']#([^"']+)["']\s*\)/g)) ids.push(match[1]);
 
-  for (const id of ids) {
-    const escaped = String(id).replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
-    const pattern = new RegExp("\\bid\\s*=\\s*[\"']" + escaped + "[\"']", "i");
-    if (!pattern.test(html)) {
-      return "The JavaScript targets #" + id + ", but that element ID is not present in the inspected HTML.";
+  // Only make structural claims about inspected HTML. If HTML was not read,
+  // preserve the actual browser failure instead of inventing a missing element.
+  if (htmlFiles.length) {
+    for (const id of ids) {
+      const escaped = String(id).replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
+      const pattern = new RegExp("\\bid\\s*=\\s*[\"']" + escaped + "[\"']", "i");
+      if (!pattern.test(html)) {
+        return "The JavaScript targets #" + id + ", but that element ID is not present in the inspected HTML.";
+      }
     }
   }
 
@@ -972,7 +982,7 @@ function webInteractionIssue(run, changed, calls) {
     return "The click handler exists, but the requested button text “It works!” is not present in the client JavaScript.";
   }
 
-  return browserInteractionEvidenceIssue(run, calls);
+  return interactionIssue;
 }
 
 function uniqueWrittenPaths(writes) {
