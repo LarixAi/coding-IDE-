@@ -6,6 +6,7 @@ const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, is
 const { decideProject, isDependencyFreeStatic, projectDecisionContext } = require("./project-decision");
 const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
+const { resolveRuleDecision, isStaticScaffoldTool } = require("./rule-decision");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 const STOPPED = new Set(["completed", "cancelled", "failed", "awaiting_user"]);
@@ -34,6 +35,7 @@ function createRun(options) {
     toolCalls: [],
     observations: [],
     decisions: [],
+    ruleDecisions: [],
     repairs: [],
     diagnoses: [],
     followUps: [],
@@ -308,7 +310,9 @@ async function executeRun(run, options) {
     }
 
     for (const requestedCall of calls) {
-      const call = routeToolCall(run, requestedCall);
+      const ruleDecision = resolveRequestedToolDecision(run, requestedCall, registry, capabilityTools);
+      const call = ruleDecision.call || requestedCall;
+      recordRuleDecision(run, ruleDecision, requestedCall);
       if (cancelled(run, signal)) return finishCancelled(run, store);
       const key = actionKey(call);
       if ((run.failureCounts[key] || 0) >= run.maxRetries) {
@@ -355,33 +359,34 @@ async function executeRun(run, options) {
 
       let result;
       try {
-        const processGuard = call.name === "process.start"
-          ? await guardProcessStart(run, registry)
-          : null;
-        const projectViolation = processGuard ? "" : projectPolicyViolation(run, call);
-        if (processGuard) {
-          result = processGuard;
-        } else if (projectViolation) {
+        if (ruleDecision.action === "deny") {
           result = {
             ok: false,
             tool: call.name,
             error: {
-              code: "policy_denied",
-              message: projectViolation,
+              code: ruleDecision.code || "policy_denied",
+              message: ruleDecision.reason,
+            },
+            data: {
+              rule: ruleDecision.rule,
+              tier: ruleDecision.tier,
+              priority: ruleDecision.priority,
             },
           };
-        } else if (call.name === "capability.list" || call.name === "capability.invoke") {
-          if (isSiteLayoutGoal(run.goal) && run.progress && run.progress.inspectSatisfied && call.name === "capability.invoke") {
-            result = {
-              ok: false,
-              tool: call.name,
-              error: { code: "policy_denied", message: "This layout job uses local HTML and CSS. External research is withheld." },
-            };
-          } else {
-            result = await dispatchCapability(options.capabilities, run, call, signal, capabilityRegistry);
-          }
         } else {
-          result = await registry.call(call.name, call.args || {});
+          const processGuard = (
+            ruleDecision.action === "guard"
+            && call.name === "process.start"
+          )
+            ? await guardProcessStart(run, registry)
+            : null;
+          if (processGuard) {
+            result = processGuard;
+          } else if (call.name === "capability.list" || call.name === "capability.invoke") {
+            result = await dispatchCapability(options.capabilities, run, call, signal, capabilityRegistry);
+          } else {
+            result = await registry.call(call.name, call.args || {});
+          }
         }
       } catch (error) {
         if (error && error.code === "crash") {
@@ -404,6 +409,7 @@ async function executeRun(run, options) {
         name: call.name,
         args: call.args || {},
         routedFrom: call.routedFrom || null,
+        ruleDecision: compactRuleDecision(ruleDecision),
         result,
       };
       run.toolCalls.push(record);
@@ -578,7 +584,7 @@ function verifyBuild(run) {
       return { status: "failed", summary: "Create the requested static files with file.write.", evidence: [] };
     }
 
-    const forbidden = (run.toolCalls || []).filter((call) => !staticScaffoldTool(call.name));
+    const forbidden = (run.toolCalls || []).filter((call) => !isStaticScaffoldTool(call.name));
     if (forbidden.length) {
       return {
         status: "failed",
@@ -762,36 +768,6 @@ function previewTargetFromRun(run) {
     if (/\.html?$/i.test(candidate)) return candidate;
   }
   return "index.html";
-}
-
-function isPreviewStartCommand(command) {
-  const text = String(command || "").trim();
-  if (!text) return false;
-  const withoutBackground = text.replace(/\s*&\s*$/, "").trim();
-  if (/^npm\s+(?:start|run\s+(?:dev|preview))$/i.test(withoutBackground)) return true;
-  if (/^node\s+(?:--[\w-]+\s+)*[^\s]+\.m?js$/i.test(withoutBackground)) {
-    return /(?:^|\/)(?:server|app|index|main)(?:\.[^.]+)?\.m?js$/i.test(withoutBackground.replace(/^node\s+(?:--[\w-]+\s+)*/, ""));
-  }
-  return false;
-}
-
-function routeToolCall(run, rawCall) {
-  const call = rawCall && typeof rawCall === "object"
-    ? { ...rawCall, args: { ...((rawCall && rawCall.args) || {}) } }
-    : rawCall;
-  if (!call || !isBrowserEditTask(run)) return call;
-
-  if (call.name === "terminal.run" && isPreviewStartCommand(call.args && call.args.command)) {
-    return {
-      name: "browser.check",
-      args: { url: previewTargetFromRun(run) },
-      routedFrom: {
-        name: "terminal.run",
-        command: String((call.args && call.args.command) || ""),
-      },
-    };
-  }
-  return call;
 }
 
 function isInteractiveBrowserGoal(goal) {
@@ -1063,19 +1039,6 @@ function applyProjectDecision(run, store) {
   return decision;
 }
 
-function staticScaffoldTool(name) {
-  return ["workspace.inspect", "dir.list", "dir.create", "file.write", "file.read", "browser.check", "browser.interact"].includes(name);
-}
-
-function forbiddenStaticPath(value) {
-  const file = String(value || "").replace(/\\/g, "/").toLowerCase();
-  if (!file) return false;
-  if (file === "package.json" || file === "package-lock.json" || file === "yarn.lock" || file === "pnpm-lock.yaml") return true;
-  if (/(^|\/)server\.(js|mjs|cjs|ts)$/.test(file)) return true;
-  if (file === "vite.config.js" || file === "vite.config.ts" || file === "next.config.js" || file === "next.config.mjs") return true;
-  return file === "node_modules" || file.startsWith("node_modules/");
-}
-
 function latestProcessEvidence(run) {
   const calls = (run && run.toolCalls) || [];
   for (let index = calls.length - 1; index >= 0; index -= 1) {
@@ -1167,34 +1130,73 @@ async function guardProcessStart(run, registry) {
   return null;
 }
 
-function projectPolicyViolation(run, call) {
-  const name = call && call.name;
-  if (isDependencyFreeStatic(run && run.projectDecision)) {
-    if (!staticScaffoldTool(name)) {
-      return "This project was classified as a dependency-free static website. Use only workspace file/folder tools and browser.check; do not use terminal, process, tests, npm, frameworks, or external capabilities.";
-    }
-    if ((name === "file.write" || name === "dir.create") && forbiddenStaticPath(call.args && call.args.path)) {
-      return `This project was classified as a dependency-free static website, so ${call.args.path} is not allowed. Create only browser-native HTML, CSS, assets, and optional JavaScript.`;
-    }
-  }
-  if (name === "tests.run" && !workspaceHasTests(run)) {
-    return "This workspace has no test script. Do not run tests.run; verify the changed file directly or use browser.check for a web change.";
-  }
-  if ((name === "git.diff" || name === "git.status") && !workspaceHasGit(run)) {
-    return "This workspace is not a Git repository. Do not call Git tools; use the available verification for this project.";
-  }
-  if ((name === "capability.invoke" || name === "capability.list") && isSimpleLocalWorkspaceTask(run)) {
-    return "This is a local workspace edit and does not need external research. Inspect and verify the local files instead.";
-  }
-  if (name === "process.start" && isBrowserEditTask(run)) {
-    return "For browser-visible edits, browser.check owns preview startup and verification. Do not start a second preview process.";
-  }
-  return "";
+function requiresFailureBeforeEdit(goal) {
+  const text = String(goal || "");
+  return /\b(?:do not|don't)\s+(?:change|edit|modify|patch|write)[\s\S]{0,100}\bunless\b[\s\S]{0,100}\bfail/i.test(text);
+}
+
+function browserFailureObserved(run) {
+  return ((run && run.toolCalls) || []).some((call) => (
+    (call.name === "browser.check" || call.name === "browser.interact")
+    && call.result
+    && call.result.ok === false
+  ));
+}
+
+function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTools) {
+  const localDefinitions = registry && typeof registry.definitions === "function"
+    ? registry.definitions()
+    : [];
+  const allDefinitions = localDefinitions.concat(Array.isArray(capabilityTools) ? capabilityTools : []);
+  const registeredToolNames = [...new Set(allDefinitions.map((tool) => tool && tool.name).filter(Boolean))];
+  return resolveRuleDecision({
+    call: requestedCall,
+    facts: {
+      mode: run && run.mode,
+      dependencyFreeStatic: isDependencyFreeStatic(run && run.projectDecision),
+      workspaceHasTests: workspaceHasTests(run),
+      workspaceHasGit: workspaceHasGit(run),
+      simpleLocalWorkspaceTask: isSimpleLocalWorkspaceTask(run),
+      localLayoutPhase: Boolean(isSiteLayoutGoal(run && run.goal) && run && run.progress && run.progress.inspectSatisfied),
+      browserEditTask: isBrowserEditTask(run),
+      browserCheckAvailable: registeredToolNames.includes("browser.check"),
+      previewTarget: previewTargetFromRun(run),
+      requireFailureBeforeEdit: requiresFailureBeforeEdit(run && run.goal),
+      browserFailureObserved: browserFailureObserved(run),
+      registeredToolNames,
+    },
+  });
+}
+
+function compactRuleDecision(decision) {
+  if (!decision) return null;
+  return {
+    tier: decision.tier,
+    priority: decision.priority,
+    rule: decision.rule,
+    action: decision.action,
+    reason: decision.reason,
+  };
+}
+
+function recordRuleDecision(run, decision, requestedCall) {
+  if (!run || !decision) return;
+  if (!Array.isArray(run.ruleDecisions)) run.ruleDecisions = [];
+  const record = {
+    iteration: run.iteration,
+    requestedTool: requestedCall && requestedCall.name ? requestedCall.name : "",
+    resolvedTool: decision.call && decision.call.name ? decision.call.name : "",
+    ...compactRuleDecision(decision),
+    at: new Date().toISOString(),
+  };
+  run.ruleDecisions.push(record);
+  if (!Array.isArray(run.events)) run.events = [];
+  run.events.push({ type: "rule_decision", ...record });
 }
 
 function toolsForRun(run, localTools, capabilityTools) {
   if (isDependencyFreeStatic(run && run.projectDecision)) {
-    return localTools.filter((tool) => staticScaffoldTool(tool.name));
+    return localTools.filter((tool) => isStaticScaffoldTool(tool.name));
   }
 
   let local = localTools.slice();

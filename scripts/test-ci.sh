@@ -16,6 +16,7 @@ fi
 export CODEME_SKIP_LIVE="${CODEME_SKIP_LIVE:-1}"
 
 "$node" "$root/packages/agent-tools/test/contract.test.js"
+"$node" "$root/packages/agent-runtime/test/rule-decision.test.js"
 "$node" "$root/packages/agent-runtime/test/project-decision.test.js"
 "$node" "$root/packages/agent-runtime/test/orchestration.test.js"
 "$node" "$root/packages/feature-qualify/test/requirements.test.js"
