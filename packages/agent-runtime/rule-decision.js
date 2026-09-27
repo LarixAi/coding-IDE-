@@ -253,7 +253,7 @@ function resolveRuleDecision(input = {}) {
     ));
   }
 
-  if (registered && !registered.has(name)) {
+  if (registered && registered.size > 0 && !registered.has(name)) {
     candidates.push(candidate(
       "eligibility",
       "eligibility.tool_unavailable",
