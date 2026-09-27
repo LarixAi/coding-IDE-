@@ -137,15 +137,23 @@ function compactTools(run) {
 function compactTool(run, call, index, status) {
   const args = call.args || {};
   const result = call.result || null;
+  const data = result && result.data && typeof result.data === "object" ? result.data : {};
   const item = {
     name: call.name,
     path: args.path || args.query || args.url || "",
+    command: String(args.command || ""),
     ok: status === "running" ? null : Boolean(result && result.ok),
     status: status === "running" ? "running" : (result && result.ok ? "done" : "failed"),
-    suppressed: Boolean(result && result.data && result.data.suppressed),
-    reused: Boolean(result && result.data && result.data.reused),
-    requiresLogs: Boolean(result && result.data && result.data.requiresLogs),
-    reason: result && result.data ? String(result.data.reason || "") : "",
+    suppressed: Boolean(data.suppressed),
+    reused: Boolean(data.reused),
+    requiresLogs: Boolean(data.requiresLogs),
+    reason: String(data.reason || ""),
+    error: result && result.error ? String(result.error.message || result.error.code || "") : "",
+    output: String(data.output || data.stderr || data.stdout || ""),
+    beforeText: String(data.beforeText || ""),
+    afterText: String(data.afterText || ""),
+    expectedText: String(args.expectedText || ""),
+    targetText: String(args.targetText || ""),
   };
   if (call.name === "file.write") {
     item.operation = fileWriteOperation(run, call, index);
