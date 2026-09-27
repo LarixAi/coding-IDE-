@@ -228,6 +228,12 @@ function applyIteration(state, input) {
         categories.push(call.result && call.result.ok ? "changed_test_result" : "new_failure");
         state.subtask = "verify";
       }
+    } else if (call.name === "sandbox.run") {
+      const key = `sandbox:${digest(JSON.stringify(call.args || {}))}:${testSignature(call.result)}`;
+      if (rememberKey(state, key)) {
+        categories.push(call.result && call.result.ok ? "changed_test_result" : "new_failure");
+        state.subtask = "verify";
+      }
     } else if (call.name === "diagnostics.run") {
       const key = `diagnostics:${diagnosticsSignature(call.result)}`;
       if (rememberKey(state, key)) {
@@ -441,7 +447,7 @@ function compactObservation(call) {
 
 // After stagnation the runtime narrows the offered tools to the ones that can change
 // the outcome. Browsing and workaround tools are withheld until progress resumes.
-const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "dir.create", "dir.list", "process.start", "process.status", "process.logs", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check", "browser.interact"];
+const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "dir.create", "dir.list", "sandbox.run", "process.start", "process.status", "process.logs", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check", "browser.interact"];
 
 function focusTools(state, definitions) {
   if (!state) return definitions;
@@ -499,6 +505,7 @@ function turnFingerprint(calls, cluster) {
     if (call.name === "file.read") return `read:${call.args && call.args.path}`;
     if (call.name === "file.write" || call.name === "file.patch") return `write:${call.args && call.args.path}`;
     if (call.name === "tests.run" || call.name === "diagnostics.run") return call.name;
+    if (call.name === "sandbox.run") return `sandbox:${digest(JSON.stringify(call.args || {}))}`;
     if (call.name === "capability.invoke") return `capability:${call.args && call.args.capability}`;
     return call.name;
   });
