@@ -3,6 +3,7 @@ const http = require("http");
 const path = require("path");
 
 const PREVIEW_TERMINAL = "CodeMe Preview";
+const STATIC_SERVERS = new Map();
 
 function previewPlan(root, requestedUrl) {
   const start = readStartScript(root);
@@ -114,6 +115,95 @@ function fetchPage(url) {
   });
 }
 
+function contentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const types = {
+    ".html": "text/html; charset=utf-8",
+    ".htm": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".ico": "image/x-icon",
+  };
+  return types[ext] || "application/octet-stream";
+}
+
+function staticRequestFile(root, requestUrl) {
+  let pathname = "/";
+  try {
+    pathname = decodeURIComponent(new URL(requestUrl, "http://127.0.0.1").pathname);
+  } catch {
+    return "";
+  }
+  const relative = pathname.replace(/^\/+/, "") || "index.html";
+  const resolvedRoot = path.resolve(root);
+  let candidate = path.resolve(resolvedRoot, relative);
+  if (candidate !== resolvedRoot && !candidate.startsWith(resolvedRoot + path.sep)) return "";
+  try {
+    if (fs.statSync(candidate).isDirectory()) candidate = path.join(candidate, "index.html");
+  } catch {}
+  if (candidate !== resolvedRoot && !candidate.startsWith(resolvedRoot + path.sep)) return "";
+  return candidate;
+}
+
+function createStaticServer(root, port) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      const file = staticRequestFile(root, req.url || "/");
+      if (!file) {
+        res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Forbidden");
+        return;
+      }
+      fs.readFile(file, (error, bytes) => {
+        if (error) {
+          res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+          res.end("Not found");
+          return;
+        }
+        res.writeHead(200, { "content-type": contentType(file), "cache-control": "no-store" });
+        res.end(bytes);
+      });
+    });
+    const onError = (error) => {
+      server.removeListener("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.removeListener("error", onError);
+      if (typeof server.unref === "function") server.unref();
+      const address = server.address();
+      resolve({ server, port: address && typeof address === "object" ? address.port : port });
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, "127.0.0.1");
+  });
+}
+
+async function ensureStaticPreview(root, preferredPort) {
+  const key = path.resolve(root);
+  const existing = STATIC_SERVERS.get(key);
+  if (existing && existing.server && existing.server.listening) return existing;
+
+  let started;
+  try {
+    started = await createStaticServer(root, preferredPort || 4173);
+  } catch (error) {
+    if (!error || error.code !== "EADDRINUSE") throw error;
+    started = await createStaticServer(root, 0);
+  }
+  STATIC_SERVERS.set(key, started);
+  return started;
+}
+
 async function waitForPage(url, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
@@ -178,12 +268,22 @@ function createPreviewRunner(vscode) {
         const running = await probe(plan.url);
         if (!running.available) {
           if (!plan.command) {
-            return {
-              available: false,
-              code: "preview_unavailable",
-              message: "This workspace has no npm start script, so the preview cannot start.",
-              url: plan.url,
-            };
+            try {
+              const staticPreview = await ensureStaticPreview(root, plan.port);
+              const parsed = new URL(plan.url);
+              parsed.hostname = "127.0.0.1";
+              parsed.port = String(staticPreview.port);
+              const staticUrl = parsed.toString();
+              await openPreview(vscode, staticUrl);
+              return await waitForPage(staticUrl, 5000);
+            } catch (error) {
+              return {
+                available: false,
+                code: error && error.code ? String(error.code) : "preview_unavailable",
+                message: error instanceof Error ? error.message : String(error),
+                url: plan.url,
+              };
+            }
           }
           startPreview(vscode, root, plan.command);
           await openPreview(vscode, plan.url);
@@ -239,5 +339,6 @@ module.exports = {
   resolvePreviewUrl,
   portFromText,
   recoverFlagSocket,
+  ensureStaticPreview,
   createPreviewRunner,
 };
