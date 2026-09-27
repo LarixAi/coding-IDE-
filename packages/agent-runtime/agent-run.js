@@ -144,7 +144,23 @@ async function executeRun(run, options) {
     }
   }
   store.save(run);
-  const capabilityRegistry = await loadCapabilityRegistry(options.capabilities);
+
+  const folder = await createRequestedFolder(run, registry, store);
+  if (folder) return folder;
+  if (!cancelled(run, signal)) {
+    const workspace = await showWorkspace(run, registry, store);
+    if (workspace && workspace.ok === false) {
+      const error = workspace.error || {};
+      return finishFailed(
+        run,
+        store,
+        error.code || "workspace_inspection_failed",
+        error.message || "CodeMe could not inspect the active workspace",
+      );
+    }
+  }
+
+  const capabilityRegistry = await loadCapabilityRegistry(isSimpleEmptyScaffold(run) ? null : options.capabilities);
   const capabilityRecords = capabilityRegistry.list();
   const capabilityTools = capabilityRecords.length ? capabilityToolDefinitions(capabilityRecords) : [];
   if (!run.progress) run.progress = createProgressState(options);
@@ -170,20 +186,6 @@ async function executeRun(run, options) {
     }
   }
 
-  const folder = await createRequestedFolder(run, registry, store);
-  if (folder) return folder;
-  if (!cancelled(run, signal)) {
-    const workspace = await showWorkspace(run, registry, store);
-    if (workspace && workspace.ok === false) {
-      const error = workspace.error || {};
-      return finishFailed(
-        run,
-        store,
-        error.code || "workspace_inspection_failed",
-        error.message || "CodeMe could not inspect the active workspace",
-      );
-    }
-  }
   if (!cancelled(run, signal)) await prepareResearch(run, capabilityRegistry, options, signal, store);
 
   while (!STOPPED.has(run.lifecycle)) {
