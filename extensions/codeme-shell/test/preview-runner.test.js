@@ -3,7 +3,8 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
-const { createPreviewRunner, portFromText, previewPlan } = require("../preview-runner");
+const net = require("net");
+const { createPreviewRunner, portFromText, previewPlan, recoverFlagSocket } = require("../preview-runner");
 
 function mockVscode(commands) {
   const sent = [];
@@ -64,6 +65,27 @@ async function main() {
   const blocked = previewPlan(root, "https://example.com");
   assert.strictEqual(blocked.ok, false);
   assert.strictEqual(blocked.code, "invalid_url");
+
+  if (process.platform !== "win32") {
+    const socketRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-preview-socket-"));
+    const socketPath = path.join(socketRoot, "--port");
+    const socketServer = net.createServer();
+    await new Promise((resolve, reject) => {
+      socketServer.once("error", reject);
+      socketServer.listen(socketPath, resolve);
+    });
+    let disposed = 0;
+    const socketMock = mockVscode([]);
+    socketMock.vscode.window.terminals.push({
+      name: "CodeMe Preview",
+      dispose() { disposed += 1; },
+    });
+    assert.strictEqual(fs.lstatSync(socketPath).isSocket(), true);
+    assert.strictEqual(recoverFlagSocket(socketMock.vscode, socketRoot), true);
+    assert.strictEqual(disposed, 1);
+    assert.strictEqual(fs.existsSync(socketPath), false);
+    await new Promise((resolve) => socketServer.close(resolve));
+  }
 
   const live = await listen((_req, res) => {
     res.writeHead(200, { "Content-Type": "text/html" });
