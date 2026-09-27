@@ -665,7 +665,7 @@ async function main() {
     assert.ok(context.includes("this is not a Git repository"));
   });
 
-  await test("already-satisfied button repair completes from browser evidence without a new write", async () => {
+  await test("already-satisfied button repair reroutes preview shell commands and completes without a new write", async () => {
     const root = tempDir();
     fs.writeFileSync(path.join(root, "index.html"), [
       '<!doctype html>',
@@ -713,7 +713,7 @@ async function main() {
       async writeFile() { throw new Error("no write should be needed"); },
       async createDirectory(dirPath) { return { path: dirPath }; },
       async search() { return { query: "", matches: [] }; },
-      async runTerminal() { return { exitCode: 0, output: "" }; },
+      async runTerminal() { throw new Error("preview server command must be routed before terminal.run"); },
       async processStatus() {
         return { found: true, status: "running", command: "npm start", exitCode: null };
       },
@@ -766,7 +766,7 @@ async function main() {
           { name: "file.read", args: { path: "script.js" } },
         ],
       },
-      { toolCalls: [{ name: "browser.check", args: { url: "styles.css" } }] },
+      { toolCalls: [{ name: "terminal.run", args: { command: "node server.js &" } }] },
       { text: "This should never be needed because CodeMe should auto-verify the click." },
     ]);
 
@@ -787,7 +787,15 @@ async function main() {
     assert.strictEqual(run.verification.status, "passed");
     assert.ok(/already satisfied|real browser/i.test(run.verification.summary));
     assert.strictEqual(provider.calls.length, 2);
-    assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.result && call.result.ok));
+    assert.ok(!run.toolCalls.some((call) => call.name === "terminal.run"));
+    assert.ok(run.toolCalls.some((call) => (
+      call.name === "browser.check"
+      && call.result
+      && call.result.ok
+      && call.routedFrom
+      && call.routedFrom.name === "terminal.run"
+      && call.routedFrom.command === "node server.js &"
+    )));
     assert.ok(run.toolCalls.some((call) => (
       call.name === "browser.interact"
       && call.directedBy === "runtime"
