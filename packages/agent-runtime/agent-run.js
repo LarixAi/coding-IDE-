@@ -812,18 +812,25 @@ function forbiddenStaticPath(value) {
   return file === "node_modules" || file.startsWith("node_modules/");
 }
 
-function latestSuccessfulProcessStatus(run) {
+function latestProcessEvidence(run) {
   const calls = (run && run.toolCalls) || [];
   for (let index = calls.length - 1; index >= 0; index -= 1) {
     const call = calls[index];
     if (call.name !== "process.status" || !call.result || !call.result.ok) continue;
-    return call.result.data || null;
+    const logsReadAfter = calls.slice(index + 1).some((item) => (
+      item.name === "process.logs" && item.result && item.result.ok
+    ));
+    return {
+      status: call.result.data || null,
+      logsReadAfter,
+    };
   }
-  return null;
+  return { status: null, logsReadAfter: false };
 }
 
 async function guardProcessStart(run, registry) {
-  let status = latestSuccessfulProcessStatus(run);
+  let evidence = latestProcessEvidence(run);
+  let status = evidence.status;
   if (!status && registry && typeof registry.call === "function") {
     try {
       const statusResult = await registry.call("process.status", {});
@@ -841,6 +848,7 @@ async function guardProcessStart(run, registry) {
         run.toolCalls.push(record);
         run.observations.push(observe(statusCall, statusResult));
         pushObservation(run, statusCall, statusResult);
+        evidence = { status, logsReadAfter: false };
       }
     } catch {
       status = null;
@@ -862,7 +870,7 @@ async function guardProcessStart(run, registry) {
     };
   }
 
-  if (status && status.status === "failed") {
+  if (status && status.status === "failed" && !evidence.logsReadAfter) {
     return {
       ok: true,
       tool: "process.start",
