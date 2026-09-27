@@ -22,6 +22,7 @@ const PROVIDER_NAMES = {
   "file.patch": "file_patch",
   "repo.search": "repo_search",
   "terminal.run": "terminal_run",
+  "sandbox.run": "sandbox_run",
   "process.start": "process_start",
   "process.status": "process_status",
   "process.logs": "process_logs",
