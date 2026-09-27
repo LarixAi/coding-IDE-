@@ -442,7 +442,7 @@ const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "dir.create", "
 function focusTools(state, definitions) {
   if (!state) return definitions;
   if (state.writeNow || (state.inspectSatisfied && isSiteLayoutGoal(state.goal))) {
-    const local = definitions.filter((item) => item.name === "file.write" || item.name === "file.patch" || item.name === "browser.check");
+    const local = definitions.filter((item) => item.name === "file.read" || item.name === "file.write" || item.name === "file.patch" || item.name === "browser.check");
     if (local.length) return local;
   }
   if (state.strategy !== "stagnant" && !state.focus) return definitions;
