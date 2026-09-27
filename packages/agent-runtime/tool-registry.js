@@ -1,6 +1,10 @@
 const { executeControlled, executeReadOnly, READ_ONLY_TOOLS, CONTROLLED_TOOLS } = require("../agent-tools");
 
 const DEFINITIONS = {
+  "workspace.inspect": {
+    description: "Inspect the active workspace without changing it. Reports whether it is empty, an existing project, or a general folder, plus project markers, languages, frameworks, package manager, scripts, and Git presence.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
   "file.read": {
     description: "Read a workspace-relative text file.",
     parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
