@@ -1168,7 +1168,9 @@ function isBrowserEditTask(run) {
 function verificationPolicyText(run) {
   if (!run || !run.workspace) return "";
   if (isDependencyFreeStatic(run.projectDecision)) {
-    return "Verification policy: read back every created file and verify the page with browser.check. Do not run tests or Git.";
+    return isInteractiveBrowserGoal(run.goal)
+      ? "Verification policy: read back every created file, verify the page with browser.check, then use browser.interact to perform the requested interaction in a real browser. Do not run tests or Git."
+      : "Verification policy: read back every created file and verify the page with browser.check. Do not run tests or Git.";
   }
   const parts = [];
   if (workspaceHasTests(run)) parts.push("tests are available");
@@ -1448,7 +1450,11 @@ function defaultVerify(run, text) {
     const allReadBack = changed.every((file) => wasReadAfterMutation(run, file));
 
     if (webWrite) {
-      const preview = after.find((call) => call.name === "browser.check" && call.result && call.result.ok);
+      const preview = after.find((call) => (
+        (call.name === "browser.check" || call.name === "browser.interact")
+        && call.result
+        && call.result.ok
+      ));
       if (!allReadBack) {
         return {
           status: "failed",
@@ -1459,7 +1465,9 @@ function defaultVerify(run, text) {
       if (!preview) {
         return {
           status: "failed",
-          summary: "The web edit is saved. Verify the visible result with browser.check; tests and Git are not substitutes for the browser preview.",
+          summary: isInteractiveBrowserGoal(run.goal)
+            ? "The web edit is saved. Verify the page with browser.check, then perform the requested interaction with browser.interact."
+            : "The web edit is saved. Verify the visible result with browser.check; tests and Git are not substitutes for the browser preview.",
           evidence: ["file.patch", "file.read"],
         };
       }
@@ -1484,8 +1492,12 @@ function defaultVerify(run, text) {
 
       return {
         status: "passed",
-        summary: "The web edit was saved, read back, and verified in the browser.",
-        evidence: ["file.patch", "file.read", "browser.check"],
+        summary: isInteractiveBrowserGoal(run.goal)
+          ? "The web edit was saved, read back, and the requested interaction was verified in a real browser."
+          : "The web edit was saved, read back, and verified in the browser.",
+        evidence: isInteractiveBrowserGoal(run.goal)
+          ? ["file.patch", "file.read", "browser.check", "browser.interact"]
+          : ["file.patch", "file.read", "browser.check"],
       };
     }
 
