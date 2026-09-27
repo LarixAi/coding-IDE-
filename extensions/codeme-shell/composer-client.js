@@ -154,6 +154,11 @@ function compactTool(run, call, index, status) {
     afterText: String(data.afterText || ""),
     expectedText: String(args.expectedText || ""),
     targetText: String(args.targetText || ""),
+    isolation: String(data.isolation || ""),
+    securityBoundary: data.securityBoundary === true,
+    network: String(data.network || ""),
+    discarded: data.discarded === true,
+    changedPaths: Array.isArray(data.changedPaths) ? data.changedPaths.slice(0, 30).map(String) : [],
   };
   if (call.name === "file.write") {
     item.operation = fileWriteOperation(run, call, index);
