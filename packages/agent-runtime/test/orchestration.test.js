@@ -476,6 +476,9 @@ async function main() {
     assert.strictEqual(staleStart.result.data.suppressed, true);
     assert.strictEqual(staleStart.result.data.reused, true);
     assert.strictEqual(staleStart.result.data.reason, "already_running");
+    assert.strictEqual(staleStart.ruleDecision.rule, "phase.browser_preview_owner");
+    assert.strictEqual(staleStart.ruleDecision.tier, "phase");
+    assert.strictEqual(staleStart.ruleDecision.action, "guard");
     assert.ok(!run.toolCalls.some((call) => (
       call.name === "process.start" && call.result && call.result.ok === false
     )));
@@ -536,7 +539,11 @@ async function main() {
     assert.strictEqual(writes, 0);
     assert.strictEqual(processes, 0);
     assert.ok(run.toolCalls.some((call) => call.name === "file.write" && call.result && call.result.error && call.result.error.code === "policy_denied"));
-    assert.ok(run.toolCalls.some((call) => call.name === "process.start" && call.result && call.result.error && call.result.error.code === "policy_denied"));
+    const deniedStaticProcess = run.toolCalls.find((call) => call.name === "process.start");
+    assert.ok(deniedStaticProcess && deniedStaticProcess.result && deniedStaticProcess.result.error && deniedStaticProcess.result.error.code === "policy_denied");
+    assert.strictEqual(deniedStaticProcess.ruleDecision.rule, "strategy.static_site");
+    assert.strictEqual(deniedStaticProcess.ruleDecision.tier, "strategy");
+    assert.strictEqual(deniedStaticProcess.ruleDecision.action, "deny");
   });
 
   await test("simple existing HTML edit skips research tests and Git, then verifies in browser", async () => {
