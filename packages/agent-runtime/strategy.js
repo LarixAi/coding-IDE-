@@ -45,7 +45,7 @@ const STRATEGIES = {
     id: "build",
     version: 1,
     taskClass: "build",
-    guidance: "List the workspace with dir.list. When a file is missing, call file.write in that same turn. Describing the file does not create it. For a new website, write package.json, server.js, and index.html. The start script must be node server.js --port 4173, and server.js must serve this folder on 127.0.0.1:4173 using only Node, then call browser.check with http://127.0.0.1:4173/. If package.json already has a start script, keep it, write only the missing files, and call browser.check on that script's local URL. Do not use the terminal to list files, install packages, or create folders.",
+    guidance: "Inspect the workspace first. Create only the files the request actually needs. For a simple static site in an empty workspace, use file.write/dir.create only, do not add a package manager or server, and read every created file back before finishing. For framework or runtime projects, preserve any existing setup and verify using the project's own tooling. Do not use the terminal to list files, install packages, or create folders.",
   },
 };
 
@@ -118,8 +118,17 @@ function isWebsiteBuild(goal) {
   return isBuildGoal(goal) && /\b(website|site|page)\b/i.test(String(goal || ""));
 }
 
+function isSimpleStaticScaffoldGoal(goal) {
+  const text = String(goal || "").toLowerCase();
+  if (!isWebsiteBuild(goal)) return false;
+  const explicitlyStatic = /\b(simple|basic|static|html|css)\b/.test(text);
+  if (!explicitlyStatic) return false;
+  const needsRuntime = /\b(react|next(?:\.js)?|vue|vite|angular|svelte|node|express|server|backend|database|api|payment|payments|auth|login|typescript|framework|npm|package|full[- ]?stack|production|e-?commerce|shop|dashboard|booking|bid)\b/.test(text);
+  return !needsRuntime;
+}
+
 function strategyGuidance(strategy) {
   return (strategy && strategy.guidance) || STRATEGIES.general.guidance;
 }
 
-module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite };
+module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite, isSimpleStaticScaffoldGoal };
