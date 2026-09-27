@@ -112,7 +112,12 @@ class ControlledToolProvider extends ToolProvider {
 }
 
 function availableTools(names, host) {
-  return names.filter((name) => name !== "workspace.inspect" || (host && typeof host.inspectWorkspace === "function"));
+  return names.filter((name) => {
+    if (name === "workspace.inspect") return Boolean(host && typeof host.inspectWorkspace === "function");
+    if (name === "file.patch") return Boolean(host && typeof host.patchFile === "function");
+    if (name === "process.start") return Boolean(host && typeof host.startProcess === "function");
+    return true;
+  });
 }
 
 class ToolRegistry {
