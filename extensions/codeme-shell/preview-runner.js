@@ -97,6 +97,15 @@ function portFromText(text) {
   return Number(match[1] || match[2] || match[3] || match[4] || match[5] || 0);
 }
 
+function isPreviewAssetPath(value) {
+  let pathname = String(value || "");
+  try {
+    if (/^https?:\/\//i.test(pathname)) pathname = new URL(pathname).pathname;
+  } catch {}
+  pathname = pathname.split("?")[0].split("#")[0].toLowerCase();
+  return /\.(?:css|js|mjs|cjs|map|json|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|otf|mp4|webm|mp3|wav)$/i.test(pathname);
+}
+
 function resolvePreviewUrl(root, requestedUrl, origin) {
   const raw = String(requestedUrl || "").trim();
   if (!raw) return { ok: false, code: "invalid_args", message: "browser.check requires a URL" };
@@ -114,13 +123,32 @@ function resolvePreviewUrl(root, requestedUrl, origin) {
       return { ok: false, code: "invalid_url", message: "Only localhost preview URLs are allowed." };
     }
     parsed.hostname = "127.0.0.1";
-    return { ok: true, url: parsed.toString(), local: true, port: Number(parsed.port || 80) };
+    const requestedAsset = isPreviewAssetPath(parsed.pathname);
+    if (requestedAsset) {
+      parsed.pathname = "/";
+      parsed.search = "";
+      parsed.hash = "";
+    }
+    return {
+      ok: true,
+      url: parsed.toString(),
+      local: true,
+      port: Number(parsed.port || 80),
+      canonicalizedFromAsset: requestedAsset ? raw : "",
+    };
   }
   const relative = workspaceFilePath(root, raw);
   if (!relative) return { ok: false, code: "invalid_url", message: "That preview path is outside the workspace." };
   const page = relative.replace(/^src\//, "").replace(/\\/g, "/");
-  const suffix = !page || page === "index.html" ? "/" : `/${page}`;
-  return { ok: true, url: `${origin}${suffix}`, local: true, port: Number(new URL(origin).port || 80) };
+  const requestedAsset = isPreviewAssetPath(page);
+  const suffix = requestedAsset || !page || page === "index.html" ? "/" : `/${page}`;
+  return {
+    ok: true,
+    url: `${origin}${suffix}`,
+    local: true,
+    port: Number(new URL(origin).port || 80),
+    canonicalizedFromAsset: requestedAsset ? raw : "",
+  };
 }
 
 function workspaceFilePath(root, candidate) {
@@ -143,6 +171,32 @@ function workspaceFilePath(root, candidate) {
 async function fetchPage(url) {
   const page = await fetchResource(url);
   const body = page.body;
+  const pageMime = String(page.contentType || "").toLowerCase();
+  if (page.statusCode < 200 || page.statusCode >= 400) {
+    return {
+      available: false,
+      code: "page_status",
+      message: `Preview page returned HTTP ${page.statusCode}`,
+      url,
+      statusCode: page.statusCode,
+      contentType: page.contentType,
+      assets: [],
+    };
+  }
+  const looksHtml = pageMime.includes("text/html")
+    || (!/(?:text\/css|javascript|ecmascript|image\/|font\/|application\/json)/.test(pageMime)
+      && /<!doctype\s+html|<html\b|<head\b|<body\b|<[a-z][^>]*>/i.test(body));
+  if (!looksHtml) {
+    return {
+      available: false,
+      code: "preview_not_html",
+      message: `browser.check must verify an HTML page, but this URL returned ${page.contentType || "non-HTML content"}`,
+      url,
+      statusCode: page.statusCode,
+      contentType: page.contentType,
+      assets: [],
+    };
+  }
   const title = (body.match(/<title>([^<]*)<\/title>/i) || [])[1] || "";
   const refs = extractLocalAssets(body, url);
   const assets = [];
@@ -545,6 +599,7 @@ module.exports = {
   PREVIEW_TERMINAL,
   previewPlan,
   resolvePreviewUrl,
+  isPreviewAssetPath,
   portFromText,
   entryPointFromStartScript,
   portFromSourceText,
