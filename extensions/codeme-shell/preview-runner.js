@@ -80,17 +80,7 @@ function portFromSourceText(text) {
 }
 
 function escapeRegExp(value) {
-  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\function readStartScript(root) {
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-    const script = pkg && pkg.scripts && typeof pkg.scripts.start === "string" ? pkg.scripts.start : "";
-    if (!script) return { command: "", port: 0 };
-    return { command: "npm start", port: portFromText(script) };
-  } catch {
-    return { command: "", port: 0 };
-  }
-}
-");
+  return String(value || "").replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
 }
 
 function readReadme(root) {
