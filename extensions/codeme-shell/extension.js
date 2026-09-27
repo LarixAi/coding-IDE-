@@ -6,6 +6,7 @@ const path = require("path");
 const { renderComposer } = require("./composer-view");
 const { renderWelcome } = require("./welcome");
 const { renderEmptyEditor } = require("./empty-editor");
+const { createProject } = require("./project-manager");
 const { host } = require("./code-oss-host");
 const { ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
 const { RunStore } = require("../../packages/agent-runtime/run-store");
@@ -284,29 +285,6 @@ function hasWorkspaceEditor() {
     }
   }
   return false;
-}
-
-async function createProject() {
-  const name = await vscode.window.showInputBox({
-    title: "Create Project",
-    prompt: "Project folder name",
-    placeHolder: "my-project",
-  });
-  const folderName = String(name || "").trim();
-  if (!folderName || folderName.includes("/") || folderName.includes("\\")) return;
-  const parent = await vscode.window.showOpenDialog({
-    title: "Parent directory",
-    canSelectFiles: false,
-    canSelectFolders: true,
-    canSelectMany: false,
-    openLabel: "Create here",
-  });
-  if (!parent || !parent[0]) return;
-  const root = vscode.Uri.joinPath(parent[0], folderName);
-  await vscode.workspace.fs.createDirectory(root);
-  await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, "README.md"), Buffer.from(`# ${folderName}\n`, "utf8"));
-  await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, ".gitignore"), Buffer.from("node_modules/\n", "utf8"));
-  await vscode.commands.executeCommand("vscode.openFolder", root);
 }
 
 async function probeHub() {
