@@ -1014,6 +1014,172 @@ async function main() {
     assert.ok(fs.readFileSync(path.join(root, "script.js"), "utf8").includes("It works!"));
   });
 
+  await test("successful real browser evidence outranks incomplete HTML source inspection", async () => {
+    const root = tempDir();
+    fs.writeFileSync(path.join(root, "index.html"), [
+      "<!doctype html>",
+      '<button id="actionBtn">Click Me</button>',
+      '<script src="script.js"></script>',
+      "",
+    ].join("\n"), "utf8");
+    fs.writeFileSync(
+      path.join(root, "script.js"),
+      'document.getElementById("actionBtn").addEventListener("click", function () { this.textContent = "Still broken"; });\n',
+      "utf8",
+    );
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      name: "browser-evidence-precedence",
+      scripts: { start: "node server.js" },
+    }, null, 2), "utf8");
+
+    let patches = 0;
+    let interactions = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 3,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["html", "javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: ["index.html", "script.js", "package.json"]
+            .map((filePath) => ({ path: filePath, type: "file" })),
+        };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile(filePath, oldText, newText) {
+        patches += 1;
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        assert.ok(before.includes(oldText), `missing patch text in ${filePath}`);
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile() { throw new Error("file.write should not be needed"); },
+      async createDirectory(dirPath) { return { path: dirPath }; },
+      async search() { return { query: "", matches: [] }; },
+      async runTerminal() { throw new Error("terminal.run should not be used"); },
+      async processStatus() {
+        return { found: true, status: "running", command: "npm start", exitCode: null };
+      },
+      async processLogs() {
+        return { found: true, status: "running", command: "npm start", output: "Server running" };
+      },
+      async startProcess() { throw new Error("process.start should not be used"); },
+      async runTests() { throw new Error("no tests"); },
+      async gitStatus() { throw new Error("not git"); },
+      async gitDiff() { throw new Error("not git"); },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) {
+        return {
+          available: true,
+          statusCode: 200,
+          title: "Browser evidence",
+          url,
+          assets: [
+            { kind: "script", path: "script.js", statusCode: 200, contentType: "text/javascript", ok: true },
+          ],
+        };
+      },
+      async browserInteract(args) {
+        interactions += 1;
+        const script = fs.readFileSync(path.join(root, "script.js"), "utf8");
+        if (!script.includes("It works!")) {
+          return {
+            available: false,
+            code: "browser_expectation_failed",
+            message: 'Expected "It works!" but observed "Still broken"',
+            url: args.url,
+            action: "click",
+            targetText: args.targetText,
+            expectedText: args.expectedText,
+            beforeText: "Click Me",
+            afterText: "Still broken",
+            matched: false,
+            consoleErrors: [],
+          };
+        }
+        return {
+          available: true,
+          url: args.url,
+          action: "click",
+          targetText: args.targetText,
+          expectedText: args.expectedText,
+          beforeText: "Click Me",
+          afterText: "It works!",
+          matched: true,
+          consoleErrors: [],
+          statusCode: 200,
+          title: "Browser evidence fixed",
+          assets: [
+            { kind: "script", path: "script.js", statusCode: 200, contentType: "text/javascript", ok: true },
+          ],
+        };
+      },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "file.read", args: { path: "script.js" } }] },
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: { path: "script.js", oldText: "Still broken", newText: "It works!" },
+        }],
+      },
+      { toolCalls: [{ name: "browser.check", args: { url: "index.html" } }] },
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: { path: "script.js", oldText: "Still broken", newText: "It works!" },
+        }],
+      },
+      { toolCalls: [{ name: "file.read", args: { path: "script.js" } }] },
+      { toolCalls: [{ name: "browser.check", args: { url: "index.html" } }] },
+      { text: "The real browser observed the repaired interaction." },
+    ]);
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'Fix the "Click Me" button so clicking it changes the button text to "It works!". Use the real browser to verify it. Do not change any files unless the interaction fails.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 9,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(run.verification.status, "passed");
+    assert.strictEqual(patches, 1);
+    assert.strictEqual(interactions, 2);
+    assert.ok(!run.toolCalls.some((call) => (
+      call.name === "file.read"
+      && call.args
+      && call.args.path === "index.html"
+    )));
+    assert.ok(run.toolCalls.some((call) => (
+      call.name === "browser.interact"
+      && call.result
+      && call.result.ok
+      && call.result.data
+      && call.result.data.afterText === "It works!"
+    )));
+    assert.ok(!String(run.error && run.error.message || "").includes("#actionBtn"));
+  });
+
   await test("broken button is repaired before real-browser completion", async () => {
     const root = tempDir();
     fs.writeFileSync(path.join(root, "index.html"), [
