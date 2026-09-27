@@ -1990,16 +1990,27 @@ async function showWorkspace(run, registry, store) {
   const definitions = registry.definitions();
   if (definitions.some((tool) => tool.name === "workspace.inspect")) {
     run.workspaceInspected = true;
+    run.inFlight = {
+      kind: "tool",
+      name: "workspace.inspect",
+      args: {},
+      key: actionKey({ name: "workspace.inspect", args: {} }),
+      directedBy: "runtime",
+    };
     store.save(run);
     let inspected;
     try {
       inspected = await registry.call("workspace.inspect", {});
+      run.inFlight = null;
+      store.save(run);
     } catch (error) {
       if (error && error.code === "crash") {
         touch(run, "interrupted");
         store.save(run);
         throw error;
       }
+      run.inFlight = null;
+      store.save(run);
       inspected = {
         ok: false,
         tool: "workspace.inspect",
