@@ -72,7 +72,7 @@ class ReadOnlyToolProvider extends ToolProvider {
   }
 
   definitions() {
-    return READ_ONLY_TOOLS.map((name) => ({ name, ...DEFINITIONS[name] }));
+    return availableTools(READ_ONLY_TOOLS, this.host).map((name) => ({ name, ...DEFINITIONS[name] }));
   }
 }
 
@@ -87,8 +87,12 @@ class ControlledToolProvider extends ToolProvider {
   }
 
   definitions() {
-    return CONTROLLED_TOOLS.map((name) => ({ name, ...DEFINITIONS[name] }));
+    return availableTools(CONTROLLED_TOOLS, this.host).map((name) => ({ name, ...DEFINITIONS[name] }));
   }
+}
+
+function availableTools(names, host) {
+  return names.filter((name) => name !== "workspace.inspect" || (host && typeof host.inspectWorkspace === "function"));
 }
 
 class ToolRegistry {
