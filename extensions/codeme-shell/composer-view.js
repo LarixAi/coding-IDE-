@@ -61,6 +61,7 @@ function renderComposer(nonce) {
     .tool-card.running .tool-state { color: #7fd3ea; animation: codeme-pulse 1.1s ease-in-out infinite; }
     .tool-card.failed .tool-state { color: #ff918b; }
     @keyframes codeme-pulse { 50% { opacity: 0.35; } }
+    .tool-detail { margin: 0; padding: 9px 10px; max-height: 220px; overflow: auto; border-top: 1px solid #2a3038; background: #14181d; color: #aeb8c7; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 10px; line-height: 1.5; }
     .code-preview { max-height: 310px; overflow: auto; border-top: 1px solid #2a3038; background: #14181d; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; line-height: 1.55; }
     .code-line { display: grid; grid-template-columns: 38px 18px minmax(0, 1fr); min-height: 18px; }
     .code-line.add { background: #173325; }
@@ -616,7 +617,7 @@ function renderComposer(nonce) {
       if (item.name === "process.status") return live ? "Checking process status" : "Checked process status";
       if (item.name === "process.logs") return live ? "Reading process logs" : "Read process logs";
       if (item.name === "browser.check") return live ? "Checking preview" : "Checked preview";
-      if (item.name === "browser.interact") return live ? "Testing browser interaction" : (item.afterText ? `Observed ${item.afterText}` : "Verified browser interaction");
+      if (item.name === "browser.interact") return live ? "Testing browser interaction" : (item.afterText ? "Observed " + item.afterText : "Verified browser interaction");
       if (item.name === "diagnostics.run") return live ? "Checking diagnostics" : "Checked diagnostics";
       if (item.name === "git.diff") return live ? "Reviewing changes" : "Reviewed changes";
       if (item.name === "git.status") return live ? "Checking Git status" : "Checked Git status";
