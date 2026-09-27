@@ -4,7 +4,7 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const net = require("net");
-const { createPreviewRunner, portFromText, previewPlan, recoverFlagSocket, ensureStaticPreview } = require("../preview-runner");
+const { createPreviewRunner, portFromText, previewPlan, recoverFlagSocket, ensureStaticPreview, entryPointFromStartScript, portFromSourceText } = require("../preview-runner");
 
 function mockVscode(commands) {
   const sent = [];
@@ -45,6 +45,11 @@ async function main() {
   assert.strictEqual(portFromText("serve src -l 4173"), 4173);
   assert.strictEqual(portFromText("Open http://localhost:4173"), 4173);
   assert.strictEqual(portFromText("node server.js"), 0);
+  assert.strictEqual(entryPointFromStartScript("node server.js"), "server.js");
+  assert.strictEqual(entryPointFromStartScript("node --trace-warnings server.js"), "server.js");
+  assert.strictEqual(portFromSourceText("server.listen(3000);"), 3000);
+  assert.strictEqual(portFromSourceText("const PORT = process.env.PORT || 3000;\nserver.listen(PORT);"), 3000);
+  assert.strictEqual(portFromSourceText("const port = 3001;\napp.listen(port);"), 3001);
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-preview-"));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: "serve src -l 4173" } }));
@@ -65,6 +70,17 @@ async function main() {
   const blocked = previewPlan(root, "https://example.com");
   assert.strictEqual(blocked.ok, false);
   assert.strictEqual(blocked.code, "invalid_url");
+
+  const nodeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-node-preview-"));
+  fs.writeFileSync(path.join(nodeRoot, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }));
+  fs.writeFileSync(path.join(nodeRoot, "server.js"), "const PORT = process.env.PORT || 3000;\nserver.listen(PORT);\n");
+  fs.writeFileSync(path.join(nodeRoot, "index.html"), "<title>Node Entry</title>");
+  const nodePlan = previewPlan(nodeRoot, "index.html");
+  assert.strictEqual(nodePlan.ok, true);
+  assert.strictEqual(nodePlan.port, 3000);
+  assert.strictEqual(nodePlan.url, "http://127.0.0.1:3000/");
+  assert.strictEqual(nodePlan.command, "npm start");
+  assert.strictEqual(nodePlan.shouldStart, true);
 
   if (process.platform !== "win32") {
     const socketRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-preview-socket-"));
@@ -154,6 +170,49 @@ async function main() {
   assert.strictEqual(startMock.sent[0], "npm start");
   assert.strictEqual(started.title, "Started");
   if (launched) await new Promise((resolve) => launched.close(resolve));
+
+  const detectedPortServer = await listen((_req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end("<title>Detected Port</title>");
+  });
+  const detectedPort = detectedPortServer.port;
+  await new Promise((resolve) => detectedPortServer.server.close(resolve));
+
+  const detectedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-detected-port-"));
+  fs.writeFileSync(path.join(detectedRoot, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }));
+  fs.writeFileSync(
+    path.join(detectedRoot, "server.js"),
+    `const PORT = process.env.PORT || ${detectedPort};\nserver.listen(PORT);\n`,
+  );
+  fs.writeFileSync(path.join(detectedRoot, "index.html"), "<title>Detected Port</title>");
+
+  const detectedCommands = [];
+  const detectedMock = mockVscode(detectedCommands);
+  let detectedLaunched;
+  detectedMock.vscode.window.createTerminal = function createTerminal(options) {
+    const terminal = {
+      name: options.name,
+      show() {},
+      sendText(command) {
+        detectedMock.sent.push(command);
+        detectedLaunched = http.createServer((_req, res) => {
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end("<title>Detected Port</title>");
+        });
+        detectedLaunched.listen(detectedPort, "127.0.0.1");
+      },
+    };
+    this.terminals.push(terminal);
+    return terminal;
+  };
+
+  const detectedResult = await createPreviewRunner(detectedMock.vscode).check(detectedRoot, "index.html");
+  assert.strictEqual(detectedResult.available, true);
+  assert.strictEqual(detectedResult.statusCode, 200);
+  assert.strictEqual(detectedResult.title, "Detected Port");
+  assert.strictEqual(detectedMock.sent.length, 1);
+  assert.strictEqual(detectedMock.sent[0], "npm start");
+  if (detectedLaunched) await new Promise((resolve) => detectedLaunched.close(resolve));
 
   console.log("ok preview runner");
 }
