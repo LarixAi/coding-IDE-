@@ -244,7 +244,7 @@ async function main() {
     const read = { name: "file.read", args: { path: "src/check.js" } };
     const provider = new ScriptedModelProvider([
       step("Reading the local implementation first.", read),
-      step("The same local evidence is not enough; checking it once more.", read),
+      step("Reading the local implementation first.", read),
       step("Applying the external evidence.", {
         name: "file.write",
         args: {
