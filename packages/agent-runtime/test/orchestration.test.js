@@ -127,6 +127,21 @@ function quoteRun(run) {
   return JSON.stringify({ lifecycle: run.lifecycle, outcome: run.outcome, tools: run.toolCalls.map((call) => call.name), verification: run.verification }, null, 2);
 }
 
+function ollamaAvailable() {
+  if (process.env.CODEME_SKIP_LIVE === "1") return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const req = http.get(new URL("/api/tags", OLLAMA), { timeout: 800 }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
 async function main() {
   await test("run ids differ and the goal is stored", async () => {
     const first = createRun({ goal: "find the badge", model: MODEL, providerName: "ollama" });
@@ -1611,6 +1626,13 @@ async function main() {
     assert.strictEqual(host.state.reads, 0);
     assert.ok(resumed.observations.some((item) => item.summary.includes("not replayed")));
   });
+
+  if (!await ollamaAvailable()) {
+    console.log("skip Qwen searches, reads, and sees the successful observation — no local Ollama");
+    console.log("skip Qwen sees a failed tool observation and does not invent the file — no local Ollama");
+    if (process.exitCode) process.exit(process.exitCode);
+    return;
+  }
 
   await test("Qwen searches, reads, and sees the successful observation", async () => {
     const provider = new RecordingModelProvider(new OllamaModelProvider({ baseUrl: OLLAMA }));

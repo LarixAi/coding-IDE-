@@ -4,8 +4,9 @@ const path = require("path");
 const http = require("http");
 const { spawn } = require("child_process");
 
-const CDP_WAIT_MS = 7000;
+const CDP_WAIT_MS = 10000;
 const ACTION_WAIT_MS = 250;
+const HOLD_VISIBLE_MS = 2500;
 
 function browserCandidates() {
   const home = os.homedir();
@@ -45,7 +46,15 @@ function browserCandidates() {
 }
 
 function findBrowserExecutable() {
+  const override = process.env.CODEME_BROWSER || process.env.CHROME_PATH;
+  if (override && fs.existsSync(override)) return override;
   return browserCandidates().find((candidate) => candidate && fs.existsSync(candidate)) || "";
+}
+
+function shouldRunHeaded() {
+  if (process.env.CODEME_BROWSER_HEADLESS === "1") return false;
+  if (process.env.CODEME_BROWSER_HEADED === "1") return true;
+  return !process.env.CI;
 }
 
 function validateLocalUrl(value) {
@@ -118,8 +127,9 @@ function createBrowserInteractionRunner(options = {}) {
       let child = null;
       let client = null;
       try {
+        const headed = shouldRunHeaded();
         child = spawnBrowser(executable, [
-          "--headless=new",
+          ...(headed ? ["--new-window"] : ["--headless=new", "--disable-gpu"]),
           "--remote-debugging-port=0",
           `--user-data-dir=${profile}`,
           "--no-first-run",
@@ -128,7 +138,6 @@ function createBrowserInteractionRunner(options = {}) {
           "--disable-sync",
           "--disable-extensions",
           "--disable-features=Translate",
-          "--disable-gpu",
           checked.url,
         ], {
           stdio: "ignore",
@@ -148,7 +157,7 @@ function createBrowserInteractionRunner(options = {}) {
           return {
             available: false,
             code: "browser_target_unavailable",
-            message: "The headless browser started, but CodeMe could not find a page target.",
+            message: "The browser window started, but CodeMe could not find a page target.",
             url: checked.url,
           };
         }
@@ -164,7 +173,7 @@ function createBrowserInteractionRunner(options = {}) {
         await client.send("Page.navigate", { url: checked.url });
         await waitForDocumentReady(client, CDP_WAIT_MS);
 
-        const click = await client.evaluate(clickExpression(selector, targetText));
+        const click = await performVisibleClick(client, selector, targetText);
         if (!click || !click.ok) {
           return {
             available: false,
@@ -217,10 +226,12 @@ function createBrowserInteractionRunner(options = {}) {
           };
         }
 
+        if (headed) await delay(HOLD_VISIBLE_MS);
         return {
           available: true,
           url: checked.url,
           browser: path.basename(executable),
+          visible: headed,
           action,
           selector,
           targetText,
@@ -250,7 +261,7 @@ function createBrowserInteractionRunner(options = {}) {
   };
 }
 
-function clickExpression(selector, targetText) {
+function locateExpression(selector, targetText) {
   return `(() => {
     const selector = ${JSON.stringify(String(selector || ""))};
     const targetText = ${JSON.stringify(String(targetText || ""))};
@@ -262,12 +273,48 @@ function clickExpression(selector, targetText) {
         || candidates.find((candidate) => label(candidate).includes(targetText));
     }
     if (!el) return { ok: false, code: "browser_target_not_found", message: "No matching clickable element was found." };
-    const beforeText = label(el);
-    el.setAttribute("data-codeme-interaction-target", "true");
     if (typeof el.click !== "function") return { ok: false, code: "browser_target_not_clickable", message: "The matching element is not clickable." };
-    el.click();
-    return { ok: true, beforeText, tagName: String(el.tagName || "").toLowerCase() };
+    el.scrollIntoView({ block: "center", inline: "center" });
+    el.setAttribute("data-codeme-interaction-target", "true");
+    const box = el.getBoundingClientRect();
+    return {
+      ok: true,
+      beforeText: label(el),
+      tagName: String(el.tagName || "").toLowerCase(),
+      x: box.x + (box.width / 2),
+      y: box.y + (box.height / 2),
+    };
   })()`;
+}
+
+function clickExpression(selector, targetText) {
+  return `(() => {
+    const found = ${locateExpression(selector, targetText).replace(/;$/, "")};
+    if (!found || !found.ok) return found;
+    const el = document.querySelector("[data-codeme-interaction-target=true]");
+    if (!el || typeof el.click !== "function") return { ok: false, code: "browser_target_not_clickable", message: "The matching element is not clickable." };
+    el.click();
+    return found;
+  })()`;
+}
+
+async function performVisibleClick(client, selector, targetText) {
+  const found = await client.evaluate(locateExpression(selector, targetText));
+  if (!found || !found.ok) return found;
+  const x = Number(found.x);
+  const y = Number(found.y);
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    try {
+      await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+      await delay(80);
+      await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+      await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+      return found;
+    } catch {
+      // Fall back to a DOM click if the visible pointer event is blocked.
+    }
+  }
+  return client.evaluate(clickExpression(selector, targetText));
 }
 
 function observeExpression(expectedText) {
@@ -458,6 +505,7 @@ module.exports = {
   browserCandidates,
   findBrowserExecutable,
   validateLocalUrl,
+  locateExpression,
   clickExpression,
   observeExpression,
   collectBrowserError,

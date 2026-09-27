@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Scripted gates and browser click
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v2
+        id: chrome
+
+      - name: Run CI tests
+        env:
+          CI: "true"
+          CODEME_SKIP_LIVE: "1"
+          CODEME_BROWSER_HEADLESS: "1"
+          CODEME_BROWSER: ${{ steps.chrome.outputs.chrome-path }}
+        run: sh scripts/test-ci.sh
