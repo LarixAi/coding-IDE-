@@ -58,6 +58,32 @@ async function writeFile(filePath, contents) {
   return { path: filePath, bytes: bytes.byteLength };
 }
 
+async function patchFile(filePath, oldText, newText) {
+  const uri = vscode.Uri.joinPath(workspaceFolder().uri, filePath);
+  const before = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8");
+  if (!oldText) {
+    throw Object.assign(new Error("file.patch requires non-empty oldText"), { code: "invalid_args" });
+  }
+  const first = before.indexOf(oldText);
+  if (first < 0) {
+    throw Object.assign(new Error(`file.patch could not find the requested text in ${filePath}`), { code: "patch_not_found" });
+  }
+  const second = before.indexOf(oldText, first + oldText.length);
+  if (second >= 0) {
+    throw Object.assign(new Error(`file.patch matched more than once in ${filePath}; provide a more specific oldText`), { code: "patch_ambiguous" });
+  }
+  const after = before.slice(0, first) + newText + before.slice(first + oldText.length);
+  const bytes = Buffer.from(after, "utf8");
+  await vscode.workspace.fs.writeFile(uri, bytes);
+  return {
+    path: filePath,
+    bytes: bytes.byteLength,
+    replacements: 1,
+    before: oldText,
+    after: newText,
+  };
+}
+
 async function search(query) {
   const files = await vscode.workspace.findFiles("**/*", "**/{.git,node_modules}/**", 200);
   const matches = [];
@@ -141,6 +167,18 @@ async function runTerminal(command) {
   }
 }
 
+function startProcess(command) {
+  const cwd = workspaceFolder().uri.fsPath;
+  const terminal = vscode.window.createTerminal({ name: "CodeMe Process", cwd });
+  terminal.show(true);
+  terminal.sendText(command);
+  return {
+    started: true,
+    command,
+    terminal: "CodeMe Process",
+  };
+}
+
 async function gitRepository() {
   const extension = vscode.extensions.getExtension("vscode.git");
   if (!extension) {
@@ -207,10 +245,12 @@ const host = {
   inspectWorkspace: () => inspectWorkspace(vscode),
   readFile,
   writeFile,
+  patchFile,
   createDirectory,
   listDirectory,
   search,
   runTerminal,
+  startProcess,
   gitStatus,
   gitDiff,
   diagnostics,
