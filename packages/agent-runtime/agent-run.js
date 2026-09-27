@@ -1083,7 +1083,7 @@ function latestSuccessfulBrowserPreview(run) {
   const calls = (run && run.toolCalls) || [];
   for (let index = calls.length - 1; index >= 0; index -= 1) {
     const call = calls[index];
-    if (call.name !== "browser.check") continue;
+    if (call.name !== "browser.check" && call.name !== "browser.interact") continue;
     if (call.result && call.result.ok) return call;
     return null;
   }
@@ -1112,7 +1112,7 @@ function unresolvedBrowserFailure(run) {
   const calls = (run && run.toolCalls) || [];
   for (let index = calls.length - 1; index >= 0; index -= 1) {
     const call = calls[index];
-    if (call.name !== "browser.check") continue;
+    if (call.name !== "browser.check" && call.name !== "browser.interact") continue;
     return call.result && call.result.ok ? null : call;
   }
   return null;
