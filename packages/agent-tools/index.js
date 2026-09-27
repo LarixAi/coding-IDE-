@@ -1,6 +1,7 @@
 const path = require("path");
 
 const TOOLS = {
+  "workspace.inspect": [],
   "file.read": ["path"],
   "file.write": ["path", "contents"],
   "repo.search": ["query"],
@@ -76,6 +77,8 @@ async function execute(host, tool, args) {
 
 async function dispatch(host, tool, args) {
   switch (tool) {
+    case "workspace.inspect":
+      return host.inspectWorkspace();
     case "file.read":
       return host.readFile(args.path);
     case "file.write":
@@ -103,8 +106,8 @@ async function dispatch(host, tool, args) {
   }
 }
 
-const READ_ONLY_TOOLS = ["file.read", "repo.search", "git.status", "git.diff", "diagnostics.run", "browser.check", "dir.list"];
-const CONTROLLED_TOOLS = ["file.read", "file.write", "repo.search", "terminal.run", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "dir.create", "dir.list"];
+const READ_ONLY_TOOLS = ["workspace.inspect", "file.read", "repo.search", "git.status", "git.diff", "diagnostics.run", "browser.check", "dir.list"];
+const CONTROLLED_TOOLS = ["workspace.inspect", "file.read", "file.write", "repo.search", "terminal.run", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "dir.create", "dir.list"];
 
 function validateCommand(command) {
   if (typeof command !== "string" || command.length === 0) {
