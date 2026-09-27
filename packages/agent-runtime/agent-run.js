@@ -57,9 +57,30 @@ function createRun(options) {
     inFlight: null,
     error: null,
     messages: [],
+    conversationHistory: normalizeConversationHistory(options.conversationHistory),
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+}
+
+function normalizeConversationHistory(list) {
+  if (!Array.isArray(list)) return [];
+  const cleaned = list.map((item) => {
+    const role = item && item.role === "assistant" ? "assistant" : "user";
+    const content = String(item && (item.content || item.text) || "").trim();
+    return content ? { role, content: content.slice(0, 4000) } : null;
+  }).filter(Boolean).slice(-20);
+
+  let budget = 20000;
+  const kept = [];
+  for (let index = cleaned.length - 1; index >= 0; index -= 1) {
+    const item = cleaned[index];
+    if (budget <= 0) break;
+    const content = item.content.slice(Math.max(0, item.content.length - budget));
+    kept.push({ role: item.role, content });
+    budget -= content.length;
+  }
+  return kept.reverse();
 }
 
 function normalizeAttachments(list) {
@@ -137,6 +158,9 @@ async function executeRun(run, options) {
   setPlan(run, "understand", "completed");
   if (run.messages.length === 0) {
     run.messages.push({ role: "system", content: systemPrompt({ ...options, strategyRecord: run.strategyRecord }) });
+    for (const message of run.conversationHistory || []) {
+      run.messages.push({ role: message.role, content: message.content });
+    }
     run.messages.push({ role: "user", content: run.goal });
     if (run.requirements.length) {
       run.messages.push({
