@@ -2,7 +2,8 @@ const crypto = require("crypto");
 const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
 const { createProgressState, recommendCapability, selectCapability, isSiteLayoutGoal, htmlCssRead, capabilityGuidance, writeFindingsNotice, applyEditNotice, alreadySearched, applyIteration, noteResearch, researchQuestion, postResearchBrief, openingResearchBrief, markQuestionSeen, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
 const { lockModel } = require("./model-lock");
-const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isLocalFollowUp, isSimpleStaticScaffoldGoal } = require("./strategy");
+const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isLocalFollowUp } = require("./strategy");
+const { decideProject, isDependencyFreeStatic, projectDecisionContext } = require("./project-decision");
 const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
 
@@ -43,6 +44,7 @@ function createRun(options) {
     progress: createProgressState(options),
     verification: { status: "pending", summary: "", evidence: [] },
     verificationHistory: [],
+    projectDecision: null,
     outcome: null,
     iteration: 0,
     maxIterations: options.maxIterations ?? 8,
@@ -160,7 +162,9 @@ async function executeRun(run, options) {
     }
   }
 
-  const capabilityRegistry = await loadCapabilityRegistry(isSimpleEmptyScaffold(run) ? null : options.capabilities);
+  applyProjectDecision(run, store);
+
+  const capabilityRegistry = await loadCapabilityRegistry(isDependencyFreeStatic(run.projectDecision) ? null : options.capabilities);
   const capabilityRecords = capabilityRegistry.list();
   const capabilityTools = capabilityRecords.length ? capabilityToolDefinitions(capabilityRecords) : [];
   if (!run.progress) run.progress = createProgressState(options);
@@ -312,13 +316,14 @@ async function executeRun(run, options) {
 
       let result;
       try {
-        if (isSimpleEmptyScaffold(run) && !isSimpleScaffoldTool(call.name)) {
+        const projectViolation = projectPolicyViolation(run, call);
+        if (projectViolation) {
           result = {
             ok: false,
             tool: call.name,
             error: {
               code: "policy_denied",
-              message: "Simple empty-workspace scaffolds are limited to workspace inspection and file/folder tools.",
+              message: projectViolation,
             },
           };
         } else if (call.name === "capability.list" || call.name === "capability.invoke") {
@@ -457,7 +462,7 @@ function hasWritten(paths, name) {
 function verifyBuild(run) {
   const paths = writtenPaths(run);
 
-  if (isSimpleEmptyScaffold(run)) {
+  if (isDependencyFreeStatic(run.projectDecision)) {
     if (!paths.length) {
       return { status: "failed", summary: "Create the requested static files with file.write.", evidence: [] };
     }
@@ -471,7 +476,7 @@ function verifyBuild(run) {
     if (forbidden.length) {
       return {
         status: "failed",
-        summary: "A simple empty-workspace scaffold must use only workspace file/folder tools and cannot use terminal, tests, or external capabilities.",
+        summary: "A dependency-free static site cannot use terminal, process, tests, package tooling, or external capabilities.",
         evidence: paths.length ? ["file.write"] : [],
       };
     }
@@ -501,10 +506,19 @@ function verifyBuild(run) {
       };
     }
 
+    const preview = (run.toolCalls || []).find((call) => call.name === "browser.check" && call.result && call.result.ok);
+    if (!preview) {
+      return {
+        status: "failed",
+        summary: "The static files are written and read back. Call browser.check on index.html to verify the page without adding a server or package manager.",
+        evidence: ["file.write", "file.read"],
+      };
+    }
+
     return {
       status: "passed",
-      summary: "The static scaffold was created inside the empty workspace and every created file was read back.",
-      evidence: ["file.write", "file.read"],
+      summary: "The dependency-free static site was created, read back, and verified in the browser preview.",
+      evidence: ["file.write", "file.read", "browser.check"],
     };
   }
 
@@ -559,24 +573,58 @@ function wasReadAfterWrite(run, file) {
   return false;
 }
 
-function isSimpleEmptyScaffold(run) {
-  return Boolean(
-    run
-    && run.mode === "controlled"
-    && run.taskClass === "build"
-    && run.workspace
-    && run.workspace.state === "empty"
-    && isSimpleStaticScaffoldGoal(run.goal),
-  );
+function applyProjectDecision(run, store) {
+  if (!run || !run.workspace || run.mode !== "controlled") return null;
+  if (!["build", "feature", "layout", "bug-fix", "general"].includes(run.taskClass)) return null;
+
+  const decision = decideProject(run.goal, run.workspace);
+  run.projectDecision = decision;
+  if (!Array.isArray(run.events)) run.events = [];
+  run.events.push({
+    type: "project_decision",
+    kind: decision.kind,
+    label: decision.label,
+    workspaceState: decision.workspaceState,
+    framework: decision.framework,
+    dependenciesRequired: decision.dependenciesRequired,
+    reason: decision.reason,
+    at: new Date().toISOString(),
+  });
+  run.messages.push({
+    role: "user",
+    content: `CodeMe chose the project architecture before coding. Treat this as trusted runtime policy: ${projectDecisionContext(decision)} Do not introduce a framework, server, package manager, database, or dependency unless this decision allows it.`,
+  });
+  store.save(run);
+  return decision;
 }
 
-function isSimpleScaffoldTool(name) {
-  return ["workspace.inspect", "dir.list", "dir.create", "file.write", "file.read"].includes(name);
+function staticScaffoldTool(name) {
+  return ["workspace.inspect", "dir.list", "dir.create", "file.write", "file.read", "browser.check"].includes(name);
+}
+
+function forbiddenStaticPath(value) {
+  const file = String(value || "").replace(/\\/g, "/").toLowerCase();
+  if (!file) return false;
+  if (file === "package.json" || file === "package-lock.json" || file === "yarn.lock" || file === "pnpm-lock.yaml") return true;
+  if (/(^|\/)server\.(js|mjs|cjs|ts)$/.test(file)) return true;
+  if (file === "vite.config.js" || file === "vite.config.ts" || file === "next.config.js" || file === "next.config.mjs") return true;
+  return file === "node_modules" || file.startsWith("node_modules/");
+}
+
+function projectPolicyViolation(run, call) {
+  if (!isDependencyFreeStatic(run && run.projectDecision)) return "";
+  if (!staticScaffoldTool(call && call.name)) {
+    return "This project was classified as a dependency-free static website. Use only workspace file/folder tools and browser.check; do not use terminal, process, tests, npm, frameworks, or external capabilities.";
+  }
+  if ((call.name === "file.write" || call.name === "dir.create") && forbiddenStaticPath(call.args && call.args.path)) {
+    return `This project was classified as a dependency-free static website, so ${call.args.path} is not allowed. Create only browser-native HTML, CSS, assets, and optional JavaScript.`;
+  }
+  return "";
 }
 
 function toolsForRun(run, localTools, capabilityTools) {
-  if (!isSimpleEmptyScaffold(run)) return localTools.concat(capabilityTools);
-  return localTools.filter((tool) => isSimpleScaffoldTool(tool.name));
+  if (!isDependencyFreeStatic(run && run.projectDecision)) return localTools.concat(capabilityTools);
+  return localTools.filter((tool) => staticScaffoldTool(tool.name));
 }
 
 async function createRequestedFolder(run, registry, store) {
@@ -1061,7 +1109,7 @@ function promisesFile(text) {
 }
 
 async function prepareResearch(run, capabilityRegistry, options, signal, store) {
-  if (isSimpleEmptyScaffold(run)) return;
+  if (isDependencyFreeStatic(run && run.projectDecision)) return;
   if (run.taskClass === "layout" || run.taskClass === "folder" || isSiteLayoutGoal(run.goal) || isWorkspaceInventory(run.goal) || isLocalFollowUp(run.goal)) return;
   if (run.progress && run.progress.runtimeDirectedEscalation) return;
   const listed = capabilityRegistry && typeof capabilityRegistry.list === "function" ? capabilityRegistry.list() : [];
