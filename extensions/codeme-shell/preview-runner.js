@@ -25,11 +25,72 @@ function readStartScript(root) {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
     const script = pkg && pkg.scripts && typeof pkg.scripts.start === "string" ? pkg.scripts.start : "";
+    if (!script) return { command: "", port: 0, entry: "" };
+    const entry = entryPointFromStartScript(script) || (typeof pkg.main === "string" ? pkg.main : "");
+    const port = portFromText(script) || portFromEntryPoint(root, entry);
+    return { command: "npm start", port, entry };
+  } catch {
+    return { command: "", port: 0, entry: "" };
+  }
+}
+
+function entryPointFromStartScript(script) {
+  const text = String(script || "").trim();
+  const match = text.match(/(?:^|\s)node\s+(?:--[\w-]+\s+)*([^\s;&|]+)/);
+  if (!match) return "";
+  return String(match[1] || "").replace(/^[\'"]|[\'"]$/g, "");
+}
+
+function portFromEntryPoint(root, entry) {
+  const relative = String(entry || "").trim();
+  if (!relative || path.isAbsolute(relative) || relative.includes("..")) return 0;
+  try {
+    const source = fs.readFileSync(path.join(root, relative), "utf8");
+    return portFromSourceText(source);
+  } catch {
+    return 0;
+  }
+}
+
+function portFromSourceText(text) {
+  const source = String(text || "");
+  const urlPort = portFromText(source);
+  if (urlPort) return urlPort;
+
+  const directListen = source.match(/\.listen\s*\(\s*(\d{2,5})\b/);
+  if (directListen) return Number(directListen[1]);
+
+  const fallback = source.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:Number\s*\([^)]*\)\s*\|\||parseInt\s*\([^)]*\)\s*\|\||[^;\n]*?\|\|)\s*(\d{2,5})\b/);
+  if (fallback) {
+    const variable = fallback[1];
+    const port = Number(fallback[2]);
+    const used = new RegExp("\\.listen\\s*\\(\\s*" + escapeRegExp(variable) + "\\b").test(source);
+    if (used) return port;
+  }
+
+  const assigned = source.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(\d{2,5})\b/);
+  if (assigned) {
+    const variable = assigned[1];
+    const port = Number(assigned[2]);
+    const used = new RegExp("\\.listen\\s*\\(\\s*" + escapeRegExp(variable) + "\\b").test(source);
+    if (used) return port;
+  }
+
+  return 0;
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\function readStartScript(root) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+    const script = pkg && pkg.scripts && typeof pkg.scripts.start === "string" ? pkg.scripts.start : "";
     if (!script) return { command: "", port: 0 };
     return { command: "npm start", port: portFromText(script) };
   } catch {
     return { command: "", port: 0 };
   }
+}
+");
 }
 
 function readReadme(root) {
@@ -337,6 +398,8 @@ module.exports = {
   previewPlan,
   resolvePreviewUrl,
   portFromText,
+  entryPointFromStartScript,
+  portFromSourceText,
   recoverFlagSocket,
   ensureStaticPreview,
   createPreviewRunner,
