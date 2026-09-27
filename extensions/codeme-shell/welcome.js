@@ -36,7 +36,7 @@ function renderWelcome(view, nonce) {
     <div class="grid">
       <button class="card primary" type="button" data-action="open"><div class="card-title"><span class="icon">⌂</span>Open Folder</div><p>Open a real folder on this computer.</p></button>
       <button class="card secondary" type="button" data-action="clone"><div class="card-title"><span class="icon">⎇</span>Clone Repository</div><p>Clone a Git repository.</p></button>
-      <button class="card secondary" type="button" data-action="create"><div class="card-title"><span class="icon">+</span>Create Project</div><p>Create a folder with a README and .gitignore.</p></button>
+      <button class="card secondary" type="button" data-action="create"><div class="card-title"><span class="icon">+</span>Create Project</div><p>Create a new folder in the system picker, then open it as your project.</p></button>
       <button class="card secondary" type="button" data-action="connect"><div class="card-title"><span class="icon">⌁</span>Connect AI Provider</div><p>Discover installed local models through Ollama.</p></button>
     </div>
   </main>
