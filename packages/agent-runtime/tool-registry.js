@@ -69,6 +69,14 @@ const DEFINITIONS = {
       required: [],
     },
   },
+  "process.status": {
+    description: "Read the status of the latest CodeMe-owned long-running process in this workspace. Returns running, exited, failed, exitCode, command, and timestamps.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+  "process.logs": {
+    description: "Read the bounded, redacted recent stdout/stderr of the latest CodeMe-owned long-running process in this workspace. Use this after a process error instead of guessing from the terminal UI.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
   "tests.run": {
     description: "Run npm test, or node on one workspace test file. No shell syntax.",
     parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
@@ -116,6 +124,8 @@ function availableTools(names, host) {
     if (name === "workspace.inspect") return Boolean(host && typeof host.inspectWorkspace === "function");
     if (name === "file.patch") return Boolean(host && typeof host.patchFile === "function");
     if (name === "process.start") return Boolean(host && typeof host.startProcess === "function");
+    if (name === "process.status") return Boolean(host && typeof host.processStatus === "function");
+    if (name === "process.logs") return Boolean(host && typeof host.processLogs === "function");
     return true;
   });
 }
