@@ -548,6 +548,9 @@ function finalAssistantText(run) {
     if (files.length) {
       const names = formatFileList(files);
       const evidence = (run.verification && run.verification.evidence) || [];
+      if (evidence.includes("browser.interact")) {
+        return `Done — I applied the requested change to ${names} and verified the interaction with a real browser click.`;
+      }
       if (evidence.includes("browser.check")) {
         return `Done — I applied the requested change to ${names} and verified the result in the browser.`;
       }
