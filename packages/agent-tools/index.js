@@ -8,6 +8,8 @@ const TOOLS = {
   "repo.search": ["query"],
   "terminal.run": ["command"],
   "process.start": [],
+  "process.status": [],
+  "process.logs": [],
   "git.status": [],
   "git.diff": [],
   "diagnostics.run": [],
@@ -97,6 +99,10 @@ async function dispatch(host, tool, args) {
       return host.runTerminal(args.command);
     case "process.start":
       return host.startProcess(args.command || "npm start");
+    case "process.status":
+      return host.processStatus();
+    case "process.logs":
+      return host.processLogs();
     case "git.status":
       return host.gitStatus();
     case "git.diff":
@@ -116,8 +122,8 @@ async function dispatch(host, tool, args) {
   }
 }
 
-const READ_ONLY_TOOLS = ["workspace.inspect", "file.read", "repo.search", "git.status", "git.diff", "diagnostics.run", "browser.check", "dir.list"];
-const CONTROLLED_TOOLS = ["workspace.inspect", "file.read", "file.write", "file.patch", "repo.search", "terminal.run", "process.start", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "dir.create", "dir.list"];
+const READ_ONLY_TOOLS = ["workspace.inspect", "file.read", "repo.search", "process.status", "process.logs", "git.status", "git.diff", "diagnostics.run", "browser.check", "dir.list"];
+const CONTROLLED_TOOLS = ["workspace.inspect", "file.read", "file.write", "file.patch", "repo.search", "terminal.run", "process.start", "process.status", "process.logs", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "dir.create", "dir.list"];
 
 function validateProcessCommand(command) {
   const text = typeof command === "string" && command.trim() ? command.trim() : "npm start";
