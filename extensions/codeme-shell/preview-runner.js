@@ -140,19 +140,88 @@ function workspaceFilePath(root, candidate) {
   return normalized.split(path.sep).join("/");
 }
 
-function fetchPage(url) {
+async function fetchPage(url) {
+  const page = await fetchResource(url);
+  const body = page.body;
+  const title = (body.match(/<title>([^<]*)<\/title>/i) || [])[1] || "";
+  const refs = extractLocalAssets(body, url);
+  const assets = [];
+
+  for (const ref of refs) {
+    let asset;
+    try {
+      asset = await fetchResource(ref.url);
+    } catch (error) {
+      return {
+        available: false,
+        code: "asset_unavailable",
+        message: `${ref.kind} asset ${ref.path} could not be loaded: ${error.message || "unavailable"}`,
+        url,
+        statusCode: page.statusCode,
+        title: title.trim(),
+        assets,
+      };
+    }
+
+    const mime = String(asset.contentType || "").toLowerCase();
+    const mimeOk = ref.kind === "style"
+      ? mime.includes("text/css")
+      : (mime.includes("javascript") || mime.includes("ecmascript"));
+
+    const record = {
+      kind: ref.kind,
+      path: ref.path,
+      url: ref.url,
+      statusCode: asset.statusCode,
+      contentType: asset.contentType,
+      ok: asset.statusCode >= 200 && asset.statusCode < 400 && mimeOk,
+    };
+    assets.push(record);
+
+    if (asset.statusCode < 200 || asset.statusCode >= 400) {
+      return {
+        available: false,
+        code: "asset_status",
+        message: `${ref.kind} asset ${ref.path} returned HTTP ${asset.statusCode}`,
+        url,
+        statusCode: page.statusCode,
+        title: title.trim(),
+        assets,
+      };
+    }
+    if (!mimeOk) {
+      return {
+        available: false,
+        code: "asset_mime",
+        message: `${ref.kind} asset ${ref.path} was served as ${asset.contentType || "an unknown content type"}`,
+        url,
+        statusCode: page.statusCode,
+        title: title.trim(),
+        assets,
+      };
+    }
+  }
+
+  return {
+    available: true,
+    url,
+    statusCode: page.statusCode,
+    title: title.trim(),
+    assets,
+  };
+}
+
+function fetchResource(url) {
   return new Promise((resolve, reject) => {
     const req = http.get(url, { timeout: 2500 }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {
-        const body = Buffer.concat(chunks).toString("utf8");
-        const title = (body.match(/<title>([^<]*)<\/title>/i) || [])[1] || "";
         resolve({
-          available: true,
           url,
-          statusCode: res.statusCode,
-          title: title.trim(),
+          statusCode: Number(res.statusCode || 0),
+          contentType: String(res.headers["content-type"] || ""),
+          body: Buffer.concat(chunks).toString("utf8"),
         });
       });
     });
@@ -164,6 +233,46 @@ function fetchPage(url) {
       reject(Object.assign(new Error(error.message || "The preview is not reachable"), { code: error.code || "connection_refused" }));
     });
   });
+}
+
+function extractLocalAssets(html, pageUrl) {
+  const items = [];
+  const seen = new Set();
+  const add = (kind, value) => {
+    const raw = String(value || "").trim();
+    if (!raw || raw.startsWith("#") || raw.startsWith("data:") || raw.startsWith("javascript:")) return;
+    let resolved;
+    try {
+      resolved = new URL(raw, pageUrl);
+    } catch {
+      return;
+    }
+    const page = new URL(pageUrl);
+    if (resolved.origin !== page.origin) return;
+    const key = `${kind}:${resolved.href}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push({
+      kind,
+      path: decodeURIComponent(resolved.pathname.replace(/^\/+/, "")),
+      url: resolved.href,
+    });
+  };
+
+  const linkPattern = /<link\b[^>]*>/gi;
+  for (const match of String(html || "").matchAll(linkPattern)) {
+    const tag = match[0];
+    if (!/\brel\s*=\s*(?:"[^"]*stylesheet[^"]*"|'[^']*stylesheet[^']*'|stylesheet)\b/i.test(tag)) continue;
+    const href = (tag.match(/\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i) || []);
+    add("style", href[1] || href[2] || href[3] || "");
+  }
+
+  const scriptPattern = /<script\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>/gi;
+  for (const match of String(html || "").matchAll(scriptPattern)) {
+    add("script", match[1] || match[2] || match[3] || "");
+  }
+
+  return items;
 }
 
 function contentType(filePath) {
@@ -390,6 +499,7 @@ module.exports = {
   portFromText,
   entryPointFromStartScript,
   portFromSourceText,
+  extractLocalAssets,
   recoverFlagSocket,
   ensureStaticPreview,
   createPreviewRunner,
