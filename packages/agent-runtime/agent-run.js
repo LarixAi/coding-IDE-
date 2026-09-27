@@ -1391,6 +1391,7 @@ function systemPrompt(options) {
       "tests.run accepts npm test or node on one workspace file.",
       "terminal.run accepts node or node --check on one workspace file.",
       "Commands have no shell. Pipes, redirects, and paths outside the workspace are rejected.",
+      "Use sandbox.run for disposable experiments, syntax/build/test checks, or reproductions when you do not want to risk the live workspace. Sandbox writes are discarded and never count as project edits; apply real fixes with file.patch or file.write.",
       "A failing test is an observation. Repair the source and run the test again.",
       "Describing a file change or a capability call does not perform it. Use the matching tool.",
       "Use file.patch for a precise edit to an existing file and file.write for a new file or full replacement. Create folders with dir.create. Use process.start for a long-running preview server; do not use terminal.run for servers, mkdir, ls, or node -e.",
