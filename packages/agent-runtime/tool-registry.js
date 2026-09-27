@@ -72,11 +72,11 @@ const DEFINITIONS = {
     },
   },
   "terminal.run": {
-    description: "Run one short Node command or npm test and wait for it to finish. Do not use this for long-running dev servers.",
+    description: "Run one short Node command or npm test and wait for it to finish. Never use this to start a website/dev server or append &: use browser.check for web previews.",
     parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
   },
   "process.start": {
-    description: "Start a long-running workspace preview process. Allowed commands are npm start, npm run dev, or npm run preview. Starting is not verification; call browser.check afterwards.",
+    description: "Start a long-running non-browser workspace process when explicitly needed. For website/dev-server previews, use browser.check instead; CodeMe owns preview startup and reuse.",
     parameters: {
       type: "object",
       properties: { command: { type: "string" } },
