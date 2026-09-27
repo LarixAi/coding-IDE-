@@ -437,12 +437,12 @@ function compactObservation(call) {
 
 // After stagnation the runtime narrows the offered tools to the ones that can change
 // the outcome. Browsing and workaround tools are withheld until progress resumes.
-const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "dir.create", "dir.list", "process.start", "process.status", "process.logs", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check"];
+const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "dir.create", "dir.list", "process.start", "process.status", "process.logs", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check", "browser.interact"];
 
 function focusTools(state, definitions) {
   if (!state) return definitions;
   if (state.writeNow || (state.inspectSatisfied && isSiteLayoutGoal(state.goal))) {
-    const local = definitions.filter((item) => item.name === "file.read" || item.name === "file.write" || item.name === "file.patch" || item.name === "browser.check" || item.name === "process.status" || item.name === "process.logs");
+    const local = definitions.filter((item) => item.name === "file.read" || item.name === "file.write" || item.name === "file.patch" || item.name === "browser.check" || item.name === "browser.interact" || item.name === "process.status" || item.name === "process.logs");
     if (local.length) return local;
   }
   if (state.strategy !== "stagnant" && !state.focus) return definitions;
