@@ -518,6 +518,10 @@ async function executeRun(run, options) {
 
       store.save(run);
 
+      if (call.name === "browser.check" && result.ok) {
+        await maybeAutoVerifyBrowserInteraction(run, registry, store);
+      }
+
       if ((call.name === "browser.check" || call.name === "browser.interact") && result.ok) {
         const verifiedNow = maybeFinishVerifiedWork(run, store, text);
         if (verifiedNow) return verifiedNow;
@@ -761,6 +765,111 @@ function expectedInteractionText(goal) {
     if (match && match[1]) return String(match[1]).trim();
   }
   return "";
+}
+
+function interactionTargetText(goal) {
+  const text = String(goal || "");
+  const patterns = [
+    /(?:click|clicking|press|pressing|tap|tapping)\s+(?:the\s+)?(?:button\s+)?["“']([^"”']+)["”']/i,
+    /(?:button|control|link)\s+(?:labelled|labeled|called|named)?\s*["“']([^"”']+)["”']/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) return String(match[1]).trim();
+  }
+  const quoted = [];
+  for (const match of text.matchAll(/["“']([^"”']+)["”']/g)) {
+    const value = String(match[1] || "").trim();
+    if (value && !quoted.includes(value)) quoted.push(value);
+  }
+  const expected = expectedInteractionText(goal);
+  return quoted.find((value) => value !== expected) || "";
+}
+
+function latestSuccessfulBrowserCheck(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call.name !== "browser.check") continue;
+    if (call.result && call.result.ok) return call;
+    return null;
+  }
+  return null;
+}
+
+async function maybeAutoVerifyBrowserInteraction(run, registry, store) {
+  if (!run || !registry || !isInteractiveBrowserGoal(run.goal)) return null;
+  const definitions = typeof registry.definitions === "function" ? registry.definitions() : [];
+  if (!definitions.some((tool) => tool.name === "browser.interact")) return null;
+
+  const latestPreview = latestSuccessfulBrowserCheck(run);
+  if (!latestPreview) return null;
+
+  const previewIndex = (run.toolCalls || []).indexOf(latestPreview);
+  const interactionAfterPreview = (run.toolCalls || []).slice(previewIndex + 1).find((call) => call.name === "browser.interact");
+  if (interactionAfterPreview) return interactionAfterPreview;
+
+  const targetText = interactionTargetText(run.goal);
+  const expectedText = expectedInteractionText(run.goal);
+  if (!targetText || !expectedText) return null;
+
+  const previewData = latestPreview.result && latestPreview.result.data;
+  const url = String((previewData && previewData.url) || (latestPreview.args && latestPreview.args.url) || "index.html");
+  const call = {
+    name: "browser.interact",
+    args: {
+      url,
+      action: "click",
+      targetText,
+      expectedText,
+    },
+  };
+
+  touch(run, "executing_tool", call.name);
+  run.inFlight = { kind: "tool", name: call.name, args: call.args, key: actionKey(call) };
+  store.save(run);
+
+  let result;
+  try {
+    result = await registry.call(call.name, call.args);
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: call.name,
+      error: {
+        code: error && error.code ? String(error.code) : "tool_failed",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    directedBy: "runtime",
+    result,
+  };
+  run.toolCalls.push(record);
+  const observation = observe(call, result);
+  observation.directedBy = "runtime";
+  const diagnosis = diagnose(call, result);
+  if (diagnosis) {
+    observation.diagnosis = diagnosis;
+    run.diagnoses.push({
+      iteration: run.iteration,
+      tool: call.name,
+      class: diagnosis.class,
+      next: diagnosis.next,
+      at: new Date().toISOString(),
+    });
+  }
+  run.observations.push(observation);
+  pushObservation(run, call, result);
+  run.inFlight = null;
+  store.save(run);
+  return record;
 }
 
 function latestBrowserInteraction(run, calls) {
@@ -1548,7 +1657,10 @@ function defaultVerify(run, text) {
   }
   const failedBrowser = unresolvedBrowserFailure(run);
   const alreadySatisfied = verifyAlreadySatisfiedWebRepair(run);
-  if (alreadySatisfied && alreadySatisfied.status === "passed") return alreadySatisfied;
+  if (alreadySatisfied) {
+    if (alreadySatisfied.status === "passed") return alreadySatisfied;
+    if (isBrowserEditTask(run) && latestSuccessfulBrowserPreview(run)) return alreadySatisfied;
+  }
 
   if (run.mode === "controlled" && writes.length === 0 && promisesFile(text)) {
     return {
