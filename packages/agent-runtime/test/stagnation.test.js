@@ -80,7 +80,7 @@ function start(options) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-stagnation-"));
   const store = new RunStore(path.join(directory, "runs"));
   return startAgentRun({
-    goal: "Repair the identification-number check. The doubling rule is not in the repository.",
+    goal: options.goal || "Repair the identification-number check. The doubling rule is not in the repository.",
     model: "scripted",
     providerName: "scripted",
     mode: "controlled",
@@ -91,6 +91,9 @@ function start(options) {
     maxIterations: options.maxIterations ?? 20,
     maxIdenticalActions: options.maxIdenticalActions ?? 20,
     maxRetries: options.maxRetries ?? 10,
+    stagnationThreshold: options.stagnationThreshold,
+    recoveryReserve: options.recoveryReserve,
+    repairReserve: options.repairReserve,
     verify: options.verify || (() => ({ status: "failed", summary: "the check is still wrong", evidence: [] })),
   });
 }
@@ -122,7 +125,7 @@ async function main() {
     assert.strictEqual(run.error.code, "stagnation");
     assert.ok(run.iteration <= 6);
     assert.ok(run.iteration < run.maxIterations);
-    assert.strictEqual(directed.iteration, 0);
+    assert.ok(directed.iteration > 0, "local repair research should happen only after local stagnation");
     assert.ok(run.progress.repeatedIntentCount >= 2);
     assert.strictEqual(hubState.invocations, 1);
     assert.strictEqual(run.progress.researchEscalations, 1);
@@ -183,7 +186,7 @@ async function main() {
     const run = await start({ provider, capabilities: researchHub({ invocations: 0 }) }).done;
     const refused = run.toolCalls.filter((call) => call.name === "terminal.run" && call.result.ok === false);
     assert.strictEqual(refused.length, 2);
-    assert.ok(run.toolCalls.some((call) => call.directedBy === "runtime" && call.iteration === 0));
+    assert.ok(run.toolCalls.some((call) => call.directedBy === "runtime" && call.iteration > 0));
   });
 
   await test("reworded reasoning without any action does not buy more turns", async () => {
@@ -201,7 +204,7 @@ async function main() {
     assert.ok(stagnant, "narration must register as stagnation");
     assert.strictEqual(stagnant.iteration, 3);
     assert.strictEqual(hubState.invocations, 1);
-    assert.ok(run.toolCalls.some((call) => call.directedBy === "runtime" && call.iteration === 0));
+    assert.ok(run.toolCalls.some((call) => call.directedBy === "runtime" && call.iteration > 0));
     assert.ok(run.messages.some((message) => message.role === "user" && String(message.content).includes("does not change the file")));
   });
 
@@ -218,6 +221,7 @@ async function main() {
       provider,
       workspace,
       capabilities: researchHub(hubState),
+      goal: "Research the identification-number doubling rule, then repair the check.",
       verify(runState, text) {
         const researched = runState.toolCalls.some((call) => call.directedBy === "runtime" && call.result && call.result.trusted === false);
         const wrote = runState.toolCalls.some((call) => call.name === "file.write" && call.result && call.result.ok && call.directedBy !== "runtime");
@@ -231,6 +235,66 @@ async function main() {
     assert.strictEqual(hubState.invocations, 1);
     assert.strictEqual(run.progress.researchEscalations, 1);
     assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("double every second digit from the right"))));
+  });
+
+  await test("fresh research at the iteration boundary gets a bounded recovery reserve", async () => {
+    const hubState = { invocations: 0 };
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-recovery-reserve-"));
+    fs.cpSync(FIXTURE, workspace, { recursive: true });
+    const read = { name: "file.read", args: { path: "src/check.js" } };
+    const provider = new ScriptedModelProvider([
+      step("Reading the local implementation first.", read),
+      step("The same local evidence is not enough; checking it once more.", read),
+      step("Applying the external evidence.", {
+        name: "file.write",
+        args: {
+          path: "src/check.js",
+          contents: "module.exports = { validNumber() { return true; } };\n",
+        },
+      }),
+      step("repaired after bounded recovery"),
+    ]);
+
+    const run = await start({
+      provider,
+      workspace,
+      capabilities: researchHub(hubState),
+      maxIterations: 2,
+      stagnationThreshold: 1,
+      recoveryReserve: 2,
+      repairReserve: 0,
+      verify(runState, text) {
+        const researched = runState.toolCalls.some((call) => (
+          call.name === "capability.invoke"
+          && call.directedBy === "runtime"
+          && call.iteration > 0
+          && call.result
+          && call.result.ok
+        ));
+        const wrote = runState.toolCalls.some((call) => (
+          call.name === "file.write"
+          && call.result
+          && call.result.ok
+        ));
+        if (researched && wrote && text.includes("bounded recovery")) {
+          return { status: "passed", summary: "fresh research was consumed before the budget stopped the repair", evidence: ["capability.invoke", "file.write"] };
+        }
+        return { status: "failed", summary: "research must be consumed before stopping", evidence: [] };
+      },
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed");
+    assert.strictEqual(run.error, null);
+    assert.strictEqual(hubState.invocations, 1);
+    assert.strictEqual(run.progress.researchEscalations, 1);
+    assert.strictEqual(run.recoveryReserveUsed, 2);
+    assert.ok(run.maxIterations > 2);
+    assert.ok(run.ruleDecisions.some((decision) => (
+      decision.rule === "budget.recovery_evidence_reserve"
+      && decision.tier === "budget"
+      && decision.action === "extend"
+    )));
+    assert.notStrictEqual(run.outcome && run.outcome.reason, "iteration_limit");
   });
 
   await test("iteration, retry, and cancel protections still stop the run", async () => {
