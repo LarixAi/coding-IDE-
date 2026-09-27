@@ -141,6 +141,10 @@ function compactTool(run, call, index, status) {
     path: args.path || args.query || args.url || "",
     ok: status === "running" ? null : Boolean(result && result.ok),
     status: status === "running" ? "running" : (result && result.ok ? "done" : "failed"),
+    suppressed: Boolean(result && result.data && result.data.suppressed),
+    reused: Boolean(result && result.data && result.data.reused),
+    requiresLogs: Boolean(result && result.data && result.data.requiresLogs),
+    reason: result && result.data ? String(result.data.reason || "") : "",
   };
   if (call.name === "file.write") {
     item.operation = fileWriteOperation(run, call, index);
