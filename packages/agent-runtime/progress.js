@@ -253,6 +253,21 @@ function applyIteration(state, input) {
         categories.push(call.result && call.result.ok ? "changed_test_result" : "new_failure");
         state.subtask = "verify";
       }
+    } else if (call.name === "process.status" || call.name === "process.logs") {
+      const key = `process:${call.name}:${digest(JSON.stringify(call.result || {}))}`;
+      if (rememberKey(state, key)) {
+        const data = call.result && call.result.data;
+        const failed = (
+          call.result
+          && call.result.ok === false
+        ) || (
+          call.name === "process.status"
+          && data
+          && data.status === "failed"
+        );
+        categories.push(failed || call.name === "process.logs" ? "new_failure" : "new_implementation_fact");
+        state.subtask = "diagnose";
+      }
     } else if (call.name === "capability.invoke" || call.name === "capability.list") {
       const name = (call.args && call.args.capability) || call.name;
       remember(state.capabilitiesCalled, name);
