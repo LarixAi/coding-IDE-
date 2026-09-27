@@ -38,16 +38,36 @@ const DEFINITIONS = {
     parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
   },
   "file.write": {
-    description: "Write a workspace-relative text file. Parent folders are created for the file. The path must stay inside the workspace.",
+    description: "Create or fully replace a workspace-relative text file. Parent folders are created for the file. The path must stay inside the workspace.",
     parameters: {
       type: "object",
       properties: { path: { type: "string" }, contents: { type: "string" } },
       required: ["path", "contents"],
     },
   },
+  "file.patch": {
+    description: "Edit an existing workspace text file by replacing exactly one occurrence of oldText with newText. Fails if oldText is missing or appears more than once.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        oldText: { type: "string" },
+        newText: { type: "string" },
+      },
+      required: ["path", "oldText", "newText"],
+    },
+  },
   "terminal.run": {
-    description: "Run node on one workspace file, or node --check on one workspace file. No shell syntax.",
+    description: "Run one short Node command or npm test and wait for it to finish. Do not use this for long-running dev servers.",
     parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
+  },
+  "process.start": {
+    description: "Start a long-running workspace preview process. Allowed commands are npm start, npm run dev, or npm run preview. Starting is not verification; call browser.check afterwards.",
+    parameters: {
+      type: "object",
+      properties: { command: { type: "string" } },
+      required: [],
+    },
   },
   "tests.run": {
     description: "Run npm test, or node on one workspace test file. No shell syntax.",
