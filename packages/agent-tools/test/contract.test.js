@@ -37,6 +37,7 @@ async function main() {
       "diagnostics.run",
       "tests.run",
       "browser.check",
+      "browser.interact",
       "dir.create",
       "dir.list",
     ]) {
@@ -125,6 +126,53 @@ async function main() {
     const logs = await executeReadOnly(host, "process.logs", {});
     assert.strictEqual(logs.ok, true);
     assert.ok(logs.data.output.includes("EADDRINUSE"));
+  });
+
+  await test("browser.interact validates and dispatches a real click request", async () => {
+    let received = null;
+    const result = await executeControlled(
+      {
+        async browserInteract(args) {
+          received = args;
+          return {
+            available: true,
+            action: "click",
+            targetText: args.targetText,
+            expectedText: args.expectedText,
+            beforeText: "Click Me",
+            afterText: "It works!",
+            matched: true,
+            consoleErrors: [],
+          };
+        },
+      },
+      "browser.interact",
+      {
+        url: "http://127.0.0.1:3000/",
+        action: "click",
+        targetText: "Click Me",
+        expectedText: "It works!",
+      },
+    );
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(received.targetText, "Click Me");
+    assert.strictEqual(result.data.afterText, "It works!");
+
+    const missingTarget = await executeControlled(
+      { async browserInteract() { throw new Error("must not run"); } },
+      "browser.interact",
+      { url: "http://127.0.0.1:3000/", action: "click" },
+    );
+    assert.strictEqual(missingTarget.ok, false);
+    assert.strictEqual(missingTarget.error.code, "invalid_args");
+
+    const badAction = await executeControlled(
+      { async browserInteract() { throw new Error("must not run"); } },
+      "browser.interact",
+      { url: "http://127.0.0.1:3000/", action: "type", targetText: "Click Me" },
+    );
+    assert.strictEqual(badAction.ok, false);
+    assert.strictEqual(badAction.error.code, "invalid_args");
   });
 
   await test("blocks file writes while read-only", async () => {
