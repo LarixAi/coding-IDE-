@@ -1251,6 +1251,16 @@ async function main() {
     assert.strictEqual(provider.calls.length, callsBefore);
   });
 
+  await test("tool registry does not invent definitions for undeclared providers", async () => {
+    const provider = {
+      async call() {
+        throw new Error("not used");
+      },
+    };
+    const registry = new ToolRegistry(provider);
+    assert.deepStrictEqual(registry.definitions(), []);
+  });
+
   await test("an in-flight tool is not replayed after recovery", async () => {
     const provider = new ScriptedModelProvider([
       { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
