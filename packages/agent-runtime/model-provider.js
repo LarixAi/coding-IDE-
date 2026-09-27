@@ -16,6 +16,7 @@ class ModelProvider {
 }
 
 const PROVIDER_NAMES = {
+  "workspace.inspect": "workspace_inspect",
   "file.read": "file_read",
   "file.write": "file_write",
   "repo.search": "repo_search",
