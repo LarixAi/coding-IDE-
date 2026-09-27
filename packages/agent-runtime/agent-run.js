@@ -187,6 +187,11 @@ async function executeRun(run, options) {
   }
 
   applyProjectDecision(run, store);
+  const verificationPolicy = verificationPolicyText(run);
+  if (verificationPolicy) {
+    run.messages.push({ role: "user", content: verificationPolicy });
+    store.save(run);
+  }
 
   const capabilityRegistry = await loadCapabilityRegistry(isDependencyFreeStatic(run.projectDecision) ? null : options.capabilities);
   const capabilityRecords = capabilityRegistry.list();
@@ -632,19 +637,74 @@ function forbiddenStaticPath(value) {
 }
 
 function projectPolicyViolation(run, call) {
-  if (!isDependencyFreeStatic(run && run.projectDecision)) return "";
-  if (!staticScaffoldTool(call && call.name)) {
-    return "This project was classified as a dependency-free static website. Use only workspace file/folder tools and browser.check; do not use terminal, process, tests, npm, frameworks, or external capabilities.";
+  const name = call && call.name;
+  if (isDependencyFreeStatic(run && run.projectDecision)) {
+    if (!staticScaffoldTool(name)) {
+      return "This project was classified as a dependency-free static website. Use only workspace file/folder tools and browser.check; do not use terminal, process, tests, npm, frameworks, or external capabilities.";
+    }
+    if ((name === "file.write" || name === "dir.create") && forbiddenStaticPath(call.args && call.args.path)) {
+      return `This project was classified as a dependency-free static website, so ${call.args.path} is not allowed. Create only browser-native HTML, CSS, assets, and optional JavaScript.`;
+    }
   }
-  if ((call.name === "file.write" || call.name === "dir.create") && forbiddenStaticPath(call.args && call.args.path)) {
-    return `This project was classified as a dependency-free static website, so ${call.args.path} is not allowed. Create only browser-native HTML, CSS, assets, and optional JavaScript.`;
+  if (name === "tests.run" && !workspaceHasTests(run)) {
+    return "This workspace has no test script. Do not run tests.run; verify the changed file directly or use browser.check for a web change.";
+  }
+  if ((name === "git.diff" || name === "git.status") && !workspaceHasGit(run)) {
+    return "This workspace is not a Git repository. Do not call Git tools; use the available verification for this project.";
+  }
+  if ((name === "capability.invoke" || name === "capability.list") && isSimpleLocalWorkspaceTask(run)) {
+    return "This is a local workspace edit and does not need external research. Inspect and verify the local files instead.";
   }
   return "";
 }
 
 function toolsForRun(run, localTools, capabilityTools) {
-  if (!isDependencyFreeStatic(run && run.projectDecision)) return localTools.concat(capabilityTools);
-  return localTools.filter((tool) => staticScaffoldTool(tool.name));
+  if (isDependencyFreeStatic(run && run.projectDecision)) {
+    return localTools.filter((tool) => staticScaffoldTool(tool.name));
+  }
+
+  let local = localTools.slice();
+  if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
+  if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
+
+  const external = isSimpleLocalWorkspaceTask(run) ? [] : capabilityTools;
+  return local.concat(external);
+}
+
+function workspaceHasTests(run) {
+  const scripts = run && run.workspace && run.workspace.scripts;
+  return Boolean(scripts && typeof scripts === "object" && typeof scripts.test === "string" && scripts.test.trim());
+}
+
+function workspaceHasGit(run) {
+  return Boolean(run && run.workspace && run.workspace.git === true);
+}
+
+function needsOutsideEvidence(goal) {
+  const text = String(goal || "").toLowerCase();
+  return /\b(research|documentation|docs|latest|current api|best practice|external|look up|lookup|search the web|web research)\b/.test(text);
+}
+
+function isSimpleLocalWorkspaceTask(run) {
+  if (!run || !run.workspace || run.workspace.state === "empty") return false;
+  if (needsOutsideEvidence(run.goal)) return false;
+  const text = String(run.goal || "").toLowerCase();
+  if (/\b(create|scaffold|new project|new app|new website|database|backend|api integration)\b/.test(text)) return false;
+  return /\b(change|edit|update|set|make|fix|repair|heading|title|button|text|colour|color|centre|center|style|css|html|spacing|font|background)\b/.test(text);
+}
+
+function verificationPolicyText(run) {
+  if (!run || !run.workspace) return "";
+  if (isDependencyFreeStatic(run.projectDecision)) {
+    return "Verification policy: read back every created file and verify the page with browser.check. Do not run tests or Git.";
+  }
+  const parts = [];
+  if (workspaceHasTests(run)) parts.push("tests are available");
+  else parts.push("there is no test script, so do not call tests.run");
+  if (workspaceHasGit(run)) parts.push("Git verification is available");
+  else parts.push("this is not a Git repository, so do not call git.status or git.diff");
+  parts.push("for HTML/CSS/browser-visible edits, verify with file.read and browser.check");
+  return `Verification policy: ${parts.join("; ")}.`;
 }
 
 async function createRequestedFolder(run, registry, store) {
@@ -709,7 +769,7 @@ function systemPrompt(options) {
             ? "This job lists the workspace. Call dir.list with path \".\" and answer from that list. Do not edit files."
             : runIsBuild(options)
               ? "This job creates or repairs project files. Create only what the request needs. In an empty workspace, a simple static HTML/CSS request must stay dependency-free: use file.write/dir.create, do not invent package.json or a server, and read every created file back before finishing. For existing files prefer file.patch. For a long-running dev server use process.start, then verify with browser.check. If a server accepts a port, use a numeric port; never pass the literal string --port to server.listen()."
-              : "Finish only after a passing test and a git diff that shows the final edit.",
+              : "Verify with the checks that actually exist in the inspected workspace. Do not call tests.run when there is no test script, and do not call Git tools when the workspace is not a Git repository. For browser-visible changes, read the changed file back and use browser.check.",
       "A claim of success is not evidence.",
       strategyGuidance(options.strategyRecord),
       hub,
@@ -945,7 +1005,7 @@ function buildPlan(options) {
       { id: "understand", title: "Keep the original goal", status: "pending" },
       { id: "inspect", title: "Inspect the repository and find the relevant files", status: "pending" },
       ...requirements.map((item) => ({ id: item.id, title: item.text, status: "pending" })),
-      { id: "verify", title: "Verify tests, diagnostics, the diff, and every requirement", status: "pending" },
+      { id: "verify", title: "Verify every requirement with the checks available in this workspace", status: "pending" },
     ];
   }
   if (options.mode === "controlled") {
@@ -953,7 +1013,7 @@ function buildPlan(options) {
       { id: "understand", title: "Keep the original goal", status: "pending" },
       { id: "inspect", title: "Inspect the repository", status: "pending" },
       { id: "edit", title: "Edit the implementation", status: "pending" },
-      { id: "verify", title: "Verify from tests, diagnostics, and the diff", status: "pending" },
+      { id: "verify", title: "Verify the saved change with the checks available in this workspace", status: "pending" },
     ];
   }
   return [
@@ -1130,6 +1190,7 @@ function promisesFile(text) {
 
 async function prepareResearch(run, capabilityRegistry, options, signal, store) {
   if (isDependencyFreeStatic(run && run.projectDecision)) return;
+  if (!needsOutsideEvidence(run && run.goal)) return;
   if (run.taskClass === "layout" || run.taskClass === "folder" || isSiteLayoutGoal(run.goal) || isWorkspaceInventory(run.goal) || isLocalFollowUp(run.goal)) return;
   if (run.progress && run.progress.runtimeDirectedEscalation) return;
   const listed = capabilityRegistry && typeof capabilityRegistry.list === "function" ? capabilityRegistry.list() : [];
