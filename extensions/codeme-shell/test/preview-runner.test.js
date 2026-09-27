@@ -4,7 +4,7 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const net = require("net");
-const { createPreviewRunner, portFromText, previewPlan, recoverFlagSocket } = require("../preview-runner");
+const { createPreviewRunner, portFromText, previewPlan, recoverFlagSocket, ensureStaticPreview } = require("../preview-runner");
 
 function mockVscode(commands) {
   const sent = [];
@@ -86,6 +86,21 @@ async function main() {
     assert.strictEqual(fs.existsSync(socketPath), false);
     await new Promise((resolve) => socketServer.close(resolve));
   }
+
+  const staticRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-static-preview-"));
+  fs.writeFileSync(path.join(staticRoot, "index.html"), "<title>Hello CodeMe</title><h1>Hello CodeMe</h1>");
+  fs.writeFileSync(path.join(staticRoot, "style.css"), "body { font-family: sans-serif; }");
+  const staticCommands = [];
+  const staticMock = mockVscode(staticCommands);
+  const staticRunner = createPreviewRunner(staticMock.vscode);
+  const staticPage = await staticRunner.check(staticRoot, "index.html");
+  assert.strictEqual(staticPage.available, true);
+  assert.strictEqual(staticPage.statusCode, 200);
+  assert.strictEqual(staticPage.title, "Hello CodeMe");
+  assert.deepStrictEqual(staticMock.sent, []);
+  assert.strictEqual(staticMock.vscode.window.terminals.length, 0);
+  const staticServer = await ensureStaticPreview(staticRoot, 4173);
+  if (staticServer && staticServer.server) await new Promise((resolve) => staticServer.server.close(resolve));
 
   const live = await listen((_req, res) => {
     res.writeHead(200, { "Content-Type": "text/html" });
