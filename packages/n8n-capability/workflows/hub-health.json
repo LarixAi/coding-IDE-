@@ -1,0 +1,74 @@
+{
+  "id": "c0de4e01-1111-4000-8000-000000000010",
+  "versionId": "c0de4e01-1111-4000-8000-000000000011",
+  "name": "CodeMe hub health",
+  "active": false,
+  "nodeGroups": [],
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "codeme-hub-health",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c0de4e01-0001-4000-8000-000000000001",
+      "name": "Health webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "webhookId": "codeme-hub-health"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const item = $input.first().json;\nconst body = item.body && item.body.requestId ? item.body : item;\nreturn [{\n  json: {\n    protocolVersion: 1,\n    requestId: body.requestId,\n    status: body.capability === 'hub.health' ? 'ok' : 'error',\n    data: body.capability === 'hub.health' ? { health: 'ok', echo: body.input && body.input.echo || null, marker: 'codeme-hub-ok' } : null,\n    sources: [],\n    warnings: [],\n    error: body.capability === 'hub.health' ? null : { code: 'capability_unavailable', message: 'This workflow only serves hub.health' },\n    duration: 1\n  }\n}];"
+      },
+      "id": "c0de4e01-0001-4000-8000-000000000002",
+      "name": "Build health response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [280, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "c0de4e01-0001-4000-8000-000000000003",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [560, 0]
+    }
+  ],
+  "connections": {
+    "Health webhook": {
+      "main": [
+        [
+          {
+            "node": "Build health response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build health response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

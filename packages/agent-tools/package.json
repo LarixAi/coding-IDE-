@@ -1,0 +1,7 @@
+{
+  "name": "@codeme/agent-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CodeMe agent tool contract. Execution is supplied by a host; this package does not import Code - OSS.",
+  "main": "index.js"
+}

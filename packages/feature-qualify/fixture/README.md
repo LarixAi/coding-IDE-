@@ -1,0 +1,1 @@
+This is a small user service. A request is a plain object with method, path, and body. createApp() returns handle and users. Route behavior lives in route modules and is registered by the app. The app creates one user repository and passes that same object into route handlers. Route modules must not create a second repository.

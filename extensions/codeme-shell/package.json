@@ -1,0 +1,71 @@
+{
+  "name": "codeme-shell",
+  "displayName": "CodeMe",
+  "description": "Minimal CodeMe shell on Code - OSS: identity, theme, Composer, and model connection status.",
+  "version": "0.1.0",
+  "publisher": "codeme",
+  "engines": {
+    "vscode": "^1.139.0"
+  },
+  "categories": ["Other", "Themes"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "themes": [
+      {
+        "id": "CodeMe Dark",
+        "label": "CodeMe Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/codeme-dark-color-theme.json"
+      }
+    ],
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "codemeAgent",
+          "title": "CodeMe Agent",
+          "icon": "media/codeme.svg"
+        }
+      ]
+    },
+    "views": {
+      "codemeAgent": [
+        {
+          "type": "webview",
+          "id": "codeme.agent",
+          "name": "CodeMe Agent"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codeme.showConnection",
+        "title": "CodeMe: Model Connection",
+        "category": "CodeMe"
+      },
+      {
+        "command": "codeme.ask",
+        "title": "CodeMe: Ask",
+        "category": "CodeMe"
+      },
+      {
+        "command": "codeme.attach",
+        "title": "CodeMe: Attach Workspace File",
+        "category": "CodeMe"
+      }
+    ],
+    "configurationDefaults": {
+      "workbench.colorTheme": "CodeMe Dark",
+      "workbench.startupEditor": "none",
+      "window.commandCenter": false,
+      "window.title": "${dirty}${activeEditorShort}${separator}CodeMe",
+      "chat.disableAIFeatures": true,
+      "chat.commandCenter.enabled": false,
+      "chat.titleBar.signIn.enabled": false,
+      "chat.titleBar.openInAgentsWindow.enabled": false,
+      "workbench.secondarySideBar.defaultVisibility": "visible",
+      "workbench.tips.enabled": false,
+      "workbench.editor.empty.hint": "hidden"
+    }
+  }
+}

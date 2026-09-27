@@ -1,0 +1,4 @@
+[submodule "code-oss"]
+	path = code-oss
+	url = https://github.com/microsoft/vscode.git
+	shallow = true

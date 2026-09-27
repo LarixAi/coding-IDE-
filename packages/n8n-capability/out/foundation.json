@@ -1,0 +1,36 @@
+{
+  "gate": 8,
+  "connection": {
+    "connected": true,
+    "endpoint": "http://127.0.0.1:5678"
+  },
+  "discovery": [
+    "hub.health",
+    "research.problem",
+    "knowledge.lookup",
+    "task.decompose"
+  ],
+  "liveCall": {
+    "ok": true,
+    "requestId": "req_478068ac7b52dd35",
+    "runId": "run_live_probe",
+    "status": "ok",
+    "marker": "codeme-hub-ok"
+  },
+  "observation": {
+    "type": "capability",
+    "trusted": false,
+    "ok": true,
+    "requestId": "req_c95749df13a8f304",
+    "runId": "run_0c007ce8f68f3fa3",
+    "correlated": true
+  },
+  "qwen": {
+    "model": "qwen3.5:9b",
+    "receivedObservation": true,
+    "replyIncludedMarker": true,
+    "lifecycle": "completed",
+    "filesChanged": []
+  },
+  "runId": "run_0c007ce8f68f3fa3"
+}

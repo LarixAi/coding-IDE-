@@ -1,0 +1,36 @@
+{
+  "gate": 9,
+  "connection": {
+    "connected": true,
+    "endpoint": "http://127.0.0.1:5678"
+  },
+  "discovery": [
+    "hub.health",
+    "research.problem",
+    "knowledge.lookup",
+    "task.decompose"
+  ],
+  "contract": {
+    "category": "hub",
+    "risk": "read",
+    "provider": "n8n",
+    "version": 1,
+    "availability": "available",
+    "health": "ok",
+    "timeout": 10000,
+    "hasInputSchema": true,
+    "hasOutputSchema": true,
+    "exposesRoute": false
+  },
+  "observation": {
+    "type": "capability",
+    "trusted": false,
+    "ok": true,
+    "requestId": "req_60b906f763a5cdcf",
+    "runId": "run_ca4b85e903e4090d",
+    "correlated": true
+  },
+  "runId": "run_ca4b85e903e4090d",
+  "lifecycle": "completed",
+  "filesChanged": []
+}

@@ -1,0 +1,161 @@
+{
+  "id": "codemeEnhance",
+  "versionId": "codemeEnhanceV1",
+  "name": "CodeMe enhance and code",
+  "active": false,
+  "nodeGroups": [],
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/v1/enhance-and-code",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c0de4e02-0006-4000-8000-000000000001",
+      "name": "IDE webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "api/v1/enhance-and-code"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function clip(value, limit) {\n  return String(value || \"\").replace(/\\s+/g, \" \").trim().slice(0, limit);\n}\nfunction readBody(item) {\n  const body = item.body && (item.body.raw_prompt || item.body.project_type || item.body.active_file) ? item.body : item;\n  return {\n    raw_prompt: clip(body.raw_prompt, 4000),\n    active_file: clip(body.active_file, 240),\n    selected_code: String(body.selected_code || \"\").slice(0, 8000),\n    project_type: clip(body.project_type, 40) || \"nodejs\",\n  };\n}\nfunction stripModel(text) {\n  return String(text || \"\").replace(/<think>[\\s\\S]*?<\\/think>/g, \"\").trim();\n}\nfunction stripFences(text) {\n  const source = stripModel(text);\n  const match = /```[a-zA-Z0-9]*\\n?([\\s\\S]*?)```/.exec(source);\n  return (match ? match[1] : source).trim();\n}\nasync function ollama(prompt, limit) {\n  const response = await helpers.httpRequest({\n    method: \"POST\",\n    url: \"http://host.docker.internal:11434/api/generate\",\n    body: {\n      model: \"qwen3.5:9b\",\n      prompt,\n      stream: false,\n      think: false,\n      options: { temperature: 0.2, top_p: 0.9, num_predict: limit },\n    },\n    json: true,\n    timeout: 70000,\n  });\n  return stripModel(response && (response.response || response.message && response.message.content) || \"\");\n}\nconst input = readBody($input.first().json);\nif (!input.raw_prompt) {\n  return [{ json: { status: \"error\", error: \"raw_prompt is required\", ...input, subtasks: [] } }];\n}\nlet subtasks = [];\ntry {\n  const raw = await ollama(\n    \"Break the user request into explicit sub-tasks:\\n1. Inputs & Arguments\\n2. Validation Logic\\n3. Main Business Logic / Route Handler\\n4. Error Handling & Response Format\\nReturn JSON only: {\\\"subtasks\\\":[\\\"\\\"]}\\n\\nRequest:\\n\" + input.raw_prompt,\n    400\n  );\n  const start = raw.indexOf(\"{\");\n  const end = raw.lastIndexOf(\"}\");\n  const parsed = JSON.parse(raw.slice(start, end + 1));\n  subtasks = Array.isArray(parsed.subtasks) ? parsed.subtasks.map((item) => clip(item, 300)).filter(Boolean).slice(0, 8) : [];\n  if (!subtasks.length && Array.isArray(parsed)) subtasks = parsed.map((item) => clip(item, 300)).filter(Boolean).slice(0, 8);\n} catch (error) {\n  return [{ json: { status: \"error\", error: clip(error && error.message, 300) || \"decomposition failed\", ...input, subtasks: [] } }];\n}\nif (!subtasks.length) {\n  return [{ json: { status: \"error\", error: \"The model did not return sub-tasks\", ...input, subtasks: [] } }];\n}\nreturn [{ json: { status: \"ok\", ...input, subtasks } }];"
+      },
+      "id": "c0de4e02-0006-4000-8000-000000000002",
+      "name": "Decompose sub-tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function clip(value, limit) {\n  return String(value || \"\").replace(/\\s+/g, \" \").trim().slice(0, limit);\n}\nfunction readBody(item) {\n  const body = item.body && (item.body.raw_prompt || item.body.project_type || item.body.active_file) ? item.body : item;\n  return {\n    raw_prompt: clip(body.raw_prompt, 4000),\n    active_file: clip(body.active_file, 240),\n    selected_code: String(body.selected_code || \"\").slice(0, 8000),\n    project_type: clip(body.project_type, 40) || \"nodejs\",\n  };\n}\nfunction stripModel(text) {\n  return String(text || \"\").replace(/<think>[\\s\\S]*?<\\/think>/g, \"\").trim();\n}\nfunction stripFences(text) {\n  const source = stripModel(text);\n  const match = /```[a-zA-Z0-9]*\\n?([\\s\\S]*?)```/.exec(source);\n  return (match ? match[1] : source).trim();\n}\nasync function ollama(prompt, limit) {\n  const response = await helpers.httpRequest({\n    method: \"POST\",\n    url: \"http://host.docker.internal:11434/api/generate\",\n    body: {\n      model: \"qwen3.5:9b\",\n      prompt,\n      stream: false,\n      think: false,\n      options: { temperature: 0.2, top_p: 0.9, num_predict: limit },\n    },\n    json: true,\n    timeout: 70000,\n  });\n  return stripModel(response && (response.response || response.message && response.message.content) || \"\");\n}\nconst state = $input.first().json;\nif (state.status === \"error\") return [{ json: state }];\nconst warnings = [];\nlet docs = \"\";\ntry {\n  const query = (state.project_type + \" \" + state.raw_prompt).slice(0, 180);\n  const payload = await helpers.httpRequest({\n    method: \"GET\",\n    url: \"https://api.duckduckgo.com/?q=\" + encodeURIComponent(query) + \"&format=json&no_html=1&skip_disambig=1\",\n    json: true,\n    timeout: 8000,\n  });\n  const bits = [];\n  if (payload && payload.AbstractText) bits.push(clip(payload.Heading, 120) + \": \" + clip(payload.AbstractText, 500));\n  for (const topic of (payload && payload.RelatedTopics) || []) {\n    if (bits.length >= 3) break;\n    if (topic && topic.Text) bits.push(clip(topic.Text, 240));\n  }\n  docs = bits.join(\"\\n\");\n} catch (error) {\n  warnings.push(\"Documentation lookup failed: \" + (clip(error && error.message, 160) || \"request failed\"));\n}\nconst standards = {\n  nodejs: \"Use clear functions, validate inputs, return explicit errors, and avoid unused variables.\",\n  javascript: \"Use clear functions, validate inputs, and return explicit errors.\",\n  typescript: \"Use TypeScript strict mode, explicit types, and ES module syntax.\",\n  python: \"Use type hints, validate inputs, and raise specific exceptions.\",\n}[String(state.project_type || \"\").toLowerCase()] || \"Write clean, robust code and handle errors explicitly.\";\nconst fileContext = [\n  \"Active file: \" + (state.active_file || \"(none)\"),\n  \"Selected code:\",\n  state.selected_code || \"(none)\",\n].join(\"\\n\");\nreturn [{ json: { ...state, docs, standards, file_context: fileContext, warnings } }];"
+      },
+      "id": "c0de4e02-0006-4000-8000-000000000003",
+      "name": "Enrich context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function clip(value, limit) {\n  return String(value || \"\").replace(/\\s+/g, \" \").trim().slice(0, limit);\n}\nfunction readBody(item) {\n  const body = item.body && (item.body.raw_prompt || item.body.project_type || item.body.active_file) ? item.body : item;\n  return {\n    raw_prompt: clip(body.raw_prompt, 4000),\n    active_file: clip(body.active_file, 240),\n    selected_code: String(body.selected_code || \"\").slice(0, 8000),\n    project_type: clip(body.project_type, 40) || \"nodejs\",\n  };\n}\nfunction stripModel(text) {\n  return String(text || \"\").replace(/<think>[\\s\\S]*?<\\/think>/g, \"\").trim();\n}\nfunction stripFences(text) {\n  const source = stripModel(text);\n  const match = /```[a-zA-Z0-9]*\\n?([\\s\\S]*?)```/.exec(source);\n  return (match ? match[1] : source).trim();\n}\nasync function ollama(prompt, limit) {\n  const response = await helpers.httpRequest({\n    method: \"POST\",\n    url: \"http://host.docker.internal:11434/api/generate\",\n    body: {\n      model: \"qwen3.5:9b\",\n      prompt,\n      stream: false,\n      think: false,\n      options: { temperature: 0.2, top_p: 0.9, num_predict: limit },\n    },\n    json: true,\n    timeout: 70000,\n  });\n  return stripModel(response && (response.response || response.message && response.message.content) || \"\");\n}\nconst state = $input.first().json;\nif (state.status === \"error\") return [{ json: state }];\nconst enhanced_prompt = [\n  \"### SYSTEM\",\n  \"You are an expert software engineer writing clean, robust code for \" + state.project_type + \".\",\n  \"Follow the provided context carefully.\",\n  \"Output valid code only.\",\n  \"\",\n  \"CONTEXT\",\n  state.standards || \"\",\n  state.docs || \"(no documentation excerpt)\",\n  state.file_context || \"\",\n  \"\",\n  \"SUB-TASKS\",\n  (state.subtasks || []).map((item, index) => (index + 1) + \". \" + item).join(\"\\n\"),\n  \"\",\n  \"USER REQUEST\",\n  state.raw_prompt,\n].join(\"\\n\");\nreturn [{ json: { ...state, enhanced_prompt } }];"
+      },
+      "id": "c0de4e02-0006-4000-8000-000000000004",
+      "name": "Assemble prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function clip(value, limit) {\n  return String(value || \"\").replace(/\\s+/g, \" \").trim().slice(0, limit);\n}\nfunction readBody(item) {\n  const body = item.body && (item.body.raw_prompt || item.body.project_type || item.body.active_file) ? item.body : item;\n  return {\n    raw_prompt: clip(body.raw_prompt, 4000),\n    active_file: clip(body.active_file, 240),\n    selected_code: String(body.selected_code || \"\").slice(0, 8000),\n    project_type: clip(body.project_type, 40) || \"nodejs\",\n  };\n}\nfunction stripModel(text) {\n  return String(text || \"\").replace(/<think>[\\s\\S]*?<\\/think>/g, \"\").trim();\n}\nfunction stripFences(text) {\n  const source = stripModel(text);\n  const match = /```[a-zA-Z0-9]*\\n?([\\s\\S]*?)```/.exec(source);\n  return (match ? match[1] : source).trim();\n}\nasync function ollama(prompt, limit) {\n  const response = await helpers.httpRequest({\n    method: \"POST\",\n    url: \"http://host.docker.internal:11434/api/generate\",\n    body: {\n      model: \"qwen3.5:9b\",\n      prompt,\n      stream: false,\n      think: false,\n      options: { temperature: 0.2, top_p: 0.9, num_predict: limit },\n    },\n    json: true,\n    timeout: 70000,\n  });\n  return stripModel(response && (response.response || response.message && response.message.content) || \"\");\n}\nfunction lintCode(code, projectType) {\n  const type = String(projectType || \"\").toLowerCase();\n  if (type && !/js|node|javascript/.test(type)) return { ok: true, skipped: true, errors: [] };\n  try {\n    new Function(code);\n    return { ok: true, skipped: false, errors: [] };\n  } catch (error) {\n    return { ok: false, skipped: false, errors: [clip(error && error.message, 300)] };\n  }\n}\nfunction unifiedDiff(before, after, filename) {\n  const file = filename || \"generated.txt\";\n  const added = String(after || \"\").split(\"\\n\");\n  const removed = String(before || \"\").split(\"\\n\");\n  const lines = [\"diff --git a/\" + file + \" b/\" + file, \"--- a/\" + file, \"+++ b/\" + file];\n  if (!before) {\n    lines.push(\"@@ -0,0 +1,\" + added.length + \" @@\");\n    for (const line of added) lines.push(\"+\" + line);\n    return lines.join(\"\\n\");\n  }\n  lines.push(\"@@ -1,\" + removed.length + \" +1,\" + added.length + \" @@\");\n  for (const line of removed) lines.push(\"-\" + line);\n  for (const line of added) lines.push(\"+\" + line);\n  return lines.join(\"\\n\");\n}\nconst state = $input.first().json;\nif (state.status === \"error\") {\n  return [{ json: { status: \"error\", error: state.error, subtasks_processed: state.subtasks || [], enhanced_prompt: state.enhanced_prompt || \"\", generated_code: \"\", unit_tests: \"\", git_diff: \"\", lint: null } }];\n}\nlet generated = \"\";\ntry {\n  generated = stripFences(await ollama(state.enhanced_prompt + \"\\n\\nOutput valid code only.\", 800));\n} catch (error) {\n  return [{ json: { status: \"error\", error: clip(error && error.message, 300) || \"model call failed\", subtasks_processed: state.subtasks, enhanced_prompt: state.enhanced_prompt, generated_code: \"\", unit_tests: \"\", git_diff: \"\", lint: null } }];\n}\nlet lint = lintCode(generated, state.project_type);\nif (!lint.ok) {\n  try {\n    const repaired = stripFences(await ollama(state.enhanced_prompt + \"\\n\\nThe previous code failed a syntax check: \" + lint.errors.join(\" \") + \"\\nReturn corrected code only.\", 800));\n    if (repaired) {\n      generated = repaired;\n      lint = lintCode(generated, state.project_type);\n    }\n  } catch (error) {\n    (state.warnings || []).push(\"Repair call failed: \" + clip(error && error.message, 160));\n  }\n}\nlet unitTests = \"\";\ntry {\n  unitTests = stripFences(await ollama(\"Write unit tests for this implementation. Output test code only.\\n\\n\" + generated, 500));\n} catch (error) {\n  (state.warnings || []).push(\"Unit test call failed: \" + clip(error && error.message, 160));\n}\nconst gitDiff = unifiedDiff(state.selected_code, generated, state.active_file || \"generated.txt\");\nreturn [{\n  json: {\n    status: generated ? \"success\" : \"error\",\n    error: generated ? null : \"The model returned no code\",\n    subtasks_processed: state.subtasks,\n    enhanced_prompt: state.enhanced_prompt,\n    generated_code: generated,\n    unit_tests: unitTests,\n    git_diff: gitDiff,\n    lint,\n    warnings: state.warnings || [],\n  },\n}];"
+      },
+      "id": "c0de4e02-0006-4000-8000-000000000005",
+      "name": "Qwen generate and verify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "c0de4e02-0006-4000-8000-000000000006",
+      "name": "Respond to IDE",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1400,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "IDE webhook": {
+      "main": [
+        [
+          {
+            "node": "Decompose sub-tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decompose sub-tasks": {
+      "main": [
+        [
+          {
+            "node": "Enrich context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich context": {
+      "main": [
+        [
+          {
+            "node": "Assemble prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble prompt": {
+      "main": [
+        [
+          {
+            "node": "Qwen generate and verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen generate and verify": {
+      "main": [
+        [
+          {
+            "node": "Respond to IDE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

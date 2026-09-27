@@ -1,0 +1,7 @@
+{
+  "name": "id-check",
+  "private": true,
+  "scripts": {
+    "test": "node test/check.test.js"
+  }
+}

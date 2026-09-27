@@ -1,0 +1,83 @@
+{
+  "id": "c0de4e01-2222-4000-8000-000000000020",
+  "versionId": "c0de4e01-2222-4000-8000-000000000021",
+  "name": "CodeMe capability discovery",
+  "active": false,
+  "nodeGroups": [],
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "codeme-capabilities",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c0de4e01-0002-4000-8000-0001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "codeme-capabilities"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const item = $input.first().json;\nconst body = item.body && item.body.requestId ? item.body : item;\nif (body.capability && body.capability !== 'hub.discover') {\n  return [{ json: { protocolVersion: 1, requestId: body.requestId, status: 'error', data: null, sources: [], warnings: [], error: { code: 'capability_unavailable', message: 'This workflow only serves hub.discover' }, duration: 1 } }];\n}\nconst capabilities = [{\"name\":\"hub.health\",\"description\":\"Echo a short token and report hub health\"},{\"name\":\"research.problem\",\"description\":\"Gather short evidence for a problem. Returns sources and excerpts, not a workspace edit.\"},{\"name\":\"knowledge.lookup\",\"description\":\"Find a prior note by query, or remember a short note. Does not read the workspace.\"},{\"name\":\"task.decompose\",\"description\":\"Split a large goal into a bounded task graph for one step at a time.\"}];\nreturn [{ json: { protocolVersion: 1, requestId: body.requestId, status: 'ok', data: { capabilities }, sources: [], warnings: [], error: null, duration: 1 } }];"
+      },
+      "id": "c0de4e01-0002-4000-8000-0002",
+      "name": "Build response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "c0de4e01-0002-4000-8000-0003",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        560,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

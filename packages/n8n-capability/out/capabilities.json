@@ -1,0 +1,45 @@
+{
+  "connection": true,
+  "discovery": [
+    "hub.health",
+    "research.problem",
+    "knowledge.lookup",
+    "task.decompose"
+  ],
+  "calls": {
+    "research": {
+      "ok": true,
+      "status": "ok",
+      "code": null,
+      "confidence": "medium",
+      "evidence": 6
+    },
+    "knowledge": {
+      "remember": {
+        "ok": true,
+        "status": "ok",
+        "code": null
+      },
+      "lookup": {
+        "ok": true,
+        "status": "ok",
+        "code": null,
+        "matches": [
+          "Live hub note",
+          "CodeMe owns local files"
+        ]
+      }
+    },
+    "decompose": {
+      "ok": true,
+      "status": "ok",
+      "code": null,
+      "tasks": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ]
+    }
+  }
+}

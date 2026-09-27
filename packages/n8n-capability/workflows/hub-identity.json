@@ -1,0 +1,83 @@
+{
+  "id": "codemeHub",
+  "versionId": "codemeHubV1",
+  "name": "CodeMe hub identity",
+  "active": false,
+  "nodeGroups": [],
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "codeme-hub-identity",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c0de4e01-0006-4000-8000-0001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "codeme-hub-identity"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const item = $input.first().json;\nconst body = item.body && item.body.requestId ? item.body : item;\nconst store = $getWorkflowStaticData('global');\nconst PROFILE = {\n  id: \"codeme-hub\",\n  name: \"CodeMe hub\",\n  model: {\n    provider: \"ollama\",\n    name: \"qwen3.5:9b\",\n    endpoint: \"http://host.docker.internal:11434\",\n  },\n  storage: {\n    kind: \"n8n-workflow-static-data\",\n    workflowId: \"codemeHub\",\n    scope: \"global\",\n  },\n  job: \"You are the CodeMe intelligence hub. CodeMe owns files, git, the terminal, and tests. You research a problem, remember short notes, and split a large goal into a few short tasks. Return evidence. Do not invent a cause, a fix, or a file edit.\",\n  tools: [\n    {\n      name: \"research.problem\",\n      when: \"the question is an unknown technical problem.\",\n      how: \"Read input.problem. Return public evidence with a title, url, source, and excerpt. Leave likely_cause and recommended_fix empty.\",\n    },\n    {\n      name: \"knowledge.lookup\",\n      when: \"someone asks for a remembered note or asks you to save one.\",\n      how: \"Lookup uses input.query against storage. Remember saves input.entry title and text. Do not read the workspace.\",\n    },\n    {\n      name: \"task.decompose\",\n      when: \"a goal is too large for one step.\",\n      how: \"Read input.goal. Return at most 4 short tasks with id, title, dependsOn, objective, and doneWhen. Do not write code.\",\n    },\n  ],\n};\n\nfunction ensureProfile(store) {\n  if (!store || typeof store !== \"object\") return null;\n  store.profile = {\n    id: PROFILE.id,\n    name: PROFILE.name,\n    model: { ...PROFILE.model },\n    storage: { ...PROFILE.storage },\n    job: PROFILE.job,\n    tools: PROFILE.tools.map((tool) => ({ ...tool })),\n  };\n  return store.profile;\n}\n\nfunction jobPrompt(profile) {\n  const record = profile || PROFILE;\n  const tools = (record.tools || []).map((tool) => `${tool.name}: Use it when ${tool.when} ${tool.how}`).join(\" \");\n  return `Your id is ${record.id}. Your model is ${record.model.name}. Your storage is ${record.storage.kind} on workflow ${record.storage.workflowId}. Job: ${record.job} Tools: ${tools}`;\n}\nconst profile = ensureProfile(store);\nconst warnings = [];\nif (!store.told) {\n  try {\n    const response = await helpers.httpRequest({\n      method: 'POST',\n      url: profile.model.endpoint + '/api/chat',\n      body: {\n        model: profile.model.name,\n        stream: false,\n        think: false,\n        options: { temperature: 0, num_predict: 180 },\n        messages: [\n          { role: 'system', content: jobPrompt(profile) },\n          { role: 'user', content: 'State your id, your job in one sentence, and name one tool with how you use it. Do not write code.' },\n        ],\n      },\n      json: true,\n      timeout: 70000,\n    });\n    const text = response && response.message && response.message.content ? String(response.message.content) : '';\n    store.acknowledgement = text.replace(/\\s+/g, ' ').trim().slice(0, 600);\n    store.told = Boolean(store.acknowledgement);\n  } catch (error) {\n    warnings.push(String(error && error.message || error).slice(0, 200) || 'The model was unreachable');\n  }\n}\nreturn [{ json: { protocolVersion: 1, requestId: body.requestId, status: 'ok', data: { profile: store.profile, acknowledgement: store.acknowledgement || '', told: Boolean(store.told) }, sources: [], warnings, error: null, duration: 1 } }];"
+      },
+      "id": "c0de4e01-0006-4000-8000-0002",
+      "name": "Build response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "c0de4e01-0006-4000-8000-0003",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        560,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
