@@ -21,6 +21,10 @@ function diagnose(call, result) {
     || code === "asset_mime"
     || code === "page_status"
     || code === "preview_not_html"
+    || code === "browser_expectation_failed"
+    || code === "browser_console_error"
+    || code === "browser_target_not_found"
+    || code === "browser_target_not_clickable"
   ) {
     return { class: "bad_code", retry: false, next: "repair" };
   }
