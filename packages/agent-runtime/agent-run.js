@@ -402,6 +402,11 @@ async function executeRun(run, options) {
           next: diagnosis.next,
           at: new Date().toISOString(),
         });
+        if (!result.ok && diagnosis.next === "repair" && run.progress) {
+          run.progress.writeNow = true;
+          run.progress.focus = true;
+          run.progress.semanticStagnation = 0;
+        }
       }
       run.observations.push(observation);
       const hold = autonomyHold(call, result);
