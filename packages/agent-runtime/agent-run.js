@@ -1392,11 +1392,15 @@ function verifyAlreadySatisfiedWebRepair(run) {
     && call.result.ok
   ));
   if (writes.length || !requiresWorkspaceRepair(run) || !isBrowserEditTask(run)) return null;
-  if (unresolvedBrowserFailure(run)) {
+  const unresolved = unresolvedBrowserFailure(run);
+  if (unresolved) {
+    const message = unresolved.result && unresolved.result.error && unresolved.result.error.message;
     return {
       status: "failed",
-      summary: "The latest browser verification is still failing.",
-      evidence: ["browser.check"],
+      summary: unresolved.name === "browser.interact"
+        ? (message ? `The real browser interaction failed: ${message}` : "The real browser interaction is still failing.")
+        : (message ? `The latest browser verification failed: ${message}` : "The latest browser verification is still failing."),
+      evidence: [unresolved.name || "browser.check"],
     };
   }
 
