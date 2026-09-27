@@ -214,9 +214,10 @@ function applyIteration(state, input) {
     } else if (call.name === "dir.list") {
       const listed = String((call.args && call.args.path) || ".");
       if (rememberKey(state, `list:${listed}`)) categories.push("new_relevant_file");
-    } else if (call.name === "file.write") {
+    } else if (call.name === "file.write" || call.name === "file.patch") {
       const file = call.args && call.args.path;
-      const key = `write:${file}:${digest((call.args && call.args.contents) || "")}`;
+      const body = call.name === "file.patch" ? `${(call.args && call.args.oldText) || ""}=>${(call.args && call.args.newText) || ""}` : ((call.args && call.args.contents) || "");
+      const key = `write:${file}:${digest(body)}`;
       if (file && rememberKey(state, key)) {
         categories.push("code_modification");
         state.subtask = "edit";
@@ -257,7 +258,7 @@ function applyIteration(state, input) {
   }
 
   if (htmlCssRead(state)) state.inspectSatisfied = true;
-  const wrote = (input.calls || []).some((call) => call.name === "file.write");
+  const wrote = (input.calls || []).some((call) => call.name === "file.write" || call.name === "file.patch");
   if (isSiteLayoutGoal(input.goal || state.goal) && pageFileRead(state) && !wrote) {
     state.writeNow = true;
     state.focus = true;
@@ -436,12 +437,12 @@ function compactObservation(call) {
 
 // After stagnation the runtime narrows the offered tools to the ones that can change
 // the outcome. Browsing and workaround tools are withheld until progress resumes.
-const MATERIAL_TOOLS = ["file.write", "file.read", "dir.create", "dir.list", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check"];
+const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "dir.create", "dir.list", "process.start", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check"];
 
 function focusTools(state, definitions) {
   if (!state) return definitions;
   if (state.writeNow || (state.inspectSatisfied && isSiteLayoutGoal(state.goal))) {
-    const local = definitions.filter((item) => item.name === "file.write" || item.name === "browser.check");
+    const local = definitions.filter((item) => item.name === "file.write" || item.name === "file.patch" || item.name === "browser.check");
     if (local.length) return local;
   }
   if (state.strategy !== "stagnant" && !state.focus) return definitions;
@@ -492,7 +493,7 @@ function turnFingerprint(calls, cluster) {
   const parts = calls.map((call) => {
     if (call.name === "repo.search") return `search:${digest(searchPaths(call.result).join("|"))}`;
     if (call.name === "file.read") return `read:${call.args && call.args.path}`;
-    if (call.name === "file.write") return `write:${call.args && call.args.path}`;
+    if (call.name === "file.write" || call.name === "file.patch") return `write:${call.args && call.args.path}`;
     if (call.name === "tests.run" || call.name === "diagnostics.run") return call.name;
     if (call.name === "capability.invoke") return `capability:${call.args && call.args.capability}`;
     return call.name;
