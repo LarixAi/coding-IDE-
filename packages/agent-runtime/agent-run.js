@@ -1742,10 +1742,7 @@ function defaultVerify(run, text) {
     const changed = uniqueWrittenPaths(writes);
     const lastWrite = writes[writes.length - 1];
     const after = callsAfter(run, lastWrite);
-    const webWrite = writes.some((call) => {
-      const file = String(call.args && call.args.path || "");
-      return /\.(html?|css|js|jsx|ts|tsx)$/i.test(file) && !isServerRuntimeFile(run, file);
-    });
+    const webWrite = writes.some((call) => /\.(html?|css|js|jsx|ts|tsx)$/i.test(String(call.args && call.args.path || "")));
     const allReadBack = changed.every((file) => wasReadAfterMutation(run, file));
 
     if (webWrite) {
