@@ -24,9 +24,32 @@ function renderComposer(nonce) {
     .bubble.assistant { color: #c7ced8; }
     .activity { display: none; margin: 0 0 10px; color: #97a3b6; font-size: 12px; }
     .activity.on { display: block; }
-    .tools { margin: 0 0 10px; }
-    .tools details { margin: 0 0 4px; color: #6b7689; font-size: 11px; }
-    .tools summary { cursor: pointer; }
+    .tools { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; }
+    .tool-card { overflow: hidden; border: 1px solid #303640; border-radius: 9px; background: #181c22; color: #c7ced8; }
+    .tool-card[open] { background: #171b21; }
+    .tool-card.failed { border-color: #733b43; }
+    .tool-card.running { border-color: #3d5964; }
+    .tool-card summary { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 10px; cursor: pointer; list-style: none; user-select: none; }
+    .tool-card summary::-webkit-details-marker { display: none; }
+    .tool-kind { flex: 0 0 auto; min-width: 22px; color: #e8b66b; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; font-weight: 700; }
+    .tool-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c7ced8; font-size: 12px; font-weight: 600; }
+    .tool-stats { display: inline-flex; gap: 5px; flex: 0 0 auto; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; }
+    .tool-add { color: #63c58c; }
+    .tool-remove { color: #e16e79; }
+    .tool-state { flex: 0 0 auto; color: #6b7689; font-size: 11px; }
+    .tool-card.running .tool-state { color: #7fd3ea; animation: codeme-pulse 1.1s ease-in-out infinite; }
+    .tool-card.failed .tool-state { color: #ff918b; }
+    @keyframes codeme-pulse { 50% { opacity: 0.35; } }
+    .code-preview { max-height: 310px; overflow: auto; border-top: 1px solid #2a3038; background: #14181d; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; line-height: 1.55; }
+    .code-line { display: grid; grid-template-columns: 38px 18px minmax(0, 1fr); min-height: 18px; }
+    .code-line.add { background: #173325; }
+    .code-line.remove { background: #3a1f25; }
+    .code-no { padding: 0 7px 0 4px; color: #667080; text-align: right; border-right: 1px solid #252b33; user-select: none; }
+    .code-sign { text-align: center; color: #667080; user-select: none; }
+    .code-line.add .code-sign { color: #63c58c; }
+    .code-line.remove .code-sign { color: #e16e79; }
+    .code-text { min-width: 0; padding: 0 8px 0 2px; white-space: pre; overflow-x: visible; color: #c7ced8; }
+    .code-truncated { padding: 6px 10px; border-top: 1px solid #252b33; color: #6b7689; font-size: 10px; }
     .result { margin: 8px 0 0; }
     .result-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #dfe4ec; }
     .result-summary { margin: 0 0 8px; color: #c7ced8; }
@@ -336,21 +359,114 @@ function renderComposer(nonce) {
     }
     function renderTools(items) {
       tools.innerHTML = "";
-      if (!running) return;
-      for (const item of items) {
+      if (!items || !items.length) return;
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index];
         const row = document.createElement("details");
+        row.className = "tool-card " + (item.status || "");
+        const hasPreview = Boolean(item.name === "file.write" && item.preview && item.preview.lines && item.preview.lines.length);
+        row.open = hasPreview && (item.status === "running" || index >= items.length - 3);
+
         const summary = document.createElement("summary");
-        summary.textContent = toolLabel(item);
+        const kind = document.createElement("span");
+        kind.className = "tool-kind";
+        kind.textContent = toolKind(item);
+        const label = document.createElement("span");
+        label.className = "tool-label";
+        label.textContent = toolLabel(item);
+        summary.appendChild(kind);
+        summary.appendChild(label);
+
+        if (item.name === "file.write" && item.preview) {
+          const stats = document.createElement("span");
+          stats.className = "tool-stats";
+          const add = document.createElement("span");
+          add.className = "tool-add";
+          add.textContent = "+" + Number(item.preview.additions || 0);
+          const remove = document.createElement("span");
+          remove.className = "tool-remove";
+          remove.textContent = "-" + Number(item.preview.removals || 0);
+          stats.appendChild(add);
+          stats.appendChild(remove);
+          summary.appendChild(stats);
+        }
+
+        const state = document.createElement("span");
+        state.className = "tool-state";
+        state.textContent = item.status === "running" ? "●" : (item.status === "failed" ? "!" : "✓");
+        summary.appendChild(state);
         row.appendChild(summary);
+
+        if (hasPreview) {
+          const preview = document.createElement("div");
+          preview.className = "code-preview";
+          for (const line of item.preview.lines) {
+            const code = document.createElement("div");
+            code.className = "code-line " + (line.type || "context");
+            const number = document.createElement("span");
+            number.className = "code-no";
+            number.textContent = String(line.newNumber || line.oldNumber || "");
+            const sign = document.createElement("span");
+            sign.className = "code-sign";
+            sign.textContent = line.type === "add" ? "+" : (line.type === "remove" ? "−" : " ");
+            const body = document.createElement("span");
+            body.className = "code-text";
+            body.textContent = line.text || " ";
+            code.appendChild(number);
+            code.appendChild(sign);
+            code.appendChild(body);
+            preview.appendChild(code);
+          }
+          if (item.preview.truncated) {
+            const more = document.createElement("div");
+            more.className = "code-truncated";
+            more.textContent = "Preview shortened — the full file was still written.";
+            preview.appendChild(more);
+          }
+          row.appendChild(preview);
+        }
+
         tools.appendChild(row);
       }
     }
+    function toolKind(item) {
+      if (item.name === "file.write" || item.name === "file.read") {
+        const name = String(item.path || "");
+        const dot = name.lastIndexOf(".");
+        return dot >= 0 ? name.slice(dot + 1).toUpperCase().slice(0, 4) : "FILE";
+      }
+      if (item.name === "dir.create" || item.name === "dir.list") return "DIR";
+      if (item.name === "workspace.inspect") return "WS";
+      if (item.name === "repo.search") return "FIND";
+      if (item.name === "tests.run") return "TEST";
+      if (item.name === "terminal.run") return "TERM";
+      if (item.name === "browser.check") return "WEB";
+      if (item.name === "capability.invoke" || item.name === "capability.list") return "HUB";
+      if (item.name === "diagnostics.run") return "DIAG";
+      if (item.name === "git.diff" || item.name === "git.status") return "GIT";
+      return "TOOL";
+    }
     function toolLabel(item) {
-      if (item.name === "file.read") return "Read " + (item.path || "file");
-      if (item.name === "file.write") return "Edited " + (item.path || "file");
-      if (item.name === "repo.search") return "Searched " + (item.path || "workspace");
-      if (item.name === "tests.run") return "Ran tests";
-      if (item.name === "capability.invoke") return "Researched documentation";
+      const live = item.status === "running";
+      if (item.name === "workspace.inspect") return live ? "Inspecting workspace" : "Inspected workspace";
+      if (item.name === "dir.list") return (live ? "Listing " : "Listed ") + (item.path || "workspace");
+      if (item.name === "dir.create") return (live ? "Creating folder " : "Created folder ") + (item.path || "");
+      if (item.name === "file.read") return (live ? "Reading " : "Read ") + (item.path || "file");
+      if (item.name === "file.write") {
+        const verb = item.operation === "create"
+          ? (live ? "Creating " : "Created ")
+          : (live ? "Editing " : "Edited ");
+        return verb + (item.path || "file");
+      }
+      if (item.name === "repo.search") return (live ? "Searching " : "Searched ") + (item.path || "workspace");
+      if (item.name === "tests.run") return live ? "Running tests" : "Ran tests";
+      if (item.name === "terminal.run") return live ? "Running command" : "Ran command";
+      if (item.name === "browser.check") return live ? "Checking preview" : "Checked preview";
+      if (item.name === "diagnostics.run") return live ? "Checking diagnostics" : "Checked diagnostics";
+      if (item.name === "git.diff") return live ? "Reviewing changes" : "Reviewed changes";
+      if (item.name === "git.status") return live ? "Checking Git status" : "Checked Git status";
+      if (item.name === "capability.invoke") return live ? "Researching documentation" : "Researched documentation";
+      if (item.name === "capability.list") return live ? "Checking available capabilities" : "Checked available capabilities";
       return item.name;
     }
     function renderResult(state) {
