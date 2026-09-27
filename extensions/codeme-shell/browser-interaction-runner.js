@@ -130,6 +130,7 @@ function createBrowserInteractionRunner(options = {}) {
         const headed = shouldRunHeaded();
         child = spawnBrowser(executable, [
           ...(headed ? ["--new-window"] : ["--headless=new", "--disable-gpu"]),
+          ...(process.env.CI ? ["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"] : []),
           "--remote-debugging-port=0",
           `--user-data-dir=${profile}`,
           "--no-first-run",
