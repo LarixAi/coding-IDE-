@@ -7,6 +7,7 @@ const { lockModel } = require("./model-lock");
 const { classifyTask, selectStrategy } = require("./strategy");
 const { diagnose } = require("./diagnosis");
 const { selectCapability, recommendCapability, isSiteLayoutGoal } = require("./progress");
+const { decideProject, isDependencyFreeStatic } = require("./project-decision");
 
 module.exports = {
   ModelProvider,
@@ -29,4 +30,6 @@ module.exports = {
   selectCapability,
   recommendCapability,
   isSiteLayoutGoal,
+  decideProject,
+  isDependencyFreeStatic,
 };
