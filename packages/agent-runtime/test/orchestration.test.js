@@ -227,7 +227,7 @@ async function main() {
       async gitStatus() { return { branch: null, changes: [] }; },
       async gitDiff() { return { diff: "" }; },
       async diagnostics() { return { items: [] }; },
-      async browserCheck(url) { return { available: false, code: "browser_unavailable", message: "not used", url }; },
+      async browserCheck(url) { return { available: true, statusCode: 200, title: "Hello CodeMe", url }; },
     };
 
     const provider = new ScriptedModelProvider([
@@ -243,7 +243,12 @@ async function main() {
           { name: "file.read", args: { path: "style.css" } },
         ],
       },
-      { text: "Created index.html and style.css and verified both files." },
+      {
+        toolCalls: [
+          { name: "browser.check", args: { url: "index.html" } },
+        ],
+      },
+      { text: "Created index.html and style.css and verified both files in the browser." },
     ]);
 
     const capabilities = {
@@ -284,6 +289,8 @@ async function main() {
 
     assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
     assert.strictEqual(run.workspace.state, "empty");
+    assert.strictEqual(run.projectDecision.kind, "static_site");
+    assert.strictEqual(run.projectDecision.dependenciesRequired, false);
     assert.deepStrictEqual(run.filesChanged.sort(), ["index.html", "style.css"]);
     assert.strictEqual(fs.readFileSync(path.join(root, "index.html"), "utf8").includes("Hello CodeMe"), true);
     assert.strictEqual(fs.existsSync(path.join(root, "package.json")), false);
@@ -293,15 +300,121 @@ async function main() {
     assert.strictEqual(state.capabilityListCalls, 0);
     assert.strictEqual(state.capabilityCalls, 0);
     assert.strictEqual(run.verification.status, "passed");
-    assert.deepStrictEqual(run.verification.evidence, ["file.write", "file.read"]);
+    assert.deepStrictEqual(run.verification.evidence, ["file.write", "file.read", "browser.check"]);
 
     for (const call of provider.calls) {
       const names = call.tools.map((tool) => tool.name);
       assert.strictEqual(names.includes("terminal.run"), false);
       assert.strictEqual(names.includes("tests.run"), false);
+      assert.strictEqual(names.includes("process.start"), false);
+      assert.strictEqual(names.includes("file.patch"), false);
       assert.strictEqual(names.includes("capability.invoke"), false);
+      assert.strictEqual(names.includes("browser.check"), true);
       assert.strictEqual(names.includes("capability.list"), false);
     }
+  });
+
+  await test("React request is classified as a frontend app before the model turn", async () => {
+    const provider = new ScriptedModelProvider([{ text: "Architecture understood." }]);
+    const host = workspaceHost(tempDir());
+    host.inspectWorkspace = async () => ({
+      state: "empty",
+      root: "react-demo",
+      entries: 0,
+      git: false,
+      projectMarkers: [],
+      languages: [],
+      frameworks: [],
+      packageManager: null,
+      scripts: {},
+    });
+    host.patchFile = async () => ({ path: "src/App.jsx", replacements: 1 });
+    host.startProcess = async (command) => ({ started: true, command });
+    host.createDirectory = async (dirPath) => ({ path: dirPath });
+    host.listDirectory = async () => ({ path: ".", entries: [] });
+
+    const { store } = trackedStore(tempDir());
+    const handle = startAgentRun({
+      goal: "Create a React website with a heading that says Hello CodeMe.",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      verify: () => ({ status: "passed", summary: "decision captured", evidence: ["project_decision"] }),
+    });
+    const run = await handle.done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(run.projectDecision.kind, "frontend_app");
+    assert.strictEqual(run.projectDecision.framework, "react");
+    assert.strictEqual(run.projectDecision.dependenciesRequired, true);
+    assert.ok(run.events.some((event) => event.type === "project_decision" && event.kind === "frontend_app"));
+    const firstCall = provider.calls[0];
+    const context = firstCall.messages.map((message) => message.content || "").join("\n");
+    assert.ok(context.includes("Project type: React frontend app."));
+    const tools = firstCall.tools.map((tool) => tool.name);
+    assert.ok(tools.includes("process.start"));
+    assert.ok(tools.includes("file.patch"));
+  });
+
+  await test("static project policy hard-blocks package scaffolding and process tools", async () => {
+    const root = tempDir();
+    let writes = 0;
+    let processes = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "empty",
+          root: "static-demo",
+          entries: 0,
+          git: false,
+          projectMarkers: [],
+          languages: [],
+          frameworks: [],
+          packageManager: null,
+          scripts: {},
+        };
+      },
+      async writeFile() {
+        writes += 1;
+        return { wrote: true };
+      },
+      async readFile() { return { contents: "" }; },
+      async createDirectory(dirPath) { return { path: dirPath }; },
+      async listDirectory() { return { path: ".", entries: [] }; },
+      async browserCheck(url) { return { available: true, statusCode: 200, url }; },
+      async startProcess(command) {
+        processes += 1;
+        return { started: true, command };
+      },
+    };
+    const provider = new ScriptedModelProvider([
+      {
+        toolCalls: [
+          { name: "file.write", args: { path: "package.json", contents: "{}" } },
+          { name: "process.start", args: { command: "npm start" } },
+        ],
+      },
+    ]);
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: "Create a simple website with a heading that says Hello CodeMe.",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 2,
+    }).done;
+
+    assert.strictEqual(run.projectDecision.kind, "static_site");
+    assert.strictEqual(writes, 0);
+    assert.strictEqual(processes, 0);
+    assert.ok(run.toolCalls.some((call) => call.name === "file.write" && call.result && call.result.error && call.result.error.code === "policy_denied"));
+    assert.ok(run.toolCalls.some((call) => call.name === "process.start" && call.result && call.result.error && call.result.error.code === "policy_denied"));
   });
 
   await test("write, terminal, and test tools stay blocked", async () => {
