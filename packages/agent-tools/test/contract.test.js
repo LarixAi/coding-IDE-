@@ -29,6 +29,7 @@ async function main() {
       "file.patch",
       "repo.search",
       "terminal.run",
+      "sandbox.run",
       "process.start",
       "process.status",
       "process.logs",
@@ -194,6 +195,7 @@ async function main() {
   await test("blocks patch and process tools while read-only", async () => {
     for (const [name, args] of [
       ["file.patch", { path: "README.md", oldText: "old", newText: "new" }],
+      ["sandbox.run", { command: "node script.js" }],
       ["process.start", { command: "npm start" }],
     ]) {
       const result = await executeReadOnly({}, name, args);
@@ -216,6 +218,73 @@ async function main() {
     );
     assert.strictEqual(result.ok, true);
     assert.deepStrictEqual(received, { filePath: "src/app.js", oldText: "old", newText: "new" });
+  });
+
+  await test("sandbox.run validates, dispatches, and preserves structured failures", async () => {
+    let received = null;
+    const accepted = await executeControlled(
+      {
+        async runSandbox(args) {
+          received = args;
+          return {
+            command: args.command,
+            exitCode: 0,
+            stdout: "sandbox-ok",
+            stderr: "",
+            output: "sandbox-ok",
+            isolation: "workspace-copy",
+            securityBoundary: false,
+            discarded: true,
+            changedPaths: ["generated.txt"],
+          };
+        },
+      },
+      "sandbox.run",
+      { command: "node script.js", timeoutMs: 5000 },
+    );
+    assert.strictEqual(accepted.ok, true, JSON.stringify(accepted));
+    assert.strictEqual(received.command, "node script.js");
+    assert.strictEqual(received.timeoutMs, 5000);
+    assert.strictEqual(accepted.data.discarded, true);
+    assert.deepStrictEqual(accepted.data.changedPaths, ["generated.txt"]);
+
+    const shellSyntax = await executeControlled(
+      { async runSandbox() { throw new Error("must not run"); } },
+      "sandbox.run",
+      { command: "node script.js &" },
+    );
+    assert.strictEqual(shellSyntax.ok, false);
+    assert.strictEqual(shellSyntax.error.code, "command_rejected");
+
+    const escaped = await executeControlled(
+      { async runSandbox() { throw new Error("must not run"); } },
+      "sandbox.run",
+      { command: "node ../outside.js" },
+    );
+    assert.strictEqual(escaped.ok, false);
+    assert.strictEqual(escaped.error.code, "command_rejected");
+
+    const badTimeout = await executeControlled(
+      { async runSandbox() { throw new Error("must not run"); } },
+      "sandbox.run",
+      { command: "node script.js", timeoutMs: 999999 },
+    );
+    assert.strictEqual(badTimeout.ok, false);
+    assert.strictEqual(badTimeout.error.code, "invalid_args");
+
+    const failed = await executeControlled(
+      {
+        async runSandbox() {
+          return { command: "node broken.js", exitCode: 2, stdout: "", stderr: "SyntaxError", output: "SyntaxError" };
+        },
+      },
+      "sandbox.run",
+      { command: "node broken.js" },
+    );
+    assert.strictEqual(failed.ok, false);
+    assert.strictEqual(failed.error.code, "exit_status");
+    assert.strictEqual(failed.data.exitCode, 2);
+    assert.ok(failed.data.stderr.includes("SyntaxError"));
   });
 
   await test("process.start only permits approved long-running scripts", async () => {
