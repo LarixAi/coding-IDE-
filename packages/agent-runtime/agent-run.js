@@ -467,12 +467,7 @@ function verifyBuild(run) {
       return { status: "failed", summary: "Create the requested static files with file.write.", evidence: [] };
     }
 
-    const forbidden = (run.toolCalls || []).filter((call) => (
-      call.name === "terminal.run"
-      || call.name === "tests.run"
-      || call.name === "capability.invoke"
-      || call.name === "capability.list"
-    ));
+    const forbidden = (run.toolCalls || []).filter((call) => !staticScaffoldTool(call.name));
     if (forbidden.length) {
       return {
         status: "failed",
@@ -576,6 +571,7 @@ function wasReadAfterWrite(run, file) {
 function applyProjectDecision(run, store) {
   if (!run || !run.workspace || run.mode !== "controlled") return null;
   if (!["build", "feature", "layout", "bug-fix", "general"].includes(run.taskClass)) return null;
+  if (run.workspace.state === "empty" && !["build", "feature"].includes(run.taskClass)) return null;
 
   const decision = decideProject(run.goal, run.workspace);
   run.projectDecision = decision;
