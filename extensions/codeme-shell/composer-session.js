@@ -535,11 +535,99 @@ function conversationMessages(conversation) {
 function threadFrom(run) {
   const items = [];
   if (run && run.goal) items.push({ role: "user", text: run.goal });
-  for (const decision of (run && run.decisions) || []) {
-    const text = decision && decision.text ? String(decision.text).trim() : "";
-    if (text && !isProgressTalk(text)) items.push({ role: "assistant", text });
-  }
+  const final = finalAssistantText(run);
+  if (final) items.push({ role: "assistant", text: final });
   return items;
+}
+
+function finalAssistantText(run) {
+  if (!run || !["completed", "failed", "cancelled", "awaiting_user"].includes(run.lifecycle)) return "";
+
+  if (run.lifecycle === "completed") {
+    const files = Array.isArray(run.filesChanged) ? run.filesChanged.filter(Boolean) : [];
+    if (files.length) {
+      const names = formatFileList(files);
+      const evidence = (run.verification && run.verification.evidence) || [];
+      if (evidence.includes("browser.check")) {
+        return `Done — I applied the requested change to ${names} and verified the result in the browser.`;
+      }
+      if (evidence.includes("tests.run")) {
+        return `Done — I updated ${names} and the available tests passed.`;
+      }
+      if (evidence.includes("file.read")) {
+        return `Done — I updated ${names} and confirmed the saved contents.`;
+      }
+      return `Done — I updated ${names}.`;
+    }
+
+    if (run.taskClass === "inspect") {
+      const inventory = lastDirectoryListing(run);
+      if (inventory.length) {
+        return `This project contains ${inventory.length} ${inventory.length === 1 ? "file" : "files"}:\n${inventory.map((file) => `• \`${file}\``).join("\n")}`;
+      }
+    }
+
+    const outcome = run.outcome && run.outcome.summary;
+    if (outcome) return cleanAssistantText(outcome);
+    return cleanAssistantText(lastMeaningfulDecision(run)) || "Done.";
+  }
+
+  if (run.lifecycle === "cancelled") return "Stopped — no further changes will be made.";
+  if (run.lifecycle === "awaiting_user") {
+    return cleanAssistantText(run.outcome && run.outcome.summary) || "I need more information before I can continue.";
+  }
+
+  const reason = cleanAssistantText(run.outcome && run.outcome.summary);
+  const files = Array.isArray(run.filesChanged) ? run.filesChanged.filter(Boolean) : [];
+  if (files.length) {
+    return `I changed ${formatFileList(files)}, but I could not finish verification. ${reason || "Check the failed tool above for details."}`;
+  }
+  return `I couldn't complete that. ${reason || "Check the failed tool above for details."}`;
+}
+
+function lastDirectoryListing(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call.name !== "dir.list" || !call.result || !call.result.ok) continue;
+    const entries = call.result.data && Array.isArray(call.result.data.entries) ? call.result.data.entries : [];
+    return entries.filter((item) => !item.type || item.type === "file").map((item) => item.path).filter(Boolean).slice(0, 40);
+  }
+  return [];
+}
+
+function lastMeaningfulDecision(run) {
+  const decisions = (run && run.decisions) || [];
+  for (let index = decisions.length - 1; index >= 0; index -= 1) {
+    const text = decisions[index] && decisions[index].text ? String(decisions[index].text).trim() : "";
+    if (text && !isProgressTalk(text)) return text;
+  }
+  return "";
+}
+
+function cleanAssistantText(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const paragraphs = text.split(/\n\s*\n/).map((item) => item.trim()).filter(Boolean);
+  const seen = new Set();
+  const kept = [];
+  for (const paragraph of paragraphs) {
+    if (isProgressTalk(paragraph)) continue;
+    const key = paragraph.toLowerCase().replace(/\s+/g, " ").replace(/[`*_>#-]/g, "").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    kept.push(paragraph);
+  }
+  return kept.join("\n\n").slice(0, 1600);
+}
+
+function formatFileList(files) {
+  const unique = [...new Set(files.map((file) => String(file)))];
+  const shown = unique.slice(0, 4).map((file) => `\`${file}\``);
+  if (unique.length > 4) shown.push(`${unique.length - 4} more files`);
+  if (shown.length === 1) return shown[0];
+  if (shown.length === 2) return `${shown[0]} and ${shown[1]}`;
+  return `${shown.slice(0, -1).join(", ")}, and ${shown[shown.length - 1]}`;
 }
 
 function diffText(run) {
