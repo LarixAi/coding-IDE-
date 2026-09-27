@@ -183,7 +183,7 @@ async function main() {
 
   await test("empty static scaffold uses only file tools and reads every created file back", async () => {
     const root = tempDir();
-    const state = { terminalCalls: 0, testCalls: 0, capabilityCalls: 0 };
+    const state = { terminalCalls: 0, testCalls: 0, capabilityListCalls: 0, capabilityCalls: 0 };
     const host = {
       async inspectWorkspace() {
         return {
@@ -248,6 +248,7 @@ async function main() {
 
     const capabilities = {
       async listCapabilities() {
+        state.capabilityListCalls += 1;
         return [{
           name: "research.problem",
           description: "Research an unknown technical problem.",
@@ -289,6 +290,7 @@ async function main() {
     assert.strictEqual(fs.existsSync(path.join(root, "server.js")), false);
     assert.strictEqual(state.terminalCalls, 0);
     assert.strictEqual(state.testCalls, 0);
+    assert.strictEqual(state.capabilityListCalls, 0);
     assert.strictEqual(state.capabilityCalls, 0);
     assert.strictEqual(run.verification.status, "passed");
     assert.deepStrictEqual(run.verification.evidence, ["file.write", "file.read"]);
