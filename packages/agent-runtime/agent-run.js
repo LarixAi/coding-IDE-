@@ -518,7 +518,7 @@ async function executeRun(run, options) {
 
       store.save(run);
 
-      if (call.name === "browser.check" && result.ok) {
+      if ((call.name === "browser.check" || call.name === "browser.interact") && result.ok) {
         const verifiedNow = maybeFinishVerifiedWork(run, store, text);
         if (verifiedNow) return verifiedNow;
       }
@@ -809,7 +809,7 @@ function applyProjectDecision(run, store) {
 }
 
 function staticScaffoldTool(name) {
-  return ["workspace.inspect", "dir.list", "dir.create", "file.write", "file.read", "browser.check"].includes(name);
+  return ["workspace.inspect", "dir.list", "dir.create", "file.write", "file.read", "browser.check", "browser.interact"].includes(name);
 }
 
 function forbiddenStaticPath(value) {
@@ -1079,6 +1079,9 @@ function verificationPolicyText(run) {
   if (workspaceHasGit(run)) parts.push("Git verification is available");
   else parts.push("this is not a Git repository, so do not call git.status or git.diff");
   parts.push("for HTML/CSS/browser-visible edits, verify with file.read and browser.check");
+  if (isInteractiveBrowserGoal(run.goal)) {
+    parts.push("this request includes a real browser interaction, so browser.interact must succeed before completion");
+  }
   return `Verification policy: ${parts.join("; ")}.`;
 }
 
@@ -1135,7 +1138,7 @@ function systemPrompt(options) {
       "Describing a file change or a capability call does not perform it. Use the matching tool.",
       "Use file.patch for a precise edit to an existing file and file.write for a new file or full replacement. Create folders with dir.create. Use process.start for a long-running preview server; do not use terminal.run for servers, mkdir, ls, or node -e.",
       "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
-      "To run or inspect the local site, use process.start only when a long-running npm preview process must be started, then call browser.check. browser.check is the verification step.",
+      "To run or inspect the local site, use process.start only when a long-running npm preview process must be started, then call browser.check. For user-visible interactions such as click/button/tap behaviour, browser.check is not enough: call browser.interact and verify the real resulting text/state before finishing.",
       isLayoutJob(options)
         ? "This is a layout job. After the HTML and CSS are read, use file.patch for a precise existing-file edit or file.write for a full replacement, then browser.check. Do not wait for tests or git."
         : runIsFolder(options)
@@ -1144,7 +1147,7 @@ function systemPrompt(options) {
             ? "This job lists the workspace. Call dir.list with path \".\" and answer from that list. Do not edit files."
             : runIsBuild(options)
               ? "This job creates or repairs project files. Create only what the request needs. In an empty workspace, a simple static HTML/CSS request must stay dependency-free: use file.write/dir.create, do not invent package.json or a server, and read every created file back before finishing. For existing files prefer file.patch. For a long-running dev server use process.start, then verify with browser.check. If a server accepts a port, use a numeric port; never pass the literal string --port to server.listen()."
-              : "Verify with the checks that actually exist in the inspected workspace. Do not call tests.run when there is no test script, and do not call Git tools when the workspace is not a Git repository. For browser-visible changes, read the changed file back and use browser.check.",
+              : "Verify with the checks that actually exist in the inspected workspace. Do not call tests.run when there is no test script, and do not call Git tools when the workspace is not a Git repository. For browser-visible changes, read the changed file back and use browser.check. For click/button/tap interactions, you must also use browser.interact; source inspection alone is not proof.",
       "A claim of success is not evidence.",
       strategyGuidance(options.strategyRecord),
       hub,
