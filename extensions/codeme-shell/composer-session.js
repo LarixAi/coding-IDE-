@@ -649,5 +649,6 @@ module.exports = {
   workspaceRelative,
   checkAttachment,
   importAttachment,
+  finalAssistantText,
   ComposerSession,
 };
