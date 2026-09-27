@@ -501,6 +501,7 @@ class ComposerViewProvider {
     }
     if (message.type === "submit") {
       const text = String(message.text || "");
+      this.view.webview.postMessage({ type: "submitting", epoch: message.epoch });
       const result = await this.session.submit(text, message.epoch);
       if (!result.ok) {
         this.view.webview.postMessage({ type: "rejected", epoch: message.epoch, code: result.code, message: result.message });
