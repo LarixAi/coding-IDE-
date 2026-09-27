@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
 const { createProgressState, recommendCapability, selectCapability, isSiteLayoutGoal, htmlCssRead, capabilityGuidance, writeFindingsNotice, applyEditNotice, alreadySearched, applyIteration, noteResearch, researchQuestion, postResearchBrief, openingResearchBrief, markQuestionSeen, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
 const { lockModel } = require("./model-lock");
-const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isLocalFollowUp } = require("./strategy");
+const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isLocalFollowUp, isSimpleStaticScaffoldGoal } = require("./strategy");
 const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
 
@@ -172,7 +172,6 @@ async function executeRun(run, options) {
 
   const folder = await createRequestedFolder(run, registry, store);
   if (folder) return folder;
-  if (!cancelled(run, signal)) await prepareResearch(run, capabilityRegistry, options, signal, store);
   if (!cancelled(run, signal)) {
     const workspace = await showWorkspace(run, registry, store);
     if (workspace && workspace.ok === false) {
@@ -185,6 +184,7 @@ async function executeRun(run, options) {
       );
     }
   }
+  if (!cancelled(run, signal)) await prepareResearch(run, capabilityRegistry, options, signal, store);
 
   while (!STOPPED.has(run.lifecycle)) {
     if (cancelled(run, signal)) return finishCancelled(run, store);
@@ -203,7 +203,7 @@ async function executeRun(run, options) {
       decision = await provider.complete({
         model: run.effectiveModel,
         messages: run.messages.map((message) => ({ ...message })),
-        tools: focusTools(run.progress, registry.definitions().concat(capabilityTools)),
+        tools: focusTools(run.progress, toolsForRun(run, registry.definitions(), capabilityTools)),
         signal,
         timeoutMs: run.timeoutMs,
       });
@@ -445,6 +445,58 @@ function hasWritten(paths, name) {
 
 function verifyBuild(run) {
   const paths = writtenPaths(run);
+
+  if (isSimpleEmptyScaffold(run)) {
+    if (!paths.length) {
+      return { status: "failed", summary: "Create the requested static files with file.write.", evidence: [] };
+    }
+
+    const forbidden = (run.toolCalls || []).filter((call) => (
+      call.name === "terminal.run"
+      || call.name === "tests.run"
+      || call.name === "capability.invoke"
+      || call.name === "capability.list"
+    ));
+    if (forbidden.length) {
+      return {
+        status: "failed",
+        summary: "A simple empty-workspace scaffold must use only workspace file/folder tools and cannot use terminal, tests, or external capabilities.",
+        evidence: paths.length ? ["file.write"] : [],
+      };
+    }
+
+    if (paths.some((file) => file === "package.json" || /(^|\/)server\.(js|mjs|cjs)$/i.test(file))) {
+      return {
+        status: "failed",
+        summary: "This simple static scaffold does not need package.json or a server. Keep it dependency-free.",
+        evidence: ["file.write"],
+      };
+    }
+
+    if (isWebsiteBuild(run.goal) && !paths.some((file) => /\.html?$/i.test(file))) {
+      return {
+        status: "failed",
+        summary: "Create the requested HTML page before finishing.",
+        evidence: ["file.write"],
+      };
+    }
+
+    const missingReadBack = paths.filter((file) => !wasReadAfterWrite(run, file));
+    if (missingReadBack.length) {
+      return {
+        status: "failed",
+        summary: `Read back every created file before finishing. Still verify: ${missingReadBack.join(", ")}.`,
+        evidence: ["file.write"],
+      };
+    }
+
+    return {
+      status: "passed",
+      summary: "The static scaffold was created inside the empty workspace and every created file was read back.",
+      evidence: ["file.write", "file.read"],
+    };
+  }
+
   const preview = (run.toolCalls || []).some((call) => call.name === "browser.check" && call.result && call.result.ok);
   if (isNewWebsite(run.goal)) {
     const missing = ["package.json", "server.js", "index.html"].filter((name) => !hasWritten(paths, name));
@@ -476,6 +528,41 @@ function verifyBuild(run) {
     return { status: "passed", summary: "The requested files were written", evidence: ["file.write"] };
   }
   return { status: "failed", summary: "Write each file the request needs with file.write", evidence: [] };
+}
+
+function wasReadAfterWrite(run, file) {
+  const calls = run.toolCalls || [];
+  let writeIndex = -1;
+  for (let index = 0; index < calls.length; index += 1) {
+    const call = calls[index];
+    if (call.name === "file.write" && call.result && call.result.ok && String(call.args && call.args.path || "").replace(/\\/g, "/") === file) {
+      writeIndex = index;
+    }
+  }
+  if (writeIndex < 0) return false;
+  for (let index = writeIndex + 1; index < calls.length; index += 1) {
+    const call = calls[index];
+    const path = String(call.args && call.args.path || "").replace(/\\/g, "/");
+    if (call.name === "file.read" && call.result && call.result.ok && path === file) return true;
+  }
+  return false;
+}
+
+function isSimpleEmptyScaffold(run) {
+  return Boolean(
+    run
+    && run.mode === "controlled"
+    && run.taskClass === "build"
+    && run.workspace
+    && run.workspace.state === "empty"
+    && isSimpleStaticScaffoldGoal(run.goal),
+  );
+}
+
+function toolsForRun(run, localTools, capabilityTools) {
+  if (!isSimpleEmptyScaffold(run)) return localTools.concat(capabilityTools);
+  const allowed = new Set(["workspace.inspect", "dir.list", "dir.create", "file.write", "file.read"]);
+  return localTools.filter((tool) => allowed.has(tool.name));
 }
 
 async function createRequestedFolder(run, registry, store) {
@@ -539,7 +626,7 @@ function systemPrompt(options) {
           : runIsInspect(options)
             ? "This job lists the workspace. Call dir.list with path \".\" and answer from that list. Do not edit files."
             : runIsBuild(options)
-              ? "This job creates or repairs the project files. Call dir.list first. When a file is missing, call file.write in that same turn. A sentence does not create the file. For a new website, write package.json, server.js, and index.html, then call browser.check with http://127.0.0.1:4173/. If a start script already exists, keep it and write only the missing files, then call browser.check on that local URL."
+              ? "This job creates or repairs project files. Create only what the request needs. In an empty workspace, a simple static HTML/CSS request must stay dependency-free: use file.write/dir.create, do not invent package.json or a server, and read every created file back before finishing. Framework or runtime projects may use their own project tooling when the request actually requires it."
               : "Finish only after a passing test and a git diff that shows the final edit.",
       "A claim of success is not evidence.",
       strategyGuidance(options.strategyRecord),
@@ -960,6 +1047,7 @@ function promisesFile(text) {
 }
 
 async function prepareResearch(run, capabilityRegistry, options, signal, store) {
+  if (isSimpleEmptyScaffold(run)) return;
   if (run.taskClass === "layout" || run.taskClass === "folder" || isSiteLayoutGoal(run.goal) || isWorkspaceInventory(run.goal) || isLocalFollowUp(run.goal)) return;
   if (run.progress && run.progress.runtimeDirectedEscalation) return;
   const listed = capabilityRegistry && typeof capabilityRegistry.list === "function" ? capabilityRegistry.list() : [];
