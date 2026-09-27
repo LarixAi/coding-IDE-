@@ -3,7 +3,7 @@ const INVALID_PROJECT_CHARS = /[<>:"/\\|?*\u0000-\u001f]/;
 function validateProjectName(value) {
   const name = String(value || "").trim();
   if (!name) return failure("invalid_project_name", "Project name is required.");
-  if (name === "." || name === "..") return failure("invalid_project_name", "Project name cannot be . or ...");
+  if (name === "." || name === "..") return failure("invalid_project_name", "Project name cannot be '.' or '..'.");
   if (INVALID_PROJECT_CHARS.test(name)) return failure("invalid_project_name", "Project name contains characters that cannot be used in a folder name.");
   if (/[. ]$/.test(name)) return failure("invalid_project_name", "Project name cannot end with a dot or space.");
   if (name.length > 100) return failure("invalid_project_name", "Project name is too long.");
