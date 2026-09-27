@@ -769,9 +769,9 @@ function browserInteractionEvidenceIssue(run, calls) {
   return "";
 }
 
-function webInteractionIssue(run, changed) {
+function webInteractionIssue(run, changed, calls) {
   const goal = String(run && run.goal || "").toLowerCase();
-  if (!/\b(click|button|tap|interaction|interactive)\b/.test(goal)) return "";
+  if (!isInteractiveBrowserGoal(goal)) return "";
 
   const htmlFiles = readPaths(run, /\.html?$/i);
   const jsFiles = readPaths(run, /\.(js|mjs)$/i).filter((file) => !isServerRuntimeFile(run, file));
@@ -801,7 +801,7 @@ function webInteractionIssue(run, changed) {
     return "The click handler exists, but the requested button text “It works!” is not present in the client JavaScript.";
   }
 
-  return "";
+  return browserInteractionEvidenceIssue(run, calls);
 }
 
 function uniqueWrittenPaths(writes) {
@@ -1407,7 +1407,7 @@ function defaultVerify(run, text) {
         };
       }
 
-      const interactionIssue = webInteractionIssue(run, changed);
+      const interactionIssue = webInteractionIssue(run, changed, after);
       if (interactionIssue) {
         return {
           status: "failed",
