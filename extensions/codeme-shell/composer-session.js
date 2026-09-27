@@ -157,6 +157,7 @@ class PublishingStore {
 class ComposerSession {
   constructor(options) {
     this.store = options.store;
+    this.historyStore = options.historyStore || null;
     this.selectionStore = options.selectionStore || { get() { return null; }, set() {} };
     this.listModels = options.listModels;
     this.createProvider = options.createProvider;
@@ -185,7 +186,9 @@ class ComposerSession {
     this.runId = "";
     this.requestId = "";
     this.epoch = 0;
+    this.conversationId = "";
     this.onChange = options.onChange || (() => {});
+    this.restoreActiveConversation();
   }
 
   snapshot() {
@@ -211,11 +214,81 @@ class ComposerSession {
       mode: this.mode,
       composerMode: this.composerMode,
       attachments: this.attachments.map((item) => ({ ...item })),
+      conversationId: this.conversationId,
+      conversations: this.historyStore ? this.historyStore.list(this.root) : [],
     };
   }
 
   emit() {
     this.onChange(this.snapshot());
+  }
+
+  setRoot(root) {
+    const next = String(root || "");
+    if (next === this.root) return;
+    this.root = next;
+    this.resetRunView();
+    this.restoreActiveConversation();
+    this.emit();
+  }
+
+  restoreActiveConversation() {
+    if (!this.historyStore || !this.root) {
+      this.conversationId = "";
+      if (!this.running) this.thread = [];
+      return;
+    }
+    const conversation = this.historyStore.active(this.root);
+    if (!conversation) {
+      this.conversationId = "";
+      if (!this.running) this.thread = [];
+      return;
+    }
+    this.conversationId = conversation.id;
+    if (!this.running) this.thread = conversationMessages(conversation);
+  }
+
+  newChat() {
+    if (this.running) return reject("busy", "Stop the current run before starting a new chat.");
+    if (this.historyStore) this.historyStore.clearActive(this.root);
+    this.conversationId = "";
+    this.thread = [];
+    this.attachments = [];
+    this.resetRunView();
+    this.emit();
+    return { ok: true };
+  }
+
+  openChat(id) {
+    if (this.running) return reject("busy", "Stop the current run before opening another chat.");
+    if (!this.historyStore) return reject("history_unavailable", "Chat history is not configured.");
+    const conversation = this.historyStore.get(id, this.root);
+    if (!conversation) return reject("not_found", "That chat is no longer available.");
+    this.historyStore.setActive(this.root, conversation.id);
+    this.conversationId = conversation.id;
+    this.thread = conversationMessages(conversation);
+    this.attachments = [];
+    this.resetRunView();
+    this.emit();
+    return { ok: true, conversationId: conversation.id };
+  }
+
+  resetRunView() {
+    this.active = null;
+    this.running = false;
+    this.stage = "Waiting";
+    this.activity = "";
+    this.error = "";
+    this.notice = "";
+    this.outcome = null;
+    this.filesChanged = [];
+    this.fileDiffs = [];
+    this.tools = [];
+    this.verification = null;
+    this.projectDecision = null;
+    this.diff = "";
+    this.runId = "";
+    this.requestId = "";
   }
 
   async refreshModels() {
@@ -267,14 +340,35 @@ class ComposerSession {
     return { ok: true };
   }
 
+  ensureConversation(title) {
+    if (this.conversationId || !this.historyStore) return;
+    const conversation = this.historyStore.create(this.root, title);
+    this.conversationId = conversation.id;
+  }
+
   async submit(text, epoch) {
     if (this.running) return reject("busy", "A run is already in progress.");
     const goal = formatGoal(text, this.attachments);
     if (!goal.trim()) return reject("empty", "Enter a message first.");
     if (!this.selected) return reject("no_model", "No local model is installed.");
+
+    const visibleText = String(text || "").trim() || goal;
+    const priorThread = this.thread.map((item) => ({ ...item }));
+    this.ensureConversation(visibleText);
+
+    let baseThread = priorThread.concat([{ role: "user", text: visibleText }]);
+    if (this.historyStore && this.conversationId) {
+      const saved = this.historyStore.append(this.conversationId, this.root, {
+        role: "user",
+        text: visibleText,
+      });
+      if (saved) baseThread = conversationMessages(saved);
+    }
+    this.thread = baseThread;
+
     const requestId = crypto.randomBytes(8).toString("hex");
     if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
-      const provider = this.createProvider(this.selected);
+    const provider = this.createProvider(this.selected);
     const registry = this.createRegistry(this.mode);
     this.requestId = requestId;
     this.runId = "";
@@ -289,11 +383,16 @@ class ComposerSession {
     this.filesChanged = [];
     this.fileDiffs = [];
     this.tools = [];
-    this.thread = [{ role: "user", text: goal }];
     this.verification = null;
     this.projectDecision = null;
     this.diff = "";
-    this.active = { requestId, runId: "", handle: null };
+    this.active = {
+      requestId,
+      runId: "",
+      handle: null,
+      baseThread: baseThread.map((item) => ({ ...item })),
+    };
+
     const publishing = new PublishingStore(this.store, (run) => this.publish(requestId, run));
     let handle;
     try {
@@ -308,6 +407,7 @@ class ComposerSession {
         mode: this.mode,
         composerMode: this.composerMode,
         taskClass: taskClassFor(this.composerMode) || undefined,
+        conversationHistory: priorThread,
         attachments: this.attachments.map((item) => ({
           kind: item.kind,
           path: item.path,
@@ -321,17 +421,28 @@ class ComposerSession {
       this.failRequest(requestId, error instanceof Error ? error.message : String(error));
       return reject("start_failed", this.error);
     }
+
     this.active.handle = handle;
     this.active.runId = handle.id;
     this.runId = handle.id;
     this.emit();
     handle.done.then((run) => {
       this.publish(requestId, run);
-      this.finishRequest(requestId);
+      this.finishRequest(requestId, run);
     }).catch((error) => {
       this.failRequest(requestId, error instanceof Error ? error.message : String(error));
     });
-      return { ok: true, requestId, runId: handle.id, model: this.selected.id, provider: this.selected.provider, mode: this.mode, composerMode: this.composerMode };
+
+    return {
+      ok: true,
+      requestId,
+      runId: handle.id,
+      conversationId: this.conversationId,
+      model: this.selected.id,
+      provider: this.selected.provider,
+      mode: this.mode,
+      composerMode: this.composerMode,
+    };
   }
 
   cancel() {
@@ -351,7 +462,10 @@ class ComposerSession {
     this.diff = diffText(run);
     this.fileDiffs = diffsByFile(this.diff, this.filesChanged);
     this.tools = compactTools(run);
-    this.thread = threadFrom(run);
+
+    const assistantItems = threadFrom(run).filter((item) => item.role === "assistant");
+    this.thread = (this.active.baseThread || []).concat(assistantItems);
+
     this.verification = run.verification || null;
     this.projectDecision = run.projectDecision ? { ...run.projectDecision } : null;
     this.outcome = run.outcome || null;
@@ -376,8 +490,25 @@ class ComposerSession {
     this.emit();
   }
 
-  finishRequest(requestId) {
+  finishRequest(requestId, run) {
     if (!this.active || this.active.requestId !== requestId) return;
+
+    if (this.historyStore && this.conversationId && run) {
+      let assistantItems = threadFrom(run).filter((item) => item.role === "assistant");
+      if (!assistantItems.length && run.outcome && run.outcome.summary) {
+        assistantItems = [{ role: "assistant", text: String(run.outcome.summary) }];
+      }
+      for (const item of assistantItems) {
+        this.historyStore.append(this.conversationId, this.root, {
+          role: "assistant",
+          text: item.text,
+          runId: run.id,
+        });
+      }
+      const saved = this.historyStore.get(this.conversationId, this.root);
+      if (saved) this.thread = conversationMessages(saved);
+    }
+
     this.running = false;
     this.active = null;
     if (this.stage === "Complete") this.attachments = [];
@@ -392,6 +523,13 @@ class ComposerSession {
     this.active = null;
     this.emit();
   }
+}
+
+function conversationMessages(conversation) {
+  return ((conversation && conversation.messages) || []).map((item) => ({
+    role: item.role === "assistant" ? "assistant" : "user",
+    text: String(item.text || ""),
+  })).filter((item) => item.text.trim());
 }
 
 function threadFrom(run) {
