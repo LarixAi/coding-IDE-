@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { execute, executeReadOnly, TOOLS } = require("../index.js");
+const { execute, executeReadOnly, executeControlled, TOOLS } = require("../index.js");
 
 const host = {
   async readFile() {
@@ -26,8 +26,10 @@ async function main() {
       "workspace.inspect",
       "file.read",
       "file.write",
+      "file.patch",
       "repo.search",
       "terminal.run",
+      "process.start",
       "git.status",
       "git.diff",
       "diagnostics.run",
@@ -82,6 +84,12 @@ async function main() {
     assert.strictEqual(result.error.code, "path_escape");
   });
 
+  await test("rejects command-line flags as workspace paths", async () => {
+    const result = await execute(host, "file.read", { path: "--port" });
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.error.code, "flag_like_path");
+  });
+
   await test("returns structured command failure with the output", async () => {
     const result = await execute(
       {
@@ -112,6 +120,61 @@ async function main() {
     assert.strictEqual(result.ok, false);
     assert.strictEqual(result.error.code, "mutation_blocked");
     assert.strictEqual(called, false);
+  });
+
+  await test("blocks patch and process tools while read-only", async () => {
+    for (const [name, args] of [
+      ["file.patch", { path: "README.md", oldText: "old", newText: "new" }],
+      ["process.start", { command: "npm start" }],
+    ]) {
+      const result = await executeReadOnly({}, name, args);
+      assert.strictEqual(result.ok, false);
+      assert.strictEqual(result.error.code, "mutation_blocked");
+    }
+  });
+
+  await test("dispatches a deterministic patch in controlled mode", async () => {
+    let received = null;
+    const result = await executeControlled(
+      {
+        async patchFile(filePath, oldText, newText) {
+          received = { filePath, oldText, newText };
+          return { path: filePath, replacements: 1 };
+        },
+      },
+      "file.patch",
+      { path: "src/app.js", oldText: "old", newText: "new" },
+    );
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(received, { filePath: "src/app.js", oldText: "old", newText: "new" });
+  });
+
+  await test("process.start only permits approved long-running scripts", async () => {
+    let started = "";
+    const accepted = await executeControlled(
+      {
+        async startProcess(command) {
+          started = command;
+          return { started: true, command };
+        },
+      },
+      "process.start",
+      { command: "npm start" },
+    );
+    assert.strictEqual(accepted.ok, true);
+    assert.strictEqual(started, "npm start");
+
+    const rejected = await executeControlled(
+      {
+        async startProcess() {
+          throw new Error("must not run");
+        },
+      },
+      "process.start",
+      { command: "npm install" },
+    );
+    assert.strictEqual(rejected.ok, false);
+    assert.strictEqual(rejected.error.code, "command_rejected");
   });
 
   await test("returns structured success from the host", async () => {
