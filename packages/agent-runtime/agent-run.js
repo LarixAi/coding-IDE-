@@ -349,8 +349,13 @@ async function executeRun(run, options) {
 
       let result;
       try {
-        const projectViolation = projectPolicyViolation(run, call);
-        if (projectViolation) {
+        const processGuard = call.name === "process.start"
+          ? await guardProcessStart(run, registry)
+          : null;
+        const projectViolation = processGuard ? "" : projectPolicyViolation(run, call);
+        if (processGuard) {
+          result = processGuard;
+        } else if (projectViolation) {
           result = {
             ok: false,
             tool: call.name,
@@ -465,6 +470,18 @@ async function executeRun(run, options) {
         run.messages.push({
           role: "user",
           content: "The CodeMe-owned process failed. Read process.logs before changing files or starting the process again. Diagnose the actual terminal output first.",
+        });
+      }
+
+      if (
+        call.name === "process.start"
+        && result.ok
+        && result.data
+        && result.data.requiresLogs
+      ) {
+        run.messages.push({
+          role: "user",
+          content: "CodeMe suppressed the restart because the previous CodeMe-owned process failed. Read process.logs before changing files or attempting another start.",
         });
       }
 
@@ -778,6 +795,89 @@ function forbiddenStaticPath(value) {
   if (/(^|\/)server\.(js|mjs|cjs|ts)$/.test(file)) return true;
   if (file === "vite.config.js" || file === "vite.config.ts" || file === "next.config.js" || file === "next.config.mjs") return true;
   return file === "node_modules" || file.startsWith("node_modules/");
+}
+
+function latestSuccessfulProcessStatus(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call.name !== "process.status" || !call.result || !call.result.ok) continue;
+    return call.result.data || null;
+  }
+  return null;
+}
+
+async function guardProcessStart(run, registry) {
+  let status = latestSuccessfulProcessStatus(run);
+  if (!status && registry && typeof registry.call === "function") {
+    try {
+      const statusResult = await registry.call("process.status", {});
+      if (statusResult && statusResult.ok) {
+        status = statusResult.data || null;
+        const statusCall = { name: "process.status", args: {} };
+        const record = {
+          id: `call_${crypto.randomBytes(4).toString("hex")}`,
+          iteration: run.iteration,
+          name: statusCall.name,
+          args: {},
+          result: statusResult,
+          directedBy: "runtime",
+        };
+        run.toolCalls.push(record);
+        run.observations.push(observe(statusCall, statusResult));
+        pushObservation(run, statusCall, statusResult);
+      }
+    } catch {
+      status = null;
+    }
+  }
+
+  if (status && status.status === "running") {
+    return {
+      ok: true,
+      tool: "process.start",
+      data: {
+        started: false,
+        suppressed: true,
+        reused: true,
+        status: "running",
+        command: status.command || "",
+        reason: "already_running",
+      },
+    };
+  }
+
+  if (status && status.status === "failed") {
+    return {
+      ok: true,
+      tool: "process.start",
+      data: {
+        started: false,
+        suppressed: true,
+        requiresLogs: true,
+        status: "failed",
+        command: status.command || "",
+        exitCode: status.exitCode,
+        reason: "failed_process_requires_logs",
+      },
+    };
+  }
+
+  if (isBrowserEditTask(run)) {
+    return {
+      ok: true,
+      tool: "process.start",
+      data: {
+        started: false,
+        suppressed: true,
+        reused: false,
+        status: status && status.status ? status.status : "unknown",
+        reason: "browser_check_owns_preview",
+      },
+    };
+  }
+
+  return null;
 }
 
 function projectPolicyViolation(run, call) {
