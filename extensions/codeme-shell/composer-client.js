@@ -64,8 +64,8 @@ function composerStage(run) {
 function stageForTool(name) {
   if (name === "repo.search") return "Searching";
   if (name === "workspace.inspect" || name === "dir.list" || name === "file.read") return "Reading";
-  if (name === "file.write" || name === "dir.create") return "Editing";
-  if (name === "tests.run" || name === "terminal.run") return "Testing";
+  if (name === "file.write" || name === "file.patch" || name === "dir.create") return "Editing";
+  if (name === "tests.run" || name === "terminal.run" || name === "process.start") return "Testing";
   if (name === "capability.invoke" || name === "capability.list") return "Researching";
   if (name === "browser.check") return "Testing";
   if (name === "diagnostics.run" || name === "git.diff" || name === "git.status") return "Verifying";
@@ -109,7 +109,10 @@ function composerActivity(run) {
   }
   if (stage === "Testing") {
     const tool = run && run.inFlight && run.inFlight.name;
-    return tool === "browser.check" ? (target ? `Checking ${target}` : "Checking preview") : "Running tests";
+    if (tool === "browser.check") return target ? `Checking ${target}` : "Checking preview";
+    if (tool === "process.start") return "Starting preview process…";
+    if (tool === "terminal.run") return "Running command…";
+    return "Running tests";
   }
   if (stage === "Researching") return "Researching documentation";
   if (stage === "Fixing") return "Fixing test failure";
@@ -142,6 +145,12 @@ function compactTool(run, call, index, status) {
   if (call.name === "file.write") {
     item.operation = fileWriteOperation(run, call, index);
     item.preview = fileWritePreview(run, call, index);
+  } else if (call.name === "file.patch") {
+    item.operation = "edit";
+    item.preview = linePreview(
+      String(call.args && call.args.oldText || ""),
+      String(call.args && call.args.newText || ""),
+    );
   }
   return item;
 }
