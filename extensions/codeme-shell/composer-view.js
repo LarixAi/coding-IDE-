@@ -565,7 +565,7 @@ function renderComposer(nonce) {
       if (item.name === "repo.search") return "FIND";
       if (item.name === "tests.run") return "TEST";
       if (item.name === "terminal.run") return "TERM";
-      if (item.name === "process.start") return "PROC";
+      if (item.name === "process.start" || item.name === "process.status" || item.name === "process.logs") return "PROC";
       if (item.name === "browser.check") return "WEB";
       if (item.name === "capability.invoke" || item.name === "capability.list") return "HUB";
       if (item.name === "diagnostics.run") return "DIAG";
@@ -589,6 +589,8 @@ function renderComposer(nonce) {
       if (item.name === "tests.run") return live ? "Running tests" : "Ran tests";
       if (item.name === "terminal.run") return live ? "Running command" : "Ran command";
       if (item.name === "process.start") return live ? "Starting preview process" : "Started preview process";
+      if (item.name === "process.status") return live ? "Checking process status" : "Checked process status";
+      if (item.name === "process.logs") return live ? "Reading process logs" : "Read process logs";
       if (item.name === "browser.check") return live ? "Checking preview" : "Checked preview";
       if (item.name === "diagnostics.run") return live ? "Checking diagnostics" : "Checked diagnostics";
       if (item.name === "git.diff") return live ? "Reviewing changes" : "Reviewed changes";
