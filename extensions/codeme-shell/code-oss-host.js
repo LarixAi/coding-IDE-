@@ -6,6 +6,9 @@ const { describeFileRead } = require("./image-meta");
 const { inspectWorkspace } = require("./workspace-inspector");
 
 const preview = createPreviewRunner(vscode);
+const PROCESS_RECORDS = new Map();
+let PROCESS_SEQUENCE = 0;
+const PROCESS_LOG_LIMIT = 50000;
 
 function workspaceFolder() {
   const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
@@ -167,16 +170,136 @@ async function runTerminal(command) {
   }
 }
 
-function startProcess(command) {
-  const cwd = workspaceFolder().uri.fsPath;
-  const terminal = vscode.window.createTerminal({ name: "CodeMe Process", cwd });
-  terminal.show(true);
-  terminal.sendText(command);
+function processWorkspaceKey() {
+  return workspaceFolder().uri.fsPath;
+}
+
+function redactProcessOutput(value) {
+  return String(value || "")
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s]+/gi, "$1[REDACTED]")
+    .replace(/\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)\s*=\s*([^\s]+)/g, "$1=[REDACTED]");
+}
+
+function appendProcessOutput(record, chunk) {
+  const next = redactProcessOutput(chunk);
+  if (!next) return;
+  record.output = (record.output + next).slice(-PROCESS_LOG_LIMIT);
+  record.updatedAt = new Date().toISOString();
+}
+
+function latestProcessRecord() {
+  return PROCESS_RECORDS.get(processWorkspaceKey()) || null;
+}
+
+function processSnapshot(record, includeOutput) {
+  if (!record) {
+    return {
+      found: false,
+      status: "none",
+      command: "",
+      exitCode: null,
+      startedAt: null,
+      endedAt: null,
+      output: includeOutput ? "" : undefined,
+    };
+  }
   return {
-    started: true,
+    found: true,
+    id: record.id,
+    status: record.status,
+    command: record.command,
+    exitCode: record.exitCode,
+    startedAt: record.startedAt,
+    endedAt: record.endedAt,
+    output: includeOutput ? record.output : undefined,
+  };
+}
+
+async function startProcess(command) {
+  const cwd = workspaceFolder().uri.fsPath;
+  const terminal = vscode.window.createTerminal({
+    name: "CodeMe Process",
+    shellPath: "/bin/bash",
+    cwd,
+  });
+  terminal.show(true);
+
+  let shellIntegration;
+  try {
+    shellIntegration = await waitForShellIntegration(terminal);
+  } catch (error) {
+    terminal.dispose();
+    throw error;
+  }
+
+  const execution = await new Promise((resolve) => {
+    setTimeout(() => resolve(shellIntegration.executeCommand(command)), 200);
+  });
+
+  let resolveEnded;
+  const ended = new Promise((resolve) => { resolveEnded = resolve; });
+  const now = new Date().toISOString();
+  const record = {
+    id: `proc_${++PROCESS_SEQUENCE}`,
+    workspace: cwd,
     command,
+    terminal,
+    execution,
+    status: "running",
+    exitCode: null,
+    output: "",
+    startedAt: now,
+    updatedAt: now,
+    endedAt: null,
+    ended,
+  };
+  PROCESS_RECORDS.set(cwd, record);
+
+  const endDisposable = vscode.window.onDidEndTerminalShellExecution((event) => {
+    if (event.execution && event.execution !== execution) return;
+    if (!event.execution && event.shellIntegration !== shellIntegration) return;
+    record.exitCode = typeof event.exitCode === "number" ? event.exitCode : 1;
+    record.status = record.exitCode === 0 ? "exited" : "failed";
+    record.endedAt = new Date().toISOString();
+    record.updatedAt = record.endedAt;
+    endDisposable.dispose();
+    resolveEnded(record);
+  });
+
+  (async () => {
+    try {
+      for await (const chunk of execution.read()) appendProcessOutput(record, chunk);
+    } catch (error) {
+      appendProcessOutput(record, `\n[CodeMe log reader error] ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  })();
+
+  await Promise.race([
+    ended,
+    new Promise((resolve) => setTimeout(resolve, 700)),
+  ]);
+
+  const snapshot = processSnapshot(record, true);
+  if (record.status === "failed") {
+    return {
+      ...snapshot,
+      started: false,
+      terminal: "CodeMe Process",
+    };
+  }
+  return {
+    ...snapshot,
+    started: true,
     terminal: "CodeMe Process",
   };
+}
+
+async function processStatus() {
+  return processSnapshot(latestProcessRecord(), false);
+}
+
+async function processLogs() {
+  return processSnapshot(latestProcessRecord(), true);
 }
 
 async function gitRepository() {
@@ -251,6 +374,8 @@ const host = {
   search,
   runTerminal,
   startProcess,
+  processStatus,
+  processLogs,
   gitStatus,
   gitDiff,
   diagnostics,
