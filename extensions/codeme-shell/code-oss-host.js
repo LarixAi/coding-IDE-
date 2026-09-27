@@ -3,11 +3,13 @@ const cp = require("child_process");
 const { execute, executeReadOnly } = require("../../packages/agent-tools");
 const { createPreviewRunner } = require("./preview-runner");
 const { createBrowserInteractionRunner } = require("./browser-interaction-runner");
+const { createSandboxRunner } = require("./sandbox-runner");
 const { describeFileRead } = require("./image-meta");
 const { inspectWorkspace } = require("./workspace-inspector");
 
 const preview = createPreviewRunner(vscode);
 const browserInteraction = createBrowserInteractionRunner();
+const sandbox = createSandboxRunner();
 const PROCESS_RECORDS = new Map();
 let PROCESS_SEQUENCE = 0;
 const PROCESS_LOG_LIMIT = 50000;
@@ -139,6 +141,10 @@ function waitForShellIntegration(terminal) {
     });
     terminal.show();
   });
+}
+
+async function runSandbox(input) {
+  return sandbox.run(workspaceFolder().uri.fsPath, input || {});
 }
 
 async function runTerminal(command) {
@@ -388,6 +394,7 @@ const host = {
   listDirectory,
   search,
   runTerminal,
+  runSandbox,
   startProcess,
   processStatus,
   processLogs,
