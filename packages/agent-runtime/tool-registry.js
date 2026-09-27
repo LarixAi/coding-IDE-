@@ -29,6 +29,20 @@ const DEFINITIONS = {
     description: "Start the workspace preview if needed and check a local page. Use the site URL from the project, or a workspace HTML path.",
     parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
   },
+  "browser.interact": {
+    description: "Drive a real installed Chromium browser against the local preview. For click tasks, click selector or targetText and verify expectedText on that same element. The tool also fails on browser runtime/console errors. Use this for real interaction verification; source inspection alone is not enough.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        action: { type: "string", enum: ["click"] },
+        selector: { type: "string" },
+        targetText: { type: "string" },
+        expectedText: { type: "string" },
+      },
+      required: ["url", "action"],
+    },
+  },
   "dir.create": {
     description: "Create one workspace-relative folder. Parent folders are created with it. This does not use the shell.",
     parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
@@ -126,6 +140,7 @@ function availableTools(names, host) {
     if (name === "process.start") return Boolean(host && typeof host.startProcess === "function");
     if (name === "process.status") return Boolean(host && typeof host.processStatus === "function");
     if (name === "process.logs") return Boolean(host && typeof host.processLogs === "function");
+    if (name === "browser.interact") return Boolean(host && typeof host.browserInteract === "function");
     return true;
   });
 }
