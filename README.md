@@ -1,6 +1,6 @@
-# CodeMe IDE
+# Code Me IDE
 
-CodeMe IDE is being rebuilt on **Code - OSS** so CodeMe can keep its own product identity, Composer/agent experience and autonomous coding intelligence while relying on a mature IDE foundation for editing, workspaces, terminal, Git, language services and desktop lifecycle.
+Code Me IDE is being rebuilt on **Code - OSS** so CodeMe can keep its own product identity, Composer/agent experience and autonomous coding intelligence while relying on a mature IDE foundation for editing, workspaces, terminal, Git, language services and desktop lifecycle.
 
 > **Core rule:** Keep the CodeMe brain and experience; use Code - OSS as the IDE body.
 

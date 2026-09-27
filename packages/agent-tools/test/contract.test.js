@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { execute, executeReadOnly, TOOLS } = require("../index.js");
+const { execute, executeReadOnly, executeControlled, TOOLS, validateProcess } = require("../index.js");
 
 const host = {
   async readFile() {
@@ -23,8 +23,11 @@ async function test(name, fn) {
 async function main() {
   await test("lists the stable tool names", () => {
     for (const name of [
+      "workspace.inspect",
       "file.read",
+      "file.readRange",
       "file.write",
+      "file.patch",
       "repo.search",
       "terminal.run",
       "git.status",
@@ -34,9 +37,30 @@ async function main() {
       "browser.check",
       "dir.create",
       "dir.list",
+      "process.run",
+      "process.start",
+      "process.status",
+      "process.stop",
     ]) {
       assert.ok(TOOLS.includes(name), name);
     }
+  });
+
+  await test("workspace inspection is allowed in read-only mode", async () => {
+    let called = false;
+    const result = await executeReadOnly(
+      {
+        async inspectWorkspace() {
+          called = true;
+          return { state: "empty", root: "demo" };
+        },
+      },
+      "workspace.inspect",
+      {},
+    );
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(called, true);
+    assert.strictEqual(result.data.state, "empty");
   });
 
   await test("rejects an unknown tool", async () => {
@@ -107,6 +131,20 @@ async function main() {
     );
     assert.strictEqual(result.ok, true);
     assert.strictEqual(result.data.contents, "hello");
+  });
+
+  await test("accepts npm run and rejects shell syntax and path escape", async () => {
+    assert.strictEqual(validateProcess({ executable: "npm", args: ["run", "build"] }), null);
+    assert.strictEqual(validateProcess({ executable: "npm", args: ["test"] }), null);
+    assert.strictEqual(validateProcess({ executable: "npm", args: ["install"] }), null);
+    const piped = await executeControlled(host, "process.run", { executable: "npm", args: ["test", "|", "cat"] });
+    assert.strictEqual(piped.ok, false);
+    assert.strictEqual(piped.error.code, "command_rejected");
+    const escaped = await executeControlled(host, "process.run", { executable: "node", args: ["../outside.js"] });
+    assert.strictEqual(escaped.ok, false);
+    assert.strictEqual(escaped.error.code, "path_escape");
+    const published = validateProcess({ executable: "npm", args: ["publish"] });
+    assert.strictEqual(published.code, "command_rejected");
   });
 }
 

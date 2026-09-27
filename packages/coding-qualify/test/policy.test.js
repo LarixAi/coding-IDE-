@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { executeControlled, validateCommand } = require("../../agent-tools");
+const { executeControlled, validateCommand, validateProcess } = require("../../agent-tools");
 const { ModelProvider, ControlledToolProvider, ToolRegistry, RunStore, startAgentRun } = require("../../agent-runtime");
 const { createWorkspaceHost } = require("../host");
 
@@ -180,16 +180,86 @@ async function main() {
     assert.ok(!readOnly.includes("file.write"));
     assert.ok(!readOnly.includes("dir.create"));
     assert.ok(readOnly.includes("dir.list"));
+    assert.ok(readOnly.includes("file.readRange"));
+    assert.ok(!readOnly.includes("file.patch"));
     assert.ok(controlled.includes("file.write"));
+    assert.ok(controlled.includes("file.patch"));
     assert.ok(controlled.includes("dir.list"));
     assert.ok(controlled.includes("dir.create"));
     assert.ok(controlled.includes("tests.run"));
     assert.ok(controlled.includes("browser.check"));
+    assert.ok(controlled.includes("process.run"));
+    assert.ok(!readOnly.includes("process.run"));
     const hub = new ExternalCapabilityProvider();
     assert.deepStrictEqual(await hub.listCapabilities(), []);
     assert.strictEqual((await hub.invoke("workflow.run")).error.code, "capability_unavailable");
     const source = fs.readFileSync(path.join(__dirname, "../../agent-runtime/capability.js"), "utf8");
     assert.strictEqual(source.includes("n8n"), false);
+  });
+
+  await test("process.run npm test succeeds and a dev server can be stopped", async () => {
+    assert.strictEqual(validateProcess({ executable: "npm", args: ["run", "build"] }), null);
+    const { parent, workspace } = tempWorkspace();
+    fs.writeFileSync(path.join(workspace, "src/greet.js"), "function greet(name) {\n  return `Hello, ${name}`;\n}\n\nmodule.exports = { greet };\n");
+    fs.writeFileSync(path.join(workspace, "hold.js"), "setInterval(() => {}, 1000);\n");
+    const host = createWorkspaceHost(workspace);
+    const tested = await executeControlled(host, "process.run", { executable: "npm", args: ["test"] });
+    assert.strictEqual(tested.ok, true);
+    assert.strictEqual(tested.data.exitCode, 0);
+    const piped = await executeControlled(host, "process.run", { executable: "npm", args: ["test", "|", "cat"] });
+    assert.strictEqual(piped.ok, false);
+    assert.strictEqual(piped.error.code, "command_rejected");
+    const escaped = await executeControlled(host, "process.run", { executable: "node", args: ["../outside.js"] });
+    assert.strictEqual(escaped.ok, false);
+    assert.strictEqual(escaped.error.code, "path_escape");
+    const started = await executeControlled(host, "process.start", { executable: "node", args: ["hold.js"] });
+    assert.strictEqual(started.ok, true);
+    const status = await executeControlled(host, "process.status", { id: started.data.id });
+    assert.strictEqual(status.data.running, true);
+    const stopped = await executeControlled(host, "process.stop", { id: started.data.id });
+    assert.strictEqual(stopped.ok, true);
+    const foreign = await executeControlled(host, "process.stop", { id: "proc_missing" });
+    assert.strictEqual(foreign.ok, false);
+    fs.rmSync(parent, { recursive: true, force: true });
+  });
+
+  await test("a patch changes only the named CSS rules in a large file", async () => {
+    const { parent, workspace } = tempWorkspace();
+    const nav = "nav{background:#111111;}";
+    const button = "button{border-radius:2px;}";
+    const filler = `/* ${"pad ".repeat(40)} */\n`.repeat(400);
+    const css = `${nav}\n${filler}${button}\n`;
+    assert.ok(Buffer.byteLength(css) > 25 * 1024);
+    fs.writeFileSync(path.join(workspace, "site.css"), css);
+    const host = createWorkspaceHost(workspace);
+    const before = fs.readFileSync(path.join(workspace, "site.css"));
+    const range = await executeControlled(host, "file.readRange", { path: "site.css", startLine: 1, endLine: 1 });
+    assert.strictEqual(range.ok, true);
+    assert.strictEqual(range.data.contents, nav);
+    const navPatch = await executeControlled(host, "file.patch", {
+      path: "site.css",
+      expected: nav,
+      replacement: "nav{background:#0a3d2e;}",
+    });
+    assert.strictEqual(navPatch.ok, true);
+    const buttonPatch = await executeControlled(host, "file.patch", {
+      path: "site.css",
+      expected: button,
+      replacement: "button{border-radius:8px;}",
+    });
+    assert.strictEqual(buttonPatch.ok, true);
+    const after = fs.readFileSync(path.join(workspace, "site.css"));
+    const restored = Buffer.from(after.toString("utf8").replace("nav{background:#0a3d2e;}", nav).replace("button{border-radius:8px;}", button));
+    assert.deepStrictEqual(restored, before);
+    const stale = await executeControlled(host, "file.patch", {
+      path: "site.css",
+      expected: nav,
+      replacement: "nav{background:#ffffff;}",
+    });
+    assert.strictEqual(stale.ok, false);
+    assert.strictEqual(stale.error.code, "conflict");
+    assert.deepStrictEqual(fs.readFileSync(path.join(workspace, "site.css")), after);
+    fs.rmSync(parent, { recursive: true, force: true });
   });
 
   if (process.exitCode) process.exit(process.exitCode);

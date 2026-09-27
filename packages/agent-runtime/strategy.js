@@ -33,7 +33,7 @@ const STRATEGIES = {
     id: "layout",
     version: 1,
     taskClass: "layout",
-    guidance: "Inspect the current HTML and CSS once. Apply a better layout with file.write on those workspace files. Then call browser.check. Do not search the same query again.",
+    guidance: "Inspect the current HTML and CSS once. Change the existing rule with file.patch. Call file.write only when the file is missing. Then call browser.check. Do not search the same query again.",
   },
   folder: {
     id: "folder",
@@ -122,4 +122,34 @@ function strategyGuidance(strategy) {
   return (strategy && strategy.guidance) || STRATEGIES.general.guidance;
 }
 
-module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite };
+function isBugFixGoal(goal) {
+  return /\b(fix|repair|bug|failing|broken|does not|regression)\b/i.test(String(goal || ""));
+}
+
+function isSimpleLocalWork(goal) {
+  const text = String(goal || "").toLowerCase();
+  if (/\b(change|update|edit|rename|restyle)\b/.test(text) && /\b(css|button|color|label|heading|text|class|style)\b/.test(text)) return true;
+  if (/\b(read|open|show)\b/.test(text) && /\b(file|readme)\b/.test(text) && !/\b(research|docs|best)\b/.test(text)) return true;
+  if (/\b(run|start|serve)\b/.test(text) && /\b(project|app|site|server|website|it)\b/.test(text) && !/\b(create|build|make|scaffold)\b/.test(text)) return true;
+  if (/\b(create|add|write)\b/.test(text) && /\b(page|file)\b/.test(text) && /\b(already|existing|missing)\b/.test(text)) return true;
+  if (/\b(fix|repair)\b/.test(text) && !/\b(not in the|algorithm|best practice|documentation|research|how does|why does|unfamiliar)\b/.test(text)) return true;
+  return false;
+}
+
+function needsOutsideEvidence(goal, options = {}) {
+  if (options.taskClass === "layout" || options.taskClass === "folder") return false;
+  if (folderNameFromGoal(goal) || isWorkspaceInventory(goal) || isLocalFollowUp(goal) || isSimpleLocalWork(goal)) return false;
+  const text = String(goal || "").toLowerCase();
+  if (/\b(research|investigate|look up|look into)\b/.test(text)) return true;
+  if (/\b(best practices?|current docs|documentation|docs for|up to date|latest version)\b/.test(text)) return true;
+  if (/\b(how|why)\b/.test(text) && /\b(does|is|are|do|did|can|would|fail|error|work|happen)\b/.test(text)) return true;
+  if (/\b(failing api|api error|unknown error|unknown technical|unfamiliar)\b/.test(text)) return true;
+  if (/\bnot in the (repo|repository|codebase|workspace)\b/.test(text)) return true;
+  if (/\balgorithm\b/.test(text) && !/\b(fix|repair|implement|verify|inspect)\b/.test(text)) return true;
+  if (isNewWebsite(goal)) return true;
+  if (!isBuildGoal(goal)) return false;
+  const ands = (text.match(/\band\b/g) || []).length;
+  return ands >= 2 || text.length > 180;
+}
+
+module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite, isBugFixGoal, isSimpleLocalWork, needsOutsideEvidence };

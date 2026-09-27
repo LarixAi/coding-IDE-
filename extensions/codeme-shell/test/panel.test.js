@@ -21,16 +21,21 @@ assert.ok(!html.includes("File edits stay off"));
 assert.ok(!html.includes("workbench.action.chat.open"));
 
 const welcome = renderWelcome({ detail: "A local model is selected." }, "n");
-assert.ok(welcome.includes(">CodeMe<"));
+assert.ok(welcome.includes(">Code Me<"));
 assert.ok(welcome.includes("Open Folder"));
+assert.ok(welcome.includes("Create Project"));
+assert.ok(welcome.includes("README.md and .gitignore"));
+assert.ok(welcome.includes("data-action=\"open\""));
+assert.ok(welcome.includes("data-action=\"create\""));
 assert.ok(welcome.includes("A local model is selected."));
 assert.ok(!welcome.includes("GitHub Copilot"));
 
 const empty = renderEmptyEditor("n");
+assert.ok(empty.includes(">Code Me<"));
 assert.ok(empty.includes("Open File"));
 assert.ok(empty.includes("Search Files"));
-assert.ok(empty.includes("Open Terminal"));
-assert.ok(empty.includes("Ask CodeMe"));
+assert.ok(empty.includes("Open Folder"));
+assert.ok(empty.includes("Create Project"));
 assert.ok(!empty.includes("GitHub Copilot"));
 
 console.log("ok composer hub panel");

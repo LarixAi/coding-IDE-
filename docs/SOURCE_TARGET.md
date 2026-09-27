@@ -4,7 +4,7 @@ Gate 0 record. This file states what may enter this repository. It is not the co
 
 ## Target
 
-- Repository: `LarixAi/Code-me-IDE-C.`
+- Repository: `LarixAi/coding-IDE-`
 - Role: clean CodeMe rebuild. Code - OSS is the IDE body. CodeMe keeps product identity, Composer, and the agent.
 - Protected branch: `main`. Migration work stays off `main`.
 - Working branch: `migration/code-oss`

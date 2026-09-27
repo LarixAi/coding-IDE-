@@ -223,11 +223,17 @@ async function main() {
         return { protocolVersion: 1, status: "ok", data: { evidence: [{ title: "Please proceed", excerpt: "email advice" }] }, error: null };
       },
     };
+    let testRuns = 0;
+    host.runTests = async () => {
+      testRuns += 1;
+      if (testRuns === 1) return { command: "npm test", exitCode: 1, stdout: "", stderr: "missing page" };
+      return { command: "npm test", exitCode: 0, stdout: "ok", stderr: "" };
+    };
     const provider = new ScriptedModelProvider([
+      { text: "Reproducing the missing page.", toolCalls: [{ name: "tests.run", args: { command: "npm test" } }] },
       { text: "The public directory is missing index.html. Let me create it:" },
       { text: "Writing the page.", toolCalls: [{ name: "file.write", args: { path: "public/index.html", contents: "<html><body><h1>Dealership</h1></body></html>\n" } }] },
       { text: "Checking tests.", toolCalls: [{ name: "tests.run", args: { command: "npm test" } }] },
-      { text: "Checking diff.", toolCalls: [{ name: "git.diff", args: {} }] },
       { text: "The missing page is saved." },
     ]);
     const run = await start({
@@ -241,8 +247,8 @@ async function main() {
     assert.deepStrictEqual(hub.invocations, []);
     assert.ok(provider.calls[0].messages.some((message) => String(message.content).includes("package.json")));
     assert.ok(provider.calls[0].tools.some((tool) => tool.name === "file.write"));
-    assert.ok(provider.calls[1].tools.map((tool) => tool.name).includes("file.write"));
-    assert.ok(!provider.calls[1].tools.some((tool) => tool.name === "repo.search"));
+    assert.ok(provider.calls[2].tools.map((tool) => tool.name).includes("file.write"));
+    assert.ok(!provider.calls[2].tools.some((tool) => tool.name === "repo.search"));
     assert.strictEqual(fs.existsSync(path.join(workspace, "public/index.html")), true);
     assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
   });
@@ -250,6 +256,7 @@ async function main() {
   await test("a stalled create-file loop is sent to write instead of stopping", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-stall-write-"));
     fs.mkdirSync(path.join(workspace, "public/css"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "website"), { recursive: true });
     fs.writeFileSync(path.join(workspace, "package.json"), "{}\n");
     fs.writeFileSync(path.join(workspace, "website/index.html"), "<html></html>\n");
     fs.writeFileSync(path.join(workspace, "public/css/style.css"), "body{}\n");
@@ -410,6 +417,79 @@ async function main() {
       store: handle.store,
     });
     assert.strictEqual(again.lifecycle, "cancelled");
+  });
+
+  await test("a layout change finishes from the preview without tests or git", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-layout-evidence-"));
+    fs.mkdirSync(path.join(workspace, "src"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "src/site.css"), "button{border-radius:2px}\n");
+    const host = createWorkspaceHost(workspace);
+    host.browserCheck = async (url) => ({ url, statusCode: 200, title: "Site", available: true });
+    const provider = new ScriptedModelProvider([
+      { text: "Editing the button.", toolCalls: [{ name: "file.patch", args: { path: "src/site.css", expected: "button{border-radius:2px}", replacement: "button{border-radius:8px}" } }] },
+      { text: "Checking the preview.", toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:4173/" } }] },
+      { text: "The button radius is updated." },
+    ]);
+    const run = await start({
+      workspace,
+      provider,
+      mode: "controlled",
+      goal: "change this CSS so the button radius is larger",
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+    }).done;
+    assert.strictEqual(run.taskClass, "layout");
+    assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
+    assert.deepStrictEqual(run.verification.evidence, ["file.write", "browser.check"]);
+    assert.ok(run.toolCalls.every((call) => call.name !== "tests.run" && call.name !== "git.diff"));
+    assert.strictEqual(fs.readFileSync(path.join(workspace, "src/site.css"), "utf8"), "button{border-radius:8px}\n");
+  });
+
+  await test("a bug fix needs a reproduced failure, a change, and a later passing check", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-bugfix-evidence-"));
+    fs.cpSync(FIXTURE, workspace, { recursive: true });
+    let testRuns = 0;
+    const host = createWorkspaceHost(workspace);
+    const testResult = () => {
+      testRuns += 1;
+      if (testRuns === 1) return { exitCode: 1, stdout: "", stderr: "expected Hello" };
+      return { exitCode: 0, stdout: "ok", stderr: "" };
+    };
+    host.runTests = async () => ({ command: "npm test", ...testResult() });
+    host.runProcess = async (spec) => ({ executable: spec.executable, args: spec.args, ...testResult() });
+    const passingOnly = new ScriptedModelProvider([
+      { text: "Writing.", toolCalls: [{ name: "file.write", args: { path: "src/greet.js", contents: "module.exports = { greet(name) { return `Hello, ${name}`; } };\n" } }] },
+      { text: "Checking.", toolCalls: [{ name: "tests.run", args: { command: "npm test" } }] },
+      { text: "done" },
+    ]);
+    const skipped = await start({
+      workspace,
+      provider: passingOnly,
+      mode: "controlled",
+      goal: "Fix the failing greet test.",
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      maxIterations: 4,
+    }).done;
+    assert.strictEqual(skipped.lifecycle, "failed");
+    assert.ok(skipped.verification.summary.includes("reproduced failure"));
+
+    testRuns = 0;
+    fs.writeFileSync(path.join(workspace, "src/greet.js"), "function greet(name) {\n  return \"Hi\";\n}\n\nmodule.exports = { greet };\n");
+    const provider = new ScriptedModelProvider([
+      { text: "Reproducing.", toolCalls: [{ name: "tests.run", args: { command: "npm test" } }] },
+      { text: "Patching.", toolCalls: [{ name: "file.patch", args: { path: "src/greet.js", expected: "return \"Hi\";", replacement: "return `Hello, ${name}`;" } }] },
+      { text: "Rechecking.", toolCalls: [{ name: "process.run", args: { executable: "npm", args: ["test"] } }] },
+      { text: "The greet helper is repaired." },
+    ]);
+    const run = await start({
+      workspace,
+      provider,
+      mode: "controlled",
+      goal: "Fix the failing greet test.",
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+    }).done;
+    assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
+    assert.strictEqual(run.verification.summary, "The failure was reproduced, the file changed, and a later check passed");
+    assert.ok(run.toolCalls.every((call) => call.name !== "git.diff"));
   });
 
   await test("a write without a later test is not complete", async () => {

@@ -22,6 +22,7 @@ function renderComposer(nonce) {
     .bubble { margin: 0 0 10px; max-width: 100%; min-width: 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
     .bubble.user { margin-left: 18%; color: #dfe4ec; font-size: 13px; }
     .bubble.assistant { color: #c7ced8; }
+    .bubble.activity { margin: 0 0 4px; color: #97a3b6; font-size: 12px; }
     .activity { display: none; margin: 0 0 10px; color: #97a3b6; font-size: 12px; }
     .activity.on { display: block; }
     .tools { margin: 0 0 10px; }
@@ -402,13 +403,15 @@ function renderComposer(nonce) {
       empty.hidden = true;
     }
     let sawState = false;
+    let acceptedEpoch = 0;
     window.addEventListener("message", (event) => {
       const message = event.data || {};
       if (message.type === "state") {
         sawState = true;
         applyState(message);
       }
-      if (message.type === "accepted" && current(message) && sameRequest(message.requestId, message.requestId)) {
+      if (message.type === "accepted" && current(message) && (acceptedEpoch !== epoch || sameRequest(requestId, message.requestId))) {
+        acceptedEpoch = epoch;
         requestId = message.requestId;
         prompt.value = "";
         prompt.style.height = "";

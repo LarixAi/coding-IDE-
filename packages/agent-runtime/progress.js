@@ -121,8 +121,9 @@ function applyEditNotice(state) {
   const files = ((state && state.filesRead) || []).filter((file) => /\.(html?|css)$/i.test(String(file || ""))).slice(0, 6);
   return [
     "The pages are already inspected.",
-    `Apply the layout with file.write on ${files.join(" and ") || "the workspace HTML or CSS"}.`,
-    "Put the full new file contents in that tool call.",
+    `Change ${files.join(" and ") || "the workspace HTML or CSS"} with file.patch.`,
+    "Pass the exact current text as expected and only the replacement. Do not send the rest of the file.",
+    "Call file.write only when the file is missing.",
     "Then call browser.check.",
     "A sentence is not an edit. Do not search the same query again.",
   ].join(" ");
@@ -193,7 +194,7 @@ function applyIteration(state, input) {
         if (!searchPaths(call.result).length) rememberKey(state, "search:empty");
         if (query) rememberKey(state, `search:repeat:${query}`);
       }
-    } else if (call.name === "file.read") {
+    } else if (call.name === "file.read" || call.name === "file.readRange") {
       if (call.result && call.result.data && call.result.data.withheld) {
         continue;
       }
@@ -214,9 +215,10 @@ function applyIteration(state, input) {
     } else if (call.name === "dir.list") {
       const listed = String((call.args && call.args.path) || ".");
       if (rememberKey(state, `list:${listed}`)) categories.push("new_relevant_file");
-    } else if (call.name === "file.write") {
+    } else if (call.name === "file.write" || call.name === "file.patch") {
       const file = call.args && call.args.path;
-      const key = `write:${file}:${digest((call.args && call.args.contents) || "")}`;
+      const body = call.name === "file.patch" ? call.args && call.args.replacement : call.args && call.args.contents;
+      const key = `write:${file}:${digest(body || "")}`;
       if (file && rememberKey(state, key)) {
         categories.push("code_modification");
         state.subtask = "edit";
@@ -436,12 +438,12 @@ function compactObservation(call) {
 
 // After stagnation the runtime narrows the offered tools to the ones that can change
 // the outcome. Browsing and workaround tools are withheld until progress resumes.
-const MATERIAL_TOOLS = ["file.write", "file.read", "dir.create", "dir.list", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check"];
+const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "file.readRange", "dir.create", "dir.list", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check"];
 
 function focusTools(state, definitions) {
   if (!state) return definitions;
   if (state.writeNow || (state.inspectSatisfied && isSiteLayoutGoal(state.goal))) {
-    const local = definitions.filter((item) => item.name === "file.write" || item.name === "browser.check");
+    const local = definitions.filter((item) => item.name === "file.write" || item.name === "file.patch" || item.name === "browser.check");
     if (local.length) return local;
   }
   if (state.strategy !== "stagnant" && !state.focus) return definitions;

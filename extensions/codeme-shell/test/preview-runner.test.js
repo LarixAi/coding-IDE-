@@ -65,9 +65,14 @@ async function main() {
   assert.strictEqual(blocked.ok, false);
   assert.strictEqual(blocked.code, "invalid_url");
 
-  const live = await listen((_req, res) => {
+  const live = await listen((req, res) => {
+    if (req.url !== "/" && req.url !== "/index.html") {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("missing");
+      return;
+    }
     res.writeHead(200, { "Content-Type": "text/html" });
-    res.end("<title>Live Preview</title>");
+    res.end("<title>Live Preview</title><h1>Bid now</h1><img src=\"/missing.png\"><script>console.error(\"bid failed\")</script>");
   });
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: `serve src -l ${live.port}` } }));
   const commands = [];
@@ -77,6 +82,12 @@ async function main() {
   assert.strictEqual(page.available, true);
   assert.strictEqual(page.statusCode, 200);
   assert.strictEqual(page.title, "Live Preview");
+  assert.ok(page.text.includes("Bid now"));
+  assert.ok(page.consoleErrors.some((item) => String(item).includes("bid failed")), JSON.stringify(page.consoleErrors));
+  assert.ok(page.failedRequests.some((item) => item.url.includes("missing.png") && item.statusCode === 404), JSON.stringify(page.failedRequests));
+  assert.ok(page.screenshot && page.screenshot.bytes > 8);
+  const png = fs.readFileSync(page.screenshot.path);
+  assert.strictEqual(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
   assert.deepStrictEqual(mock.sent, []);
   assert.ok(commands.some((item) => item.name === "vscode.open"));
   live.server.close();

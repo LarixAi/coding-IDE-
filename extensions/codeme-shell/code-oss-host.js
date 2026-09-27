@@ -1,8 +1,8 @@
 const vscode = require("vscode");
-const cp = require("child_process");
-const { execute, executeReadOnly } = require("../../packages/agent-tools");
+const { execute, executeReadOnly, readRangeFromText, patchText, createProcessRunner } = require("../../packages/agent-tools");
 const { createPreviewRunner } = require("./preview-runner");
 const { describeFileRead } = require("./image-meta");
+const { inspectWorkspace } = require("./workspace-inspector");
 
 const preview = createPreviewRunner(vscode);
 
@@ -50,6 +50,25 @@ async function listDirectory(dirPath) {
   return { path: dirPath, entries };
 }
 
+async function readRange(filePath, startLine, endLine) {
+  const file = await readFile(filePath);
+  if (typeof file.contents !== "string") {
+    throw Object.assign(new Error("file.readRange reads text files"), { code: "not_text" });
+  }
+  return readRangeFromText(filePath, file.contents, startLine, endLine);
+}
+
+async function patchFile(filePath, patch) {
+  const file = await readFile(filePath);
+  if (typeof file.contents !== "string") {
+    throw Object.assign(new Error("file.patch edits text files"), { code: "not_text" });
+  }
+  const next = patchText(file.contents, patch);
+  if (next === file.contents) return { path: filePath, bytes: Buffer.byteLength(next), changed: false };
+  const written = await writeFile(filePath, next);
+  return { ...written, changed: true };
+}
+
 async function writeFile(filePath, contents) {
   const uri = vscode.Uri.joinPath(workspaceFolder().uri, filePath);
   const bytes = Buffer.from(contents, "utf8");
@@ -78,18 +97,17 @@ async function search(query) {
   return { query, matches };
 }
 
-function runProcess(command) {
+const processRunners = new Map();
+
+function workspaceRunner() {
   const cwd = workspaceFolder().uri.fsPath;
-  return new Promise((resolve) => {
-    cp.exec(command, { cwd, timeout: 30000, maxBuffer: 1024 * 1024, encoding: "utf8" }, (error, stdout, stderr) => {
-      const exitCode = error && typeof error.code === "number" ? error.code : error ? 1 : 0;
-      resolve({
-        exitCode,
-        stdout: String(stdout || ""),
-        stderr: String(stderr || ""),
-      });
-    });
-  });
+  if (!processRunners.has(cwd)) processRunners.set(cwd, createProcessRunner(cwd));
+  return processRunners.get(cwd);
+}
+
+function runProcess(command) {
+  const parts = String(command || "").trim().split(/\s+/);
+  return workspaceRunner().run({ executable: parts[0], args: parts.slice(1), timeoutMs: 30000 });
 }
 
 function waitForShellIntegration(terminal) {
@@ -203,8 +221,11 @@ async function browserCheck(url) {
 }
 
 const host = {
+  inspectWorkspace: () => inspectWorkspace(vscode),
   readFile,
+  readRange,
   writeFile,
+  patchFile,
   createDirectory,
   listDirectory,
   search,
@@ -213,6 +234,10 @@ const host = {
   gitDiff,
   diagnostics,
   runTests: runProcess,
+  runProcess: (spec) => workspaceRunner().run(spec),
+  startProcess: (spec) => workspaceRunner().start(spec),
+  processStatus: (id) => workspaceRunner().status(id),
+  stopProcess: (id) => workspaceRunner().stop(id),
   browserCheck,
 };
 

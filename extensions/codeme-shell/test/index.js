@@ -32,6 +32,16 @@ async function run() {
   const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
   assert.ok(folder, "a workspace folder must be open");
 
+  await test("workspace.inspect reports the active workspace without changing it", async () => {
+    const result = await runTool("workspace.inspect", {});
+    assert.strictEqual(result.ok, true, JSON.stringify(result));
+    assert.ok(["empty", "project", "folder"].includes(result.data.state), result.data.state);
+    assert.strictEqual(result.data.root, folder.name);
+    assert.ok(Array.isArray(result.data.projectMarkers));
+    assert.ok(Array.isArray(result.data.languages));
+    assert.ok(Array.isArray(result.data.frameworks));
+  });
+
   await test("file.write and file.read round-trip", async () => {
     const written = await runTool("file.write", { path: "README.md", contents: "base\ncodeme-needle\n" });
     assert.strictEqual(written.ok, true);

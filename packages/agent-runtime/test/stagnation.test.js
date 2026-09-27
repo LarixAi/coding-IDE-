@@ -263,6 +263,72 @@ async function main() {
     assert.strictEqual(cancelled.toolCalls.length, 0);
   });
 
+  await test("a scripted bug-fix of 15 tool turns completes under the task budget", async () => {
+    const reads = Array.from({ length: 15 }, (_, index) => step(`Looking at part ${index}.`, {
+      name: "file.read",
+      args: { path: `src/part-${index}.js` },
+    }));
+    const provider = new ScriptedModelProvider(reads.concat([
+      step("Writing the repair.", { name: "file.write", args: { path: "src/greet.js", contents: "module.exports = { greet() { return 'Hi'; } };\n" } }),
+      step("The greeting is repaired."),
+    ]));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-budget-"));
+    const run = await startAgentRun({
+      goal: "Repair the greeting. The test is failing.",
+      model: "scripted",
+      providerName: "scripted",
+      mode: "controlled",
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider({
+        async readFile(filePath) { return { path: filePath, contents: `module.exports = ${JSON.stringify(filePath)};\n` }; },
+        async writeFile(filePath, contents) { return { path: filePath, bytes: Buffer.byteLength(contents) }; },
+        async listDirectory() { return { path: ".", entries: [{ path: "src/greet.js", type: "file" }] }; },
+        async search(query) { return { query, matches: [] }; },
+        async runTerminal() { return { exitCode: 0, stdout: "", stderr: "" }; },
+        async runTests() { return { exitCode: 0, stdout: "ok", stderr: "" }; },
+        async diagnostics() { return { items: [] }; },
+        async gitStatus() { return { porcelain: "", exitCode: 0 }; },
+        async gitDiff() { return { diff: "", exitCode: 0 }; },
+        async browserCheck(url) { return { url, available: true, statusCode: 200, title: "ok" }; },
+        async createDirectory(dirPath) { return { path: dirPath }; },
+      })),
+      store: new RunStore(path.join(directory, "runs")),
+      verify: (_run, text) => (
+        String(text).includes("repaired")
+          ? { status: "passed", summary: "the repair is recorded", evidence: ["file.write"] }
+          : { status: "failed", summary: "still failing", evidence: [] }
+      ),
+    }).done;
+    assert.strictEqual(run.taskClass, "bug-fix");
+    assert.strictEqual(run.maxIterations, 20);
+    assert.strictEqual(run.lifecycle, "completed");
+    assert.strictEqual(run.toolCalls.filter((call) => call.name === "file.read").length, 15);
+    assert.ok(run.iteration < run.maxIterations);
+  });
+
+  await test("a repeated identical search stops for stagnation before the ceiling", async () => {
+    const provider = new ScriptedModelProvider(Array.from({ length: 30 }, () => step(FIX_TEXT, {
+      name: "repo.search",
+      args: { query: "validNumber" },
+    })));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-budget-"));
+    const run = await startAgentRun({
+      goal: "Repair the identification-number check. The doubling rule is not in the repository.",
+      model: "scripted",
+      providerName: "scripted",
+      mode: "controlled",
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(createWorkspaceHost(FIXTURE))),
+      store: new RunStore(path.join(directory, "runs")),
+      verify: () => ({ status: "failed", summary: "the check is still wrong", evidence: [] }),
+    }).done;
+    assert.strictEqual(run.taskClass, "bug-fix");
+    assert.strictEqual(run.maxIterations, 20);
+    assert.strictEqual(run.lifecycle, "failed");
+    assert.strictEqual(run.error.code, "stagnation");
+    assert.ok(run.iteration < run.maxIterations);
+  });
+
   if (process.exitCode) process.exit(process.exitCode);
 }
 

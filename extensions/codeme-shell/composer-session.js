@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { startAgentRun } = require("../../packages/agent-runtime");
-const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
+const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, threadFrom } = require("./composer-client");
 
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -388,16 +388,6 @@ class ComposerSession {
     this.active = null;
     this.emit();
   }
-}
-
-function threadFrom(run) {
-  const items = [];
-  if (run && run.goal) items.push({ role: "user", text: run.goal });
-  for (const decision of (run && run.decisions) || []) {
-    const text = decision && decision.text ? String(decision.text).trim() : "";
-    if (text && !isProgressTalk(text)) items.push({ role: "assistant", text });
-  }
-  return items;
 }
 
 function diffText(run) {

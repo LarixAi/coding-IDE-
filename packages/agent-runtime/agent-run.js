@@ -2,12 +2,28 @@ const crypto = require("crypto");
 const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
 const { createProgressState, recommendCapability, selectCapability, isSiteLayoutGoal, htmlCssRead, capabilityGuidance, writeFindingsNotice, applyEditNotice, alreadySearched, applyIteration, noteResearch, researchQuestion, postResearchBrief, openingResearchBrief, markQuestionSeen, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
 const { lockModel } = require("./model-lock");
-const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isLocalFollowUp } = require("./strategy");
+const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isBugFixGoal, needsOutsideEvidence } = require("./strategy");
 const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
+const { buildModelContext } = require("./context-manager");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 const STOPPED = new Set(["completed", "cancelled", "failed", "awaiting_user"]);
+const ITERATION_BUDGETS = {
+  inspect: 12,
+  plan: 12,
+  folder: 12,
+  layout: 18,
+  "bug-fix": 20,
+  general: 20,
+  build: 24,
+  feature: 30,
+};
+
+function iterationBudget(options, taskClass) {
+  if (options && options.composerMode === "ask") return ITERATION_BUDGETS.inspect;
+  return ITERATION_BUDGETS[taskClass] || ITERATION_BUDGETS.general;
+}
 
 function createRun(options) {
   const lock = options.modelLock || lockModel(options);
@@ -45,7 +61,7 @@ function createRun(options) {
     verificationHistory: [],
     outcome: null,
     iteration: 0,
-    maxIterations: options.maxIterations ?? 8,
+    maxIterations: options.maxIterations ?? iterationBudget(options, strategy.taskClass),
     maxRetries: options.maxRetries ?? 2,
     maxIdenticalActions: options.maxIdenticalActions ?? 4,
     actionCounts: {},
@@ -173,7 +189,18 @@ async function executeRun(run, options) {
   const folder = await createRequestedFolder(run, registry, store);
   if (folder) return folder;
   if (!cancelled(run, signal)) await prepareResearch(run, capabilityRegistry, options, signal, store);
-  if (!cancelled(run, signal)) await showWorkspace(run, registry, store);
+  if (!cancelled(run, signal)) {
+    const workspace = await showWorkspace(run, registry, store);
+    if (workspace && workspace.ok === false) {
+      const error = workspace.error || {};
+      return finishFailed(
+        run,
+        store,
+        error.code || "workspace_inspection_failed",
+        error.message || "CodeMe could not inspect the active workspace",
+      );
+    }
+  }
 
   while (!STOPPED.has(run.lifecycle)) {
     if (cancelled(run, signal)) return finishCancelled(run, store);
@@ -191,7 +218,7 @@ async function executeRun(run, options) {
     try {
       decision = await provider.complete({
         model: run.effectiveModel,
-        messages: run.messages.map((message) => ({ ...message })),
+        messages: buildModelContext(run),
         tools: focusTools(run.progress, registry.definitions().concat(capabilityTools)),
         signal,
         timeoutMs: run.timeoutMs,
@@ -335,6 +362,15 @@ async function executeRun(run, options) {
         result,
       };
       run.toolCalls.push(record);
+      if (!Array.isArray(run.events)) run.events = [];
+      run.events.push({
+        type: "tool_completed",
+        tool: call.name,
+        target: toolTarget(call.args),
+        ok: Boolean(result && result.ok),
+        iteration: run.iteration,
+        runId: run.id,
+      });
       const observation = observe(call, result);
       const diagnosis = diagnose(call, result);
       if (diagnosis) {
@@ -420,6 +456,63 @@ function runIsInspect(options) {
 
 function runIsBuild(options) {
   return options.taskClass === "build" || (options.strategyRecord && options.strategyRecord.taskClass === "build");
+}
+
+function runIsBugFix(options) {
+  return isBugFixGoal(options.goal);
+}
+
+function editCalls(run) {
+  return (run.toolCalls || []).filter((call) => (
+    (call.name === "file.write" || call.name === "file.patch") && call.result && call.result.ok
+  ));
+}
+
+function isPassingCheck(call) {
+  return isCheck(call) && call.result && call.result.ok === true;
+}
+
+function isFailingCheck(call) {
+  return isCheck(call) && call.result && call.result.ok === false;
+}
+
+function isCheck(call) {
+  if (!call || !call.name) return false;
+  if (call.name === "tests.run") return true;
+  if (call.name === "terminal.run") return String(call.args && call.args.command || "").includes("test");
+  if (call.name === "process.run") {
+    const args = call.args && call.args.args;
+    return call.args.executable === "npm" && Array.isArray(args) && args[0] === "test";
+  }
+  return false;
+}
+
+function verifyBugFix(run, edits) {
+  const changes = edits || editCalls(run);
+  if (!changes.length) {
+    return {
+      status: "failed",
+      summary: "Reproduce the failure, then call file.write. A sentence does not change the workspace.",
+      evidence: [],
+    };
+  }
+  const calls = run.toolCalls || [];
+  const lastEdit = changes[changes.length - 1];
+  const editAt = calls.lastIndexOf(lastEdit);
+  const reproduced = calls.slice(0, editAt).some(isFailingCheck);
+  const passed = calls.slice(editAt + 1).some(isPassingCheck);
+  if (reproduced && passed) {
+    return {
+      status: "passed",
+      summary: "The failure was reproduced, the file changed, and a later check passed",
+      evidence: ["tests.run", "file.write"],
+    };
+  }
+  return {
+    status: "failed",
+    summary: "A write is not complete until a reproduced failure and a later passing test are recorded",
+    evidence: ["file.write"],
+  };
 }
 
 function writtenPaths(run) {
@@ -522,14 +615,16 @@ function systemPrompt(options) {
       "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
       "To run or inspect the local site, call browser.check.",
       isLayoutJob(options)
-        ? "This is a layout job. After the HTML and CSS are read, call file.write with the full new contents, then browser.check. Do not wait for tests or git."
+        ? "This is a layout job. After the HTML and CSS are read, call file.patch with the exact current text and only the replacement. Call file.write only when the file is missing. Then browser.check. Do not wait for tests or git. Do not resend the whole file."
         : runIsFolder(options)
           ? "This job only creates the named folder with dir.create. Do not use the terminal."
           : runIsInspect(options)
             ? "This job lists the workspace. Call dir.list with path \".\" and answer from that list. Do not edit files."
             : runIsBuild(options)
               ? "This job creates or repairs the project files. Call dir.list first. When a file is missing, call file.write in that same turn. A sentence does not create the file. For a new website, write package.json, server.js, and index.html, then call browser.check with http://127.0.0.1:4173/. If a start script already exists, keep it and write only the missing files, then call browser.check on that local URL."
-              : "Finish only after a passing test and a git diff that shows the final edit.",
+              : runIsBugFix(options)
+                ? "This is a bug fix. Reproduce the failure with a failing check, edit the file, then run the check again. Finish only when that later check passes. Do not wait for a git diff."
+                : "Finish only after a passing test and a git diff that shows the final edit.",
       "A claim of success is not evidence.",
       strategyGuidance(options.strategyRecord),
       hub,
@@ -557,7 +652,7 @@ function defaultVerify(run, text) {
   if (!run.observations.length) {
     return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
   }
-  const writes = (run.toolCalls || []).filter((call) => call.name === "file.write" && call.result && call.result.ok);
+  const writes = editCalls(run);
   if (run.taskClass === "inspect" && run.mode === "controlled") {
     const listed = (run.toolCalls || []).some((call) => call.name === "dir.list" && call.result && call.result.ok);
     if (listed && String(text).trim()) {
@@ -613,6 +708,7 @@ function defaultVerify(run, text) {
       evidence: run.observations.map((item) => item.tool),
     };
   }
+  if (run.mode === "controlled" && isBugFixGoal(run.goal)) return verifyBugFix(run, writes);
   if (run.mode === "controlled" && writes.length) {
     const lastWrite = writes[writes.length - 1];
     const after = (run.toolCalls || []).filter((call) => call.iteration > lastWrite.iteration);
@@ -671,9 +767,10 @@ function finishCompleted(run, store, text) {
   for (const step of run.plan) step.status = "completed";
   touch(run, "completed");
   run.inFlight = null;
+  run.finalResponse = String(text || "").trim() || (run.verification && run.verification.summary) || "Complete";
   run.outcome = {
     status: "completed",
-    summary: String(text || "").trim() || (run.verification && run.verification.summary) || "Complete",
+    summary: run.finalResponse,
   };
   store.save(run);
   return run;
@@ -691,7 +788,7 @@ function maybeFinishLayout(run, store, text) {
   if (verification.status !== "passed") return null;
   run.verification = verification;
   run.verificationHistory.push({ ...verification, at: new Date().toISOString() });
-  return finishCompleted(run, store, text || verification.summary);
+  return finishCompleted(run, store, verification.summary);
 }
 
 function finishCancelled(run, store) {
@@ -708,6 +805,7 @@ function finishFailed(run, store, code, message) {
   touch(run, "failed");
   run.inFlight = null;
   run.error = { code, message };
+  run.finalResponse = message;
   run.outcome = { status: "failed", reason: code, summary: message };
   store.save(run);
   return run;
@@ -732,6 +830,11 @@ function setPlan(run, id, status) {
   if (step && step.status !== "completed") step.status = status;
 }
 
+function toolTarget(args) {
+  if (!args || typeof args !== "object") return "";
+  return String(args.path || args.query || args.url || args.command || "");
+}
+
 function touch(run, lifecycle, detail) {
   run.transitions.push({ from: run.lifecycle, to: lifecycle, detail: detail || null, at: new Date().toISOString() });
   run.lifecycle = lifecycle;
@@ -739,7 +842,7 @@ function touch(run, lifecycle, detail) {
 }
 
 function recordChange(run, call, result) {
-  if (result.ok && call.name === "file.write" && call.args && call.args.path) {
+  if (result.ok && (call.name === "file.write" || call.name === "file.patch") && call.args && call.args.path) {
     if (run.progress) run.progress.writeNow = false;
     addChanged(run, call.args.path);
     setPlan(run, "edit", "in_progress");
@@ -882,23 +985,73 @@ async function maybeDirectSelected(run, selected, registry, options, signal, sto
 }
 
 async function showWorkspace(run, registry, store) {
-  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return;
-  if (run.taskClass === "folder") return;
-  if (!registry.definitions().some((tool) => tool.name === "dir.list")) return;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return null;
+  if (run.taskClass === "folder") return null;
+
+  const definitions = registry.definitions();
+  if (definitions.some((tool) => tool.name === "workspace.inspect")) {
+    let inspected;
+    try {
+      inspected = await registry.call("workspace.inspect", {});
+    } catch (error) {
+      inspected = {
+        ok: false,
+        tool: "workspace.inspect",
+        error: {
+          code: "workspace_inspection_failed",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+
+    if (!inspected || !inspected.ok) return inspected || {
+      ok: false,
+      tool: "workspace.inspect",
+      error: { code: "workspace_inspection_failed", message: "Workspace inspection returned no result" },
+    };
+
+    const data = inspected.data && typeof inspected.data === "object" ? inspected.data : {};
+    run.workspace = data;
+    if (!Array.isArray(run.events)) run.events = [];
+    run.events.push({
+      type: "workspace",
+      state: data.state || "unknown",
+      root: data.root || "",
+      entries: typeof data.entries === "number" ? data.entries : null,
+      at: new Date().toISOString(),
+    });
+    const starters = (Array.isArray(data.files) ? data.files : []).filter((name) => name === "README.md" || name === ".gitignore");
+    const starterNote = starters.length
+      ? ` Starter files present: ${starters.join(", ")}.`
+      : "";
+    run.messages.push({
+      role: "user",
+      content: `CodeMe inspected the active workspace before this run. Treat this as trusted local context: ${JSON.stringify(data)}.${starterNote} Do not invent a different project root.`,
+    });
+    store.save(run);
+
+    if (data.state === "empty") return inspected;
+  }
+
+  if (!definitions.some((tool) => tool.name === "dir.list")) return null;
   let result;
   try {
     result = await registry.call("dir.list", { path: "." });
   } catch {
-    return;
+    return null;
   }
-  if (!result || !result.ok) return;
+  if (!result || !result.ok) return null;
   const entries = result.data && Array.isArray(result.data.entries) ? result.data.entries : [];
   const files = entries.slice(0, 80).map((entry) => entry.path).filter(Boolean);
+  const names = files.map((file) => String(file).replace(/\\/g, "/").split("/").pop());
+  const starters = ["README.md", ".gitignore"].filter((name) => names.includes(name));
+  const starterNote = starters.length ? ` Starter files present: ${starters.join(", ")}.` : "";
   run.messages.push({
     role: "user",
-    content: `Workspace files: ${files.join(", ") || "none"}. This is the open folder. Use these paths. Do not invent a different project.`,
+    content: `Workspace files: ${files.join(", ") || "none"}. This is the open folder. Use these paths. Do not invent a different project.${starterNote}`,
   });
   store.save(run);
+  return result;
 }
 
 function promisesFile(text) {
@@ -906,7 +1059,7 @@ function promisesFile(text) {
 }
 
 async function prepareResearch(run, capabilityRegistry, options, signal, store) {
-  if (run.taskClass === "layout" || run.taskClass === "folder" || isSiteLayoutGoal(run.goal) || isWorkspaceInventory(run.goal) || isLocalFollowUp(run.goal)) return;
+  if (!needsOutsideEvidence(run.goal, { taskClass: run.taskClass, composerMode: options.composerMode || run.composerMode })) return;
   if (run.progress && run.progress.runtimeDirectedEscalation) return;
   const listed = capabilityRegistry && typeof capabilityRegistry.list === "function" ? capabilityRegistry.list() : [];
   const research = recommendCapability(listed);
@@ -935,7 +1088,17 @@ async function directResearch(run, registry, options, signal, store, opening) {
   const input = {};
   for (const field of progress.recommendedFields) input[field] = question;
   if (!Object.keys(input).length) input.question = question;
-  const call = { name: "capability.invoke", args: { capability: name, input } };
+  const call = {
+    name: "capability.invoke",
+    args: {
+      capability: name,
+      input,
+      context: {
+        taskClass: run.taskClass || "",
+        plan: (run.plan || []).slice(0, 6).map((step) => `${step.id}: ${step.title}`).join("; "),
+      },
+    },
+  };
   if (!Array.isArray(run.events)) run.events = [];
   run.events.push({ type: "strategy", from: "research_needed", to: "researching", iteration: run.iteration, runId: run.id });
   run.strategy = "researching";

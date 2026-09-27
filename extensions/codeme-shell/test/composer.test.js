@@ -3,7 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider, ControlledToolProvider } = require("../../../packages/agent-runtime");
-const { composerKeyAction, composerStage, composerActivity, diffsByFile, formatGoal, droppedPaths, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
+const { composerKeyAction, composerStage, composerActivity, diffsByFile, formatGoal, droppedPaths, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk, threadFrom, sameRequest } = require("../composer-client");
 const { describeFileRead } = require("../image-meta");
 const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels } = require("../composer-session");
 const { OllamaModelProvider } = require("../../../packages/agent-runtime/model-provider");
@@ -421,6 +421,22 @@ async function main() {
   assert.ok(layoutRun.toolCalls.some((call) => call.name === "browser.check"));
   assert.ok(layoutRun.toolCalls.every((call) => call.name !== "capability.invoke"));
   assert.ok(!coded.session.thread.some((item) => /let me search/i.test(item.text)));
+  assert.ok(coded.session.thread.some((item) => item.role === "activity" && item.text === "Reading src/index.html"));
+  assert.deepStrictEqual(
+    coded.session.thread.filter((item) => item.role === "assistant").map((item) => item.text),
+    ["The layout change is visible in the preview"],
+  );
+  const shown = threadFrom({
+    goal: "read the file",
+    lifecycle: "completed",
+    finalResponse: "The file is a readme.",
+    decisions: [{ text: "I'll read the file", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] }],
+    toolCalls: [{ name: "file.read", args: { path: "README.md" }, result: { ok: true } }],
+  });
+  assert.ok(shown.some((item) => item.role === "activity" && item.text === "Reading README.md"));
+  assert.deepStrictEqual(shown.filter((item) => item.role === "assistant").map((item) => item.text), ["The file is a readme."]);
+  assert.strictEqual(sameRequest("req-a", "req-b"), false);
+  assert.strictEqual(sameRequest("req-a", "req-a"), true);
   assert.strictEqual(layoutRun.lifecycle, "completed");
   assert.strictEqual(coded.session.stage, "Complete");
   assert.ok(!coded.session.error);

@@ -3,6 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, startAgentRun, ToolRegistry, ReadOnlyToolProvider, ControlledToolProvider, selectCapability, isSiteLayoutGoal } = require("../index.js");
+const { needsOutsideEvidence } = require("../strategy");
 
 const LIVE = [
   { name: "hub.health", category: "hub", risk: "read", permissions: ["evidence"], description: "Echo a short token and report hub health" },
@@ -125,8 +126,81 @@ async function main() {
     const coding = selectCapability("Repair the identification-number check. The doubling rule is not in the repository.", LIVE);
     assert.strictEqual(coding, null);
 
+    assert.strictEqual(needsOutsideEvidence("change this CSS so the header is tighter"), false);
+    assert.strictEqual(needsOutsideEvidence("rename the submit button"), false);
+    assert.strictEqual(needsOutsideEvidence("read the readme file"), false);
+    assert.strictEqual(needsOutsideEvidence("run the project"), false);
+    assert.strictEqual(needsOutsideEvidence("create a page from the files already in the folder"), false);
+    assert.strictEqual(needsOutsideEvidence("Repair the greeting. The test is failing."), false);
+    assert.strictEqual(needsOutsideEvidence("what are the current best practices for storing passwords"), true);
+    assert.strictEqual(needsOutsideEvidence("research the website"), true);
+    assert.strictEqual(needsOutsideEvidence("Repair the identification-number check. The doubling rule is not in the repository."), true);
     assert.strictEqual(isSiteLayoutGoal("can you find me a better layout for my website"), true);
     assert.strictEqual(selectCapability("can you find me a better layout for my website", LIVE, { composerMode: "code" }), null);
+  });
+
+  await test("a local edit skips the hub and a stalled repair can ask for evidence later", async () => {
+    const skipped = { invocations: [] };
+    const rename = new ScriptedModelProvider([
+      { text: "Reading the page.", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+      { text: "The submit button is named Send." },
+    ]);
+    const local = await start({
+      goal: "rename the submit button",
+      provider: rename,
+      capabilities: liveHub(skipped),
+      mode: "read_only",
+      composerMode: "ask",
+    }).done;
+    assert.strictEqual(local.lifecycle, "completed");
+    assert.deepStrictEqual(skipped.invocations, []);
+    assert.ok(!rename.calls[0].messages.some((message) => String(message.content).includes("The hub read this prompt before coding")));
+
+    const stalled = { invocations: [], requests: [] };
+    const hub = liveHub(stalled);
+    const originalInvoke = hub.invoke.bind(hub);
+    hub.invoke = async (request) => {
+      stalled.requests.push(request);
+      return originalInvoke(request);
+    };
+    const search = { name: "repo.search", args: { query: "greeting" } };
+    const provider = new ScriptedModelProvider(Array.from({ length: 8 }, () => ({ text: "Looking again.", toolCalls: [search] })));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-preflight-"));
+    const goal = "Repair the greeting. The test is failing.";
+    const run = await startAgentRun({
+      goal,
+      model: "scripted",
+      providerName: "scripted",
+      mode: "controlled",
+      composerMode: "code",
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider({
+        async readFile(filePath) { return { path: filePath, contents: "module.exports = {};\n" }; },
+        async writeFile(filePath, contents) { return { path: filePath, bytes: Buffer.byteLength(contents) }; },
+        async listDirectory() { return { path: ".", entries: [] }; },
+        async search(query) { return { query, matches: [{ path: "src/greet.js", line: 1, text: "function greet" }] }; },
+        async runTerminal() { return { exitCode: 0, stdout: "", stderr: "" }; },
+        async runTests() { return { exitCode: 1, stdout: "", stderr: "fail" }; },
+        async diagnostics() { return { items: [] }; },
+        async gitStatus() { return { porcelain: "", exitCode: 0 }; },
+        async gitDiff() { return { diff: "", exitCode: 0 }; },
+        async browserCheck(url) { return { url, available: true, statusCode: 200 }; },
+        async createDirectory(dirPath) { return { path: dirPath }; },
+      })),
+      store: new RunStore(path.join(directory, "runs")),
+      capabilities: hub,
+      maxIdenticalActions: 20,
+      verify: () => ({ status: "failed", summary: "the greeting is still wrong", evidence: [] }),
+    }).done;
+    assert.strictEqual(run.goal, goal);
+    assert.deepStrictEqual(stalled.invocations, ["research.problem"]);
+    assert.ok(run.toolCalls.some((call) => call.directedBy === "runtime" && call.iteration > 0));
+    assert.ok(!provider.calls[0].messages.some((message) => String(message.content).includes("The hub read this prompt before coding")));
+    assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).startsWith("Goal: ") && String(message.content).includes(goal))));
+    const request = stalled.requests[0];
+    assert.ok(String(request.input.problem).includes(goal));
+    assert.strictEqual(request.context.taskClass, "bug-fix");
+    assert.ok(!/files|repository|workspace|filesystem|contents|command|shell/.test(Object.keys(request.context).join(" ")));
   });
 
   await test("a research-style goal with a live hub list is invoked once when the model does not call it", async () => {
@@ -300,9 +374,9 @@ async function main() {
     assert.strictEqual(run.progress.selectedName, null);
     assert.deepStrictEqual(state.invocations, []);
     assert.ok(run.toolCalls.every((call) => call.name !== "capability.invoke"));
-    assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("Apply the layout with file.write"))));
+    assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("Change") && String(message.content).includes("file.patch"))));
     const writeTools = (provider.calls[2] && provider.calls[2].tools || []).map((item) => item.name).sort();
-    assert.deepStrictEqual(writeTools, ["browser.check", "file.write"]);
+    assert.deepStrictEqual(writeTools, ["browser.check", "file.patch", "file.write"]);
     assert.ok(run.toolCalls.some((call) => call.name === "file.write" && call.args.path === "src/index.html"));
     assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.result && call.result.ok));
     assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
@@ -349,7 +423,7 @@ async function main() {
       capabilities: liveHub(state),
       maxIterations: 8,
     }).done;
-    assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("Apply the layout with file.write"))));
+    assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("file.patch"))));
     assert.ok(run.toolCalls.some((call) => call.name === "file.write"));
     assert.ok(run.toolCalls.some((call) => call.name === "browser.check"));
     assert.strictEqual(run.verification.summary, "The layout change is visible in the preview");

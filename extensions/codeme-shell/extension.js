@@ -6,7 +6,7 @@ const path = require("path");
 const { renderComposer } = require("./composer-view");
 const { renderWelcome } = require("./welcome");
 const { renderEmptyEditor } = require("./empty-editor");
-const { createProject } = require("./project-manager");
+const { handleWelcomeAction } = require("./welcome-actions");
 const { host } = require("./code-oss-host");
 const { ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
 const { RunStore } = require("../../packages/agent-runtime/run-store");
@@ -41,10 +41,12 @@ function activate(context) {
   context.subscriptions.push(welcome, emptyEditor);
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => arrangeShell(welcome, emptyEditor)),
-    vscode.window.tabGroups.onDidChangeTabs(() => emptyEditor.sync()),
+    vscode.window.tabGroups.onDidChangeTabs(() => arrangeShell(welcome, emptyEditor)),
   );
   applyPreferredSettings();
   arrangeShell(welcome, emptyEditor);
+  setTimeout(() => arrangeShell(welcome, emptyEditor), 200);
+  setTimeout(() => arrangeShell(welcome, emptyEditor), 800);
 
   const connection = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   connection.name = "CodeMe model connection";
@@ -66,7 +68,7 @@ function activate(context) {
     applyConnection(connection, state);
     applyHub(hubItem, state);
     composer.sync();
-    welcome.render();
+    welcome.sync();
     console.log(`CodeMe connection: ${state.grade}`);
   });
   probeHub().then((hub) => {
@@ -81,6 +83,8 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("codeme.ask", () => vscode.commands.executeCommand("codeme.agent.focus")),
     vscode.commands.registerCommand("codeme.attach", () => composer.pickFiles()),
+    vscode.commands.registerCommand("codeme.openFolder", () => welcome.run("open")),
+    vscode.commands.registerCommand("codeme.createProject", () => welcome.run("create")),
   );
 }
 
@@ -143,9 +147,13 @@ async function arrangeShell(welcome, emptyEditor) {
 async function closeStockWelcome() {
   for (const group of vscode.window.tabGroups.all) {
     const stock = group.tabs.filter((tab) => {
-      if (tab.label !== "Welcome" && tab.label !== "Get Started") return false;
-      const viewType = tab.input && tab.input.viewType;
-      return viewType !== "codeme.welcome";
+      const viewType = String((tab.input && tab.input.viewType) || "");
+      if (viewType.includes("codeme.")) return false;
+      const label = String(tab.label || "");
+      return label === "Get Started"
+        || viewType.includes("GettingStarted")
+        || viewType.includes("gettingStarted")
+        || viewType.includes("walkThrough");
     });
     if (stock.length) await vscode.window.tabGroups.close(stock);
   }
@@ -155,24 +163,28 @@ class WelcomePanel {
   constructor(state) {
     this.state = state;
     this.panel = undefined;
+    this.busy = { current: "" };
   }
 
   open() {
     if (this.panel) {
-      this.render();
+      this.panel.reveal(vscode.ViewColumn.One, false);
+      this.sync();
       return;
     }
     this.panel = vscode.window.createWebviewPanel(
       "codeme.welcome",
       "Welcome",
-      vscode.ViewColumn.One,
+      { viewColumn: vscode.ViewColumn.One, preserveFocus: false },
       { enableScripts: true, retainContextWhenHidden: true },
     );
     this.panel.onDidDispose(() => {
       this.panel = undefined;
+      if (!folderOpen()) setTimeout(() => this.open(), 40);
     });
     this.panel.webview.onDidReceiveMessage((message) => this.onMessage(message));
     this.render();
+    this.panel.reveal(vscode.ViewColumn.One, false);
   }
 
   render() {
@@ -181,21 +193,37 @@ class WelcomePanel {
     this.panel.webview.html = renderWelcome({ detail: this.state.detail }, nonce);
   }
 
+  sync() {
+    this.post({ type: "welcome-status", detail: this.state.detail });
+  }
+
+  post(message) {
+    if (!this.panel) return;
+    this.panel.webview.postMessage(message);
+  }
+
+  async run(action) {
+    const result = await handleWelcomeAction(vscode, action, {
+      detail: this.state.detail,
+      busy: this.busy,
+    });
+    this.post({
+      type: "welcome-done",
+      action,
+      ok: Boolean(result && result.ok),
+      cancelled: Boolean(result && result.cancelled),
+      error: result && !result.ok && !result.cancelled ? result.message : "",
+    });
+    return result;
+  }
+
   async onMessage(message) {
     if (!message || message.type !== "welcome") return;
-    if (message.action === "open") {
-      await vscode.commands.executeCommand("workbench.action.files.openFolder");
+    if (message.action === "ready") {
+      this.sync();
       return;
     }
-    if (message.action === "clone") {
-      await vscode.commands.executeCommand("git.clone");
-      return;
-    }
-    if (message.action === "connect") {
-      await vscode.window.showInformationMessage(this.state.detail);
-      return;
-    }
-    if (message.action === "create") await createProject();
+    await this.run(message.action);
   }
 
   dispose() {
@@ -234,6 +262,7 @@ class EmptyEditorPanel {
     );
     this.panel.onDidDispose(() => {
       this.panel = undefined;
+      if (folderOpen() && !hasWorkspaceEditor()) setTimeout(() => this.sync(), 40);
     });
     this.panel.webview.onDidReceiveMessage((message) => this.onMessage(message));
     this.render();
@@ -261,7 +290,15 @@ class EmptyEditorPanel {
       await vscode.commands.executeCommand("workbench.action.terminal.toggleTerminal");
       return;
     }
-    if (message.action === "ask") await vscode.commands.executeCommand("codeme.agent.focus");
+    if (message.action === "ask") {
+      await vscode.commands.executeCommand("codeme.agent.focus");
+      return;
+    }
+    if (message.action === "folder") {
+      await vscode.commands.executeCommand("codeme.openFolder");
+      return;
+    }
+    if (message.action === "create") await vscode.commands.executeCommand("codeme.createProject");
   }
 
   dispose() {
@@ -274,7 +311,8 @@ function isCodeMeSurface(tab) {
   const label = String(tab.label || "");
   return viewType.includes("codeme.start")
     || viewType.includes("codeme.welcome")
-    || label === "Start";
+    || label === "Start"
+    || label === "Welcome";
 }
 
 function hasWorkspaceEditor() {

@@ -63,13 +63,73 @@ function composerStage(run) {
 
 function stageForTool(name) {
   if (name === "repo.search") return "Searching";
-  if (name === "file.read") return "Reading";
-  if (name === "file.write") return "Editing";
-  if (name === "tests.run" || name === "terminal.run") return "Testing";
+  if (name === "file.read" || name === "file.readRange" || name === "dir.list") return "Reading";
+  if (name === "file.write" || name === "file.patch" || name === "dir.create") return "Editing";
+  if (name === "tests.run" || name === "terminal.run" || name === "process.run" || name === "process.start" || name === "process.stop") return "Testing";
   if (name === "capability.invoke" || name === "capability.list") return "Researching";
   if (name === "browser.check") return "Testing";
-  if (name === "diagnostics.run" || name === "git.diff" || name === "git.status") return "Verifying";
+  if (name === "diagnostics.run" || name === "git.diff" || name === "git.status" || name === "process.status") return "Verifying";
   return "Reading";
+}
+
+function activityTarget(args) {
+  if (!args || typeof args !== "object") return "";
+  if (args.path) return String(args.path);
+  if (args.query) return String(args.query);
+  if (args.url) return String(args.url);
+  if (args.command) return String(args.command);
+  if (args.executable) return [args.executable].concat(args.args || []).join(" ");
+  return "";
+}
+
+function activityLabel(name, args) {
+  const target = activityTarget(args);
+  const verbs = {
+    "file.read": "Reading",
+    "file.readRange": "Reading",
+    "file.write": "Editing",
+    "file.patch": "Editing",
+    "dir.list": "Listing",
+    "dir.create": "Creating",
+    "repo.search": "Searching",
+    "terminal.run": "Running",
+    "tests.run": "Running tests",
+    "process.run": "Running",
+    "process.start": "Starting",
+    "process.stop": "Stopping",
+    "process.status": "Checking",
+    "browser.check": "Checking",
+    "git.diff": "Reviewing diff",
+    "git.status": "Checking git",
+    "diagnostics.run": "Checking diagnostics",
+    "capability.invoke": "Researching",
+    "capability.list": "Listing capabilities",
+  };
+  const verb = verbs[name] || name || "Working";
+  return target ? `${verb} ${target}` : verb;
+}
+
+function threadFrom(run) {
+  const items = [];
+  if (run && run.goal) items.push({ role: "user", text: String(run.goal) });
+  const seen = new Set();
+  for (const call of (run && run.toolCalls) || []) {
+    const text = activityLabel(call.name, call.args);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    items.push({ role: "activity", text });
+  }
+  const finalText = finalAnswer(run);
+  if (finalText) items.push({ role: "assistant", text: finalText });
+  return items;
+}
+
+function finalAnswer(run) {
+  if (!run) return "";
+  const terminal = run.lifecycle === "completed" || run.lifecycle === "failed" || run.lifecycle === "cancelled";
+  if (!terminal && !run.finalResponse) return "";
+  const text = run.finalResponse || (run.outcome && run.outcome.summary) || "";
+  return String(text).trim();
 }
 
 function isProgressTalk(text) {
@@ -89,8 +149,9 @@ function lastProgressTalk(run) {
 
 function composerActivity(run) {
   const stage = composerStage(run);
-  const talk = lastProgressTalk(run);
-  if (talk && stage !== "Complete" && stage !== "Failed" && stage !== "Cancelled") return talk;
+  if (run && run.inFlight && run.inFlight.name && stage !== "Complete" && stage !== "Failed" && stage !== "Cancelled") {
+    return activityLabel(run.inFlight.name, run.inFlight.args);
+  }
   const args = run && run.inFlight && run.inFlight.args ? run.inFlight.args : {};
   const target = args.path || args.query || args.url || "";
   if (stage === "Understanding") return "Understanding…";
@@ -213,6 +274,9 @@ if (typeof module !== "undefined" && module.exports) {
     diffsByFile,
     formatGoal,
     sameRequest,
+    activityLabel,
+    threadFrom,
+    finalAnswer,
     droppedPaths,
     composerVoiceAction,
     looksLikeWorkspaceEdit,

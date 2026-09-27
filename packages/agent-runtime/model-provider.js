@@ -16,8 +16,11 @@ class ModelProvider {
 }
 
 const PROVIDER_NAMES = {
+  "workspace.inspect": "workspace_inspect",
   "file.read": "file_read",
+  "file.readRange": "file_read_range",
   "file.write": "file_write",
+  "file.patch": "file_patch",
   "repo.search": "repo_search",
   "terminal.run": "terminal_run",
   "tests.run": "tests_run",
@@ -27,6 +30,10 @@ const PROVIDER_NAMES = {
   "browser.check": "browser_check",
   "dir.create": "dir_create",
   "dir.list": "dir_list",
+  "process.run": "process_run",
+  "process.start": "process_start",
+  "process.status": "process_status",
+  "process.stop": "process_stop",
   "capability.list": "capability_list",
   "capability.invoke": "capability_invoke",
 };
@@ -90,7 +97,7 @@ function chatBody(input) {
     think: false,
     messages: (input.messages || []).map(toOllamaMessage),
     tools: (input.tools || []).map(toOllamaTool),
-    options: { temperature: 0 },
+    options: { temperature: 0, num_ctx: 8192 },
   };
 }
 

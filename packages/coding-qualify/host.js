@@ -1,10 +1,11 @@
 const cp = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const { validateCommand } = require("../agent-tools");
+const { validateCommand, readRangeFromText, patchText, createProcessRunner } = require("../agent-tools");
 
 function createWorkspaceHost(root) {
   const rootReal = fs.realpathSync(root);
+  const processes = createProcessRunner(rootReal);
   return {
     async readFile(filePath) {
       const full = resolveInside(rootReal, filePath);
@@ -38,6 +39,17 @@ function createWorkspaceHost(root) {
       walk(full);
       return { path: dirPath, entries };
     },
+    async readRange(filePath, startLine, endLine) {
+      const file = await this.readFile(filePath);
+      return readRangeFromText(filePath, file.contents, startLine, endLine);
+    },
+    async patchFile(filePath, patch) {
+      const file = await this.readFile(filePath);
+      const next = patchText(file.contents, patch);
+      if (next === file.contents) return { path: filePath, bytes: Buffer.byteLength(next), changed: false };
+      const written = await this.writeFile(filePath, next);
+      return { ...written, changed: true };
+    },
     async writeFile(filePath, contents) {
       const full = resolveInside(rootReal, filePath);
       fs.mkdirSync(path.dirname(full), { recursive: true });
@@ -70,6 +82,18 @@ function createWorkspaceHost(root) {
     },
     async runTests(command) {
       return runPolicyCommand(rootReal, command);
+    },
+    async runProcess(spec) {
+      return processes.run(spec);
+    },
+    async startProcess(spec) {
+      return processes.start(spec);
+    },
+    processStatus(id) {
+      return processes.status(id);
+    },
+    stopProcess(id) {
+      return processes.stop(id);
     },
     async diagnostics() {
       const items = [];
@@ -138,8 +162,7 @@ function runPolicyCommand(root, command) {
     throw Object.assign(new Error(commandError.message), { code: commandError.code });
   }
   const parts = command.trim().split(/\s+/);
-  const binary = parts[0] === "npm" ? path.join(path.dirname(process.execPath), "npm") : process.execPath;
-  return spawnChecked(binary, parts.slice(1), root).then((result) => ({
+  return createProcessRunner(root).run({ executable: parts[0], args: parts.slice(1) }).then((result) => ({
     command,
     exitCode: result.exitCode,
     stdout: result.stdout,

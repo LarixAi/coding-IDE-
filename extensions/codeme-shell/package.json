@@ -52,6 +52,16 @@
         "command": "codeme.attach",
         "title": "CodeMe: Attach Workspace File",
         "category": "CodeMe"
+      },
+      {
+        "command": "codeme.openFolder",
+        "title": "CodeMe: Open Folder",
+        "category": "CodeMe"
+      },
+      {
+        "command": "codeme.createProject",
+        "title": "CodeMe: Create Project",
+        "category": "CodeMe"
       }
     ],
     "configurationDefaults": {

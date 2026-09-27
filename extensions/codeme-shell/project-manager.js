@@ -10,55 +10,100 @@ function validateProjectName(value) {
   return { ok: true, name };
 }
 
+function requireHost(vscode) {
+  if (!vscode || !vscode.window || !vscode.workspace || !vscode.commands) {
+    return failure("vscode_unavailable", "The IDE host is not available.");
+  }
+  return { ok: true };
+}
+
+async function openFolder(vscode) {
+  return pickAndOpen(vscode, {
+    title: "Open Folder",
+    openLabel: "Open",
+    error: "Could not open that folder.",
+  });
+}
+
 async function createProject(vscode) {
-  const entered = await vscode.window.showInputBox({
-    title: "Create Project",
-    prompt: "Project folder name",
-    placeHolder: "my-project",
-  });
-  if (entered === undefined) return cancelled("name");
+  const host = requireHost(vscode);
+  if (!host.ok) return host;
+  try {
+    const picked = await vscode.window.showOpenDialog({
+      title: "Create Project",
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: "Open Project",
+    });
+    if (!picked || !picked[0]) return cancelled("location");
 
-  const checked = validateProjectName(entered);
-  if (!checked.ok) {
-    await showError(vscode, checked.message);
-    return checked;
+    const root = picked[0];
+    const name = folderName(root);
+    const created = await seedProjectFiles(vscode, root, name);
+    const opened = await openWorkspace(vscode, root, "Could not open that project.");
+    return {
+      ...opened,
+      name,
+      created,
+    };
+  } catch (error) {
+    return reportError(vscode, "create_failed", error, "Could not create that project.");
   }
+}
 
-  const parent = await vscode.window.showOpenDialog({
-    title: "Parent directory",
-    canSelectFiles: false,
-    canSelectFolders: true,
-    canSelectMany: false,
-    openLabel: "Create here",
-  });
-  if (!parent || !parent[0]) return cancelled("location");
-
-  const root = vscode.Uri.joinPath(parent[0], checked.name);
-  const exists = await pathExists(vscode.workspace.fs, root);
-  if (exists) {
-    const result = failure("project_exists", `A folder named ${checked.name} already exists in that location.`);
-    await showError(vscode, result.message);
-    return result;
+async function seedProjectFiles(vscode, root, name) {
+  const created = [];
+  const files = [
+    { name: "README.md", contents: `# ${name}\n` },
+    { name: ".gitignore", contents: "node_modules/\n.DS_Store\n" },
+  ];
+  for (const file of files) {
+    const target = vscode.Uri.joinPath(root, file.name);
+    if (await pathExists(vscode.workspace.fs, target)) continue;
+    await vscode.workspace.fs.writeFile(target, Buffer.from(file.contents, "utf8"));
+    created.push(file.name);
   }
+  return created;
+}
 
-  await vscode.workspace.fs.createDirectory(root);
-  await vscode.workspace.fs.writeFile(
-    vscode.Uri.joinPath(root, "README.md"),
-    Buffer.from(`# ${checked.name}\n`, "utf8"),
-  );
-  await vscode.workspace.fs.writeFile(
-    vscode.Uri.joinPath(root, ".gitignore"),
-    Buffer.from("node_modules/\n", "utf8"),
-  );
-  await vscode.commands.executeCommand("vscode.openFolder", root);
+function folderName(uri) {
+  const root = (uri && (uri.fsPath || uri.path)) || "";
+  return root.replace(/\\/g, "/").split("/").filter(Boolean).pop() || root;
+}
 
-  return {
-    ok: true,
-    name: checked.name,
-    root: root.fsPath || root.path || String(root),
-    state: "workspace_opening",
-    created: ["README.md", ".gitignore"],
-  };
+async function pickAndOpen(vscode, options) {
+  const host = requireHost(vscode);
+  if (!host.ok) return host;
+  try {
+    const picked = await vscode.window.showOpenDialog({
+      title: options.title,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: options.openLabel,
+    });
+    if (!picked || !picked[0]) return cancelled("location");
+    return openWorkspace(vscode, picked[0], options.error);
+  } catch (error) {
+    return reportError(vscode, "open_failed", error, options.error);
+  }
+}
+
+async function openWorkspace(vscode, uri, fallback) {
+  const host = requireHost(vscode);
+  if (!host.ok) return host;
+  if (!uri) return cancelled("location");
+  try {
+    await vscode.commands.executeCommand("vscode.openFolder", uri);
+    return {
+      ok: true,
+      state: "workspace_opening",
+      root: uri.fsPath || uri.path || String(uri),
+    };
+  } catch (error) {
+    return reportError(vscode, "open_failed", error, fallback || "Could not open that folder.");
+  }
 }
 
 async function pathExists(fsApi, uri) {
@@ -82,8 +127,14 @@ function notFound(error) {
     || /not found/i.test(message);
 }
 
+async function reportError(vscode, code, error, fallback) {
+  const message = error && error.message ? error.message : fallback;
+  await showError(vscode, message);
+  return failure(code, message);
+}
+
 async function showError(vscode, message) {
-  if (vscode.window && typeof vscode.window.showErrorMessage === "function") {
+  if (vscode && vscode.window && typeof vscode.window.showErrorMessage === "function") {
     await vscode.window.showErrorMessage(message);
   }
 }
@@ -96,4 +147,11 @@ function failure(code, message) {
   return { ok: false, code, message };
 }
 
-module.exports = { validateProjectName, createProject, pathExists };
+module.exports = {
+  validateProjectName,
+  createProject,
+  seedProjectFiles,
+  openFolder,
+  openWorkspace,
+  pathExists,
+};
