@@ -188,6 +188,16 @@ function renderComposer(nonce) {
     let epoch = 0;
     let shownRun = "";
     let draft = "";
+    let sendTimer = null;
+
+    function clearSendPending() {
+      if (sendTimer) {
+        clearTimeout(sendTimer);
+        sendTimer = null;
+      }
+      sending = false;
+      send.disabled = running;
+    }
     function sendPrompt() {
       stopVoice();
       if (sending || running) return;
@@ -197,6 +207,14 @@ function renderComposer(nonce) {
       draft = text;
       epoch += 1;
       send.disabled = true;
+      notice.textContent = "Sending…";
+      if (sendTimer) clearTimeout(sendTimer);
+      const sentEpoch = epoch;
+      sendTimer = setTimeout(() => {
+        if (!sending || sentEpoch !== epoch) return;
+        clearSendPending();
+        notice.textContent = "Send did not receive a response. Try again.";
+      }, 15000);
       vscode.postMessage({ type: "submit", text, epoch });
     }
     prompt.addEventListener("keydown", (event) => {
@@ -343,6 +361,7 @@ function renderComposer(nonce) {
       if (!current(state)) return;
       if (state.requestId) requestId = state.requestId;
       running = Boolean(state.running);
+      if (running && sending) clearSendPending();
       stage.textContent = state.stage || "Waiting";
       stage.dataset.stage = state.stage || "Waiting";
       stage.dataset.runId = state.runId || "";
@@ -684,17 +703,19 @@ function renderComposer(nonce) {
         sawState = true;
         applyState(message);
       }
-      if (message.type === "accepted" && current(message) && sameRequest(message.requestId, message.requestId)) {
-        requestId = message.requestId;
+      if (message.type === "submitting" && current(message)) {
+        notice.textContent = "Sending…";
+      }
+      if (message.type === "accepted" && current(message)) {
+        requestId = message.requestId || requestId;
         prompt.value = "";
         prompt.style.height = "";
         draft = "";
-        sending = false;
-        send.disabled = running;
+        clearSendPending();
+        notice.textContent = "";
       }
       if (message.type === "rejected" && current(message)) {
-        sending = false;
-        send.disabled = running;
+        clearSendPending();
         notice.textContent = message.message || "Could not send.";
         if (!prompt.value && draft) prompt.value = draft;
       }
