@@ -1272,7 +1272,7 @@ function verifyAlreadySatisfiedWebRepair(run) {
   const scripts = clientJsFiles.map((file) => latestReadContents(run, file)).join("\n");
   const combined = scripts + "\n" + html;
 
-  if (/\b(click|button|tap|interaction|interactive)\b/.test(goal)) {
+  if (isInteractiveBrowserGoal(goal)) {
     if (!htmlFiles.length) {
       return {
         status: "failed",
@@ -1305,12 +1305,25 @@ function verifyAlreadySatisfiedWebRepair(run) {
         evidence: ["file.read", "browser.check"],
       };
     }
+
+    const realInteractionIssue = browserInteractionEvidenceIssue(run, run.toolCalls || []);
+    if (realInteractionIssue) {
+      return {
+        status: "failed",
+        summary: realInteractionIssue,
+        evidence: ["file.read", "browser.check"],
+      };
+    }
   }
 
   return {
     status: "passed",
-    summary: "The existing web repair is already satisfied: the relevant source was inspected and the page plus requested assets passed browser verification.",
-    evidence: ["file.read", "browser.check"],
+    summary: isInteractiveBrowserGoal(run.goal)
+      ? "The existing web repair is already satisfied and the requested interaction was verified in a real browser."
+      : "The existing web repair is already satisfied: the relevant source was inspected and the page plus requested assets passed browser verification.",
+    evidence: isInteractiveBrowserGoal(run.goal)
+      ? ["file.read", "browser.check", "browser.interact"]
+      : ["file.read", "browser.check"],
   };
 }
 
