@@ -4,7 +4,7 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const net = require("net");
-const { createPreviewRunner, portFromText, previewPlan, recoverFlagSocket, ensureStaticPreview, entryPointFromStartScript, portFromSourceText, extractLocalAssets, isAssetFailure, hasOwnedPreviewTerminal, stopOwnedPreviewTerminals } = require("../preview-runner");
+const { createPreviewRunner, portFromText, previewPlan, resolvePreviewUrl, recoverFlagSocket, ensureStaticPreview, entryPointFromStartScript, portFromSourceText, extractLocalAssets, isAssetFailure, hasOwnedPreviewTerminal, stopOwnedPreviewTerminals } = require("../preview-runner");
 
 function mockVscode(commands) {
   const sent = [];
@@ -78,6 +78,15 @@ async function main() {
   assert.strictEqual(filePlan.command, "npm start");
   assert.strictEqual(filePlan.shouldStart, true);
 
+  const cssPlan = previewPlan(root, "styles.css");
+  assert.strictEqual(cssPlan.ok, true);
+  assert.strictEqual(cssPlan.url, "http://127.0.0.1:4173/");
+
+  const jsUrl = resolvePreviewUrl(root, "http://localhost:4173/script.js", "http://127.0.0.1:4173");
+  assert.strictEqual(jsUrl.ok, true);
+  assert.strictEqual(jsUrl.url, "http://127.0.0.1:4173/");
+  assert.strictEqual(jsUrl.canonicalizedFromAsset, "http://localhost:4173/script.js");
+
   const otherPort = previewPlan(root, "http://127.0.0.1:9");
   assert.strictEqual(otherPort.ok, true);
   assert.strictEqual(otherPort.shouldStart, false);
@@ -128,6 +137,11 @@ async function main() {
   assert.strictEqual(staticPage.available, true);
   assert.strictEqual(staticPage.statusCode, 200);
   assert.strictEqual(staticPage.title, "Hello CodeMe");
+
+  const cssAsPreview = await staticRunner.check(staticRoot, "style.css");
+  assert.strictEqual(cssAsPreview.available, true);
+  assert.strictEqual(cssAsPreview.url.includes("/style.css"), false);
+  assert.strictEqual(cssAsPreview.title, "Hello CodeMe");
   assert.deepStrictEqual(staticMock.sent, []);
   assert.strictEqual(staticMock.vscode.window.terminals.length, 0);
   const staticServer = await ensureStaticPreview(staticRoot, 4173);
