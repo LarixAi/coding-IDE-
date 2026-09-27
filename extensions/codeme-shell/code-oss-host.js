@@ -2,10 +2,12 @@ const vscode = require("vscode");
 const cp = require("child_process");
 const { execute, executeReadOnly } = require("../../packages/agent-tools");
 const { createPreviewRunner } = require("./preview-runner");
+const { createBrowserInteractionRunner } = require("./browser-interaction-runner");
 const { describeFileRead } = require("./image-meta");
 const { inspectWorkspace } = require("./workspace-inspector");
 
 const preview = createPreviewRunner(vscode);
+const browserInteraction = createBrowserInteractionRunner();
 const PROCESS_RECORDS = new Map();
 let PROCESS_SEQUENCE = 0;
 const PROCESS_LOG_LIMIT = 50000;
@@ -365,6 +367,35 @@ async function browserCheck(url) {
   }
 }
 
+async function browserInteract(input) {
+  const args = input && typeof input === "object" ? input : {};
+  const requestedUrl = String(args.url || "");
+  try {
+    const checked = await preview.check(workspaceFolder().uri.fsPath, requestedUrl);
+    if (!checked || checked.available === false) return checked;
+    const result = await browserInteraction.interact({
+      ...args,
+      url: checked.url || requestedUrl,
+    });
+    if (result && typeof result === "object") {
+      result.preview = {
+        url: checked.url || requestedUrl,
+        statusCode: checked.statusCode,
+        title: checked.title || "",
+        assets: Array.isArray(checked.assets) ? checked.assets : [],
+      };
+    }
+    return result;
+  } catch (error) {
+    return {
+      available: false,
+      code: error && error.code ? String(error.code) : "browser_interaction_failed",
+      message: error instanceof Error ? error.message : String(error),
+      url: requestedUrl,
+    };
+  }
+}
+
 const host = {
   inspectWorkspace: () => inspectWorkspace(vscode),
   readFile,
@@ -382,6 +413,7 @@ const host = {
   diagnostics,
   runTests: runProcess,
   browserCheck,
+  browserInteract,
 };
 
 function runTool(tool, args) {
