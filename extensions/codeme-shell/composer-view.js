@@ -22,6 +22,11 @@ function renderComposer(nonce) {
     .bubble { margin: 0 0 10px; max-width: 100%; min-width: 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
     .bubble.user { margin-left: 18%; color: #dfe4ec; font-size: 13px; }
     .bubble.assistant { color: #c7ced8; }
+    .project-decision { display: none; margin: 0 0 10px; padding: 9px 10px; border: 1px solid #303640; border-radius: 9px; background: #181c22; }
+    .project-decision.on { display: block; }
+    .project-decision-title { margin: 0 0 3px; color: #dfe4ec; font-size: 12px; font-weight: 650; }
+    .project-decision-meta { margin: 0 0 4px; color: #7fd3ea; font-size: 11px; }
+    .project-decision-reason { margin: 0; color: #8e99aa; font-size: 11px; line-height: 1.4; }
     .activity { display: none; margin: 0 0 10px; color: #97a3b6; font-size: 12px; }
     .activity.on { display: block; }
     .tools { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; }
@@ -99,6 +104,7 @@ function renderComposer(nonce) {
     <div class="thread" id="thread">
       <p class="empty" id="empty">Ask about this workspace.</p>
       <div id="messages"></div>
+      <div class="project-decision" id="project-decision"></div>
       <p class="activity" id="activity"></p>
       <div class="tools" id="tools"></div>
       <div class="result" id="result"></div>
@@ -129,6 +135,7 @@ function renderComposer(nonce) {
     const mode = document.getElementById("mode");
     const stage = document.getElementById("stage");
     const activity = document.getElementById("activity");
+    const projectDecision = document.getElementById("project-decision");
     const messages = document.getElementById("messages");
     const tools = document.getElementById("tools");
     const result = document.getElementById("result");
@@ -337,6 +344,7 @@ function renderComposer(nonce) {
         chips.appendChild(chip);
       }
       renderThread(state.thread || []);
+      renderProjectDecision(state.projectDecision || null);
       renderTools(state.tools || []);
       if (running) {
         result.innerHTML = "";
@@ -348,6 +356,33 @@ function renderComposer(nonce) {
       empty.hidden = Boolean(messages.childElementCount || running);
       thread.scrollTop = thread.scrollHeight;
     }
+    function renderProjectDecision(decision) {
+      projectDecision.innerHTML = "";
+      projectDecision.classList.toggle("on", Boolean(decision));
+      if (!decision) return;
+
+      const title = document.createElement("p");
+      title.className = "project-decision-title";
+      title.textContent = "Project type: " + (decision.label || decision.kind || "Unknown");
+
+      const meta = document.createElement("p");
+      meta.className = "project-decision-meta";
+      const dependencies = decision.dependenciesRequired === true
+        ? "Dependencies allowed when required"
+        : decision.dependenciesRequired === false
+          ? "No dependencies required"
+          : "Preserve existing dependencies";
+      meta.textContent = dependencies + (decision.framework ? " · " + decision.framework : "");
+
+      const reason = document.createElement("p");
+      reason.className = "project-decision-reason";
+      reason.textContent = decision.reason || "";
+
+      projectDecision.appendChild(title);
+      projectDecision.appendChild(meta);
+      if (reason.textContent) projectDecision.appendChild(reason);
+    }
+
     function formatSize(size) {
       const bytes = Number(size) || 0;
       if (bytes >= 1024) return Math.round(bytes / 1024) + " KB";
