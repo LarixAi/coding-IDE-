@@ -1835,6 +1835,15 @@ async function main() {
       store,
       mode: "controlled",
       maxIterations: 8,
+      verify(runState, text) {
+        const logs = runState.toolCalls.some((call) => call.name === "process.logs" && call.result && call.result.ok);
+        const patched = runState.toolCalls.some((call) => call.name === "file.patch" && call.result && call.result.ok);
+        const readBack = runState.toolCalls.some((call) => call.name === "file.read" && call.args && call.args.path === "server.js" && call.result && call.result.ok);
+        if (logs && patched && readBack && text.includes("repair was saved")) {
+          return { status: "passed", summary: "process evidence preceded the saved repair", evidence: ["process.logs", "file.patch", "file.read"] };
+        }
+        return { status: "failed", summary: "read process logs, repair the file, and read it back", evidence: [] };
+      },
     }).done;
 
     assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
