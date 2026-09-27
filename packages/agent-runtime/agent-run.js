@@ -454,6 +454,31 @@ async function executeRun(run, options) {
       }
       run.inFlight = null;
       pushObservation(run, call, result);
+
+      if (!result.ok && call.name === "process.start") {
+        if (run.progress) {
+          run.progress.writeNow = false;
+          run.progress.focus = true;
+          run.progress.semanticStagnation = 0;
+        }
+        run.messages.push({
+          role: "user",
+          content: "The CodeMe-owned process failed. Read process.logs before changing files or starting the process again. Diagnose the actual terminal output first.",
+        });
+      }
+
+      if (
+        call.name === "process.status"
+        && result.ok
+        && result.data
+        && result.data.status === "failed"
+      ) {
+        run.messages.push({
+          role: "user",
+          content: "The latest CodeMe-owned process is failed. Read process.logs now and use the recorded error as evidence before repairing.",
+        });
+      }
+
       store.save(run);
 
       if (options.interruptAfterTool) {
