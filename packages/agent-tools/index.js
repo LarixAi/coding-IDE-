@@ -69,7 +69,12 @@ async function execute(host, tool, args) {
 
   try {
     const data = await dispatch(host, tool, args);
-    if (data && typeof data.exitCode === "number" && data.exitCode !== 0) {
+    if (
+      data
+      && typeof data.exitCode === "number"
+      && data.exitCode !== 0
+      && (tool === "terminal.run" || tool === "tests.run" || tool === "process.start")
+    ) {
       return failure(tool, "exit_status", `Command exited ${data.exitCode}`, data);
     }
     if (data && data.available === false) {
