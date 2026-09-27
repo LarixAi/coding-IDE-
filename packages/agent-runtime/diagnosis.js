@@ -14,7 +14,7 @@ function diagnose(call, result) {
   if (code === "patch_not_found" || code === "patch_ambiguous") {
     return { class: "bad_code", retry: false, next: "inspect" };
   }
-  if (code === "invalid_port_binding") {
+  if (code === "invalid_port_binding" || code === "asset_unavailable" || code === "asset_status" || code === "asset_mime") {
     return { class: "bad_code", retry: false, next: "repair" };
   }
   if (code === "exit_status") return { class: "bad_code", retry: false, next: "repair" };
