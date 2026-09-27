@@ -556,6 +556,185 @@ async function main() {
     assert.ok(context.includes("this is not a Git repository"));
   });
 
+  await test("failed web assets force server repair before completion", async () => {
+    const root = tempDir();
+    fs.writeFileSync(path.join(root, "index.html"), [
+      '<!doctype html>',
+      '<link rel="stylesheet" href="styles.css">',
+      '<h1>Hello CodeMe</h1>',
+      '<button id="demoButton">Click Me</button>',
+      '<script src="script.js"></script>',
+      "",
+    ].join("\n"), "utf8");
+    fs.writeFileSync(path.join(root, "styles.css"), "body { text-align: center; }\n", "utf8");
+    fs.writeFileSync(
+      path.join(root, "script.js"),
+      'document.getElementById("demoButton").addEventListener("click", function () { this.textContent = "It works!"; });\n',
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(root, "server.js"),
+      'const http = require("http");\nconst server = http.createServer((_req, res) => { res.end("index only"); });\nserver.listen(3000);\n',
+      "utf8",
+    );
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      name: "button-demo",
+      scripts: { start: "node server.js" },
+    }, null, 2), "utf8");
+
+    let previewCalls = 0;
+    let processCalls = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 5,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["html", "css", "javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: ["index.html", "styles.css", "script.js", "server.js", "package.json"]
+            .map((filePath) => ({ path: filePath, type: "file" })),
+        };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        assert.ok(before.includes(oldText), `missing patch text in ${filePath}`);
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile(filePath, contents) {
+        fs.writeFileSync(path.join(root, filePath), contents, "utf8");
+        return { path: filePath, bytes: Buffer.byteLength(contents) };
+      },
+      async createDirectory(dirPath) { return { path: dirPath }; },
+      async search() { return { query: "", matches: [] }; },
+      async runTerminal() { return { exitCode: 0, output: "" }; },
+      async startProcess(command) {
+        processCalls += 1;
+        return { started: true, command };
+      },
+      async runTests() { throw new Error("no tests"); },
+      async gitStatus() { throw new Error("not git"); },
+      async gitDiff() { throw new Error("not git"); },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) {
+        previewCalls += 1;
+        if (previewCalls === 1) {
+          return {
+            available: false,
+            code: "asset_status",
+            message: "script asset script.js returned HTTP 404",
+            url,
+            statusCode: 200,
+            assets: [
+              { kind: "style", path: "styles.css", statusCode: 404, contentType: "text/html", ok: false },
+            ],
+          };
+        }
+        return {
+          available: true,
+          statusCode: 200,
+          title: "Button demo",
+          url,
+          assets: [
+            { kind: "style", path: "styles.css", statusCode: 200, contentType: "text/css", ok: true },
+            { kind: "script", path: "script.js", statusCode: 200, contentType: "text/javascript", ok: true },
+          ],
+        };
+      },
+    };
+
+    const brokenServer = fs.readFileSync(path.join(root, "server.js"), "utf8");
+    const fixedServer = [
+      'const http = require("http");',
+      'const fs = require("fs");',
+      'const path = require("path");',
+      'const server = http.createServer((req, res) => {',
+      '  const requested = req.url === "/" ? "index.html" : req.url.slice(1);',
+      '  const file = path.join(__dirname, requested);',
+      '  if (!fs.existsSync(file)) { res.writeHead(404); res.end("Not found"); return; }',
+      '  const type = requested.endsWith(".css") ? "text/css" : requested.endsWith(".js") ? "text/javascript" : "text/html";',
+      '  res.writeHead(200, { "Content-Type": type });',
+      '  res.end(fs.readFileSync(file));',
+      '});',
+      'server.listen(3000);',
+      "",
+    ].join("\n");
+
+    const provider = new ScriptedModelProvider([
+      {
+        toolCalls: [
+          { name: "file.read", args: { path: "index.html" } },
+          { name: "file.read", args: { path: "styles.css" } },
+          { name: "file.read", args: { path: "script.js" } },
+        ],
+      },
+      { toolCalls: [{ name: "browser.check", args: { url: "index.html" } }] },
+      { toolCalls: [{ name: "file.read", args: { path: "server.js" } }] },
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: {
+            path: "server.js",
+            oldText: brokenServer,
+            newText: fixedServer,
+          },
+        }],
+      },
+      { toolCalls: [{ name: "file.read", args: { path: "server.js" } }] },
+      { toolCalls: [{ name: "browser.check", args: { url: "index.html" } }] },
+      { text: "Fixed the server so the page assets load and the button can run its click handler." },
+    ]);
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'The button does not work when I click it. Fix the button so it changes to "It works!" when clicked.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 12,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(run.verification.status, "passed");
+    assert.strictEqual(previewCalls, 2);
+    assert.strictEqual(processCalls, 0);
+    assert.ok(run.filesChanged.includes("server.js"));
+    assert.ok(fs.readFileSync(path.join(root, "server.js"), "utf8").includes("text/javascript"));
+
+    const failedPreviewIndex = run.toolCalls.findIndex((call) => (
+      call.name === "browser.check" && call.result && call.result.ok === false
+    ));
+    const patchIndex = run.toolCalls.findIndex((call) => call.name === "file.patch" && call.args.path === "server.js");
+    const passedPreviewIndex = run.toolCalls.findIndex((call, index) => (
+      index > patchIndex && call.name === "browser.check" && call.result && call.result.ok
+    ));
+    assert.ok(failedPreviewIndex >= 0);
+    assert.ok(patchIndex > failedPreviewIndex);
+    assert.ok(passedPreviewIndex > patchIndex);
+
+    for (const modelCall of provider.calls) {
+      const names = modelCall.tools.map((tool) => tool.name);
+      assert.strictEqual(names.includes("process.start"), false);
+    }
+  });
+
   await test("write, terminal, and test tools stay blocked", async () => {
     const host = workspaceHost(FIXTURE);
     const registry = new ToolRegistry(new ReadOnlyToolProvider(host));
