@@ -8,6 +8,15 @@ function diagnose(call, result) {
   if (code === "mutation_blocked" || code === "command_rejected") {
     return { class: "permission", retry: false, next: "inspect" };
   }
+  if (code === "flag_like_path") {
+    return { class: "wrong_command", retry: false, next: "inspect" };
+  }
+  if (code === "patch_not_found" || code === "patch_ambiguous") {
+    return { class: "bad_code", retry: false, next: "inspect" };
+  }
+  if (code === "invalid_port_binding") {
+    return { class: "bad_code", retry: false, next: "repair" };
+  }
   if (code === "exit_status") return { class: "bad_code", retry: false, next: "repair" };
   if (code === "not_found") return { class: "wrong_command", retry: false, next: "inspect" };
   if (code === "capability_unavailable" || code === "hub_rejected" || code === "malformed_response") {
