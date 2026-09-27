@@ -30,6 +30,8 @@ async function main() {
       "repo.search",
       "terminal.run",
       "process.start",
+      "process.status",
+      "process.logs",
       "git.status",
       "git.diff",
       "diagnostics.run",
@@ -104,6 +106,25 @@ async function main() {
     assert.strictEqual(result.error.code, "exit_status");
     assert.strictEqual(result.data.output, "boom");
     assert.strictEqual(result.data.exitCode, 2);
+  });
+
+  await test("reads failed process status and logs without turning the read into a tool failure", async () => {
+    const host = {
+      async processStatus() {
+        return { found: true, status: "failed", exitCode: 48, command: "npm start" };
+      },
+      async processLogs() {
+        return { found: true, status: "failed", exitCode: 48, command: "npm start", output: "EADDRINUSE port 3000" };
+      },
+    };
+    const status = await executeReadOnly(host, "process.status", {});
+    assert.strictEqual(status.ok, true);
+    assert.strictEqual(status.data.status, "failed");
+    assert.strictEqual(status.data.exitCode, 48);
+
+    const logs = await executeReadOnly(host, "process.logs", {});
+    assert.strictEqual(logs.ok, true);
+    assert.ok(logs.data.output.includes("EADDRINUSE"));
   });
 
   await test("blocks file writes while read-only", async () => {
