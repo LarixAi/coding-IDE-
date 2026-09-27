@@ -10,6 +10,7 @@ const { host } = require("./code-oss-host");
 const { ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
 const { RunStore } = require("../../packages/agent-runtime/run-store");
 const { ComposerSession, listOllamaModels } = require("./composer-session");
+const { ConversationStore } = require("./conversation-store");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -442,6 +443,7 @@ class ComposerViewProvider {
     this.view = undefined;
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
+      historyStore: new ConversationStore(path.join(context.globalStorageUri.fsPath, "composer-history")),
       selectionStore: {
         get: () => context.globalState.get("codeme.model"),
         set: (value) => context.globalState.update("codeme.model", value),
@@ -470,13 +472,13 @@ class ComposerViewProvider {
     const nonce = crypto.randomBytes(16).toString("hex");
     webviewView.webview.html = renderComposer(nonce);
     webviewView.webview.onDidReceiveMessage((message) => this.onMessage(message));
-    this.session.root = workspaceRoot();
+    this.session.setRoot(workspaceRoot());
     await this.session.refreshModels();
   }
 
   sync() {
     if (!this.session) return;
-    this.session.root = workspaceRoot();
+    this.session.setRoot(workspaceRoot());
     this.session.refreshModels();
   }
 
@@ -519,6 +521,16 @@ class ComposerViewProvider {
     }
     if (message.type === "select-mode") {
       this.session.selectMode(message.mode);
+      return;
+    }
+    if (message.type === "new-chat") {
+      const result = this.session.newChat();
+      if (!result.ok) this.view.webview.postMessage({ type: "rejected", code: result.code, message: result.message });
+      return;
+    }
+    if (message.type === "open-chat") {
+      const result = this.session.openChat(message.id);
+      if (!result.ok) this.view.webview.postMessage({ type: "rejected", code: result.code, message: result.message });
       return;
     }
     if (message.type === "detach") {
