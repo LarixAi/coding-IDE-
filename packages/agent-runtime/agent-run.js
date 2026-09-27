@@ -45,6 +45,7 @@ function createRun(options) {
     verification: { status: "pending", summary: "", evidence: [] },
     verificationHistory: [],
     projectDecision: null,
+    workspaceInspected: false,
     outcome: null,
     iteration: 0,
     maxIterations: options.maxIterations ?? 8,
@@ -790,18 +791,6 @@ function routeToolCall(run, rawCall) {
       },
     };
   }
-
-  if (call.name === "process.start") {
-    return {
-      name: "browser.check",
-      args: { url: previewTargetFromRun(run) },
-      routedFrom: {
-        name: "process.start",
-        command: String((call.args && call.args.command) || ""),
-      },
-    };
-  }
-
   return call;
 }
 
@@ -1996,13 +1985,21 @@ async function maybeDirectSelected(run, selected, registry, options, signal, sto
 async function showWorkspace(run, registry, store) {
   if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return null;
   if (run.taskClass === "folder") return null;
+  if (run.workspaceInspected) return null;
 
   const definitions = registry.definitions();
   if (definitions.some((tool) => tool.name === "workspace.inspect")) {
+    run.workspaceInspected = true;
+    store.save(run);
     let inspected;
     try {
       inspected = await registry.call("workspace.inspect", {});
     } catch (error) {
+      if (error && error.code === "crash") {
+        touch(run, "interrupted");
+        store.save(run);
+        throw error;
+      }
       inspected = {
         ok: false,
         tool: "workspace.inspect",
