@@ -626,8 +626,8 @@ function webInteractionIssue(run, changed) {
   for (const match of scripts.matchAll(/querySelector\s*\(\s*["']#([^"']+)["']\s*\)/g)) ids.push(match[1]);
 
   for (const id of ids) {
-    const escaped = id.replace(/[.*+?^$(){}|[\]\\]/g, "\\function uniqueWrittenPaths(writes) {
-");
+    const escaped = id.replace(/[.*+?^$(){}|[\]\\]/g, "\\    const escaped = id.replace(/[.*+?^$(){}|[\]\\]/g, "\\function uniqueWrittenPaths(writes) {
+");");
     const pattern = new RegExp(`\\bid\\s*=\\s*["']${escaped}["']`, "i");
     if (!pattern.test(html)) {
       return `The JavaScript targets #${id}, but that element ID is not present in the changed HTML.`;
