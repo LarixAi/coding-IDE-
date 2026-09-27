@@ -1251,6 +1251,51 @@ async function main() {
     assert.strictEqual(provider.calls.length, callsBefore);
   });
 
+  await test("workspace inspection crash is not replayed after resume", async () => {
+    const model = new ScriptedModelProvider([{ text: "recovered workspace inspection" }]);
+    let inspections = 0;
+    const provider = {
+      definitions() {
+        return [{ name: "workspace.inspect", description: "inspect", parameters: { type: "object", properties: {}, required: [] } }];
+      },
+      async call(name) {
+        assert.strictEqual(name, "workspace.inspect");
+        inspections += 1;
+        throw Object.assign(new Error("workspace crash"), { code: "crash" });
+      },
+    };
+    const { store } = trackedStore(tempDir());
+    const registry = new ToolRegistry(provider);
+    const handle = startAgentRun({
+      goal: "describe this project",
+      model: MODEL,
+      providerName: model.name,
+      provider: model,
+      registry,
+      store,
+      verify(_run, text) {
+        return text.includes("recovered workspace inspection")
+          ? { status: "passed", summary: "recovered", evidence: ["recovery"] }
+          : { status: "failed", summary: "not recovered", evidence: [] };
+      },
+    });
+    await assert.rejects(handle.done, (error) => error.code === "crash");
+    const interrupted = store.load(handle.id);
+    assert.strictEqual(interrupted.lifecycle, "interrupted");
+    assert.strictEqual(interrupted.workspaceInspected, true);
+    assert.strictEqual(interrupted.inFlight.kind, "tool");
+    assert.strictEqual(interrupted.inFlight.name, "workspace.inspect");
+
+    const resumed = await resumeRun(handle.id, { provider: model, registry, store, verify(_run, text) {
+      return text.includes("recovered workspace inspection")
+        ? { status: "passed", summary: "recovered", evidence: ["recovery"] }
+        : { status: "failed", summary: "not recovered", evidence: [] };
+    } });
+    assert.strictEqual(resumed.lifecycle, "completed");
+    assert.strictEqual(inspections, 1);
+    assert.ok(resumed.observations.some((item) => item.summary.includes("not replayed")));
+  });
+
   await test("tool registry does not invent definitions for undeclared providers", async () => {
     const provider = {
       async call() {
