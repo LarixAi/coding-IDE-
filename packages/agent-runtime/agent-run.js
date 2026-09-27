@@ -709,6 +709,66 @@ function readPaths(run, pattern) {
   return paths;
 }
 
+function isInteractiveBrowserGoal(goal) {
+  return /\b(click|button|tap|interaction|interactive|submit|toggle|dropdown|menu)\b/i.test(String(goal || ""));
+}
+
+function expectedInteractionText(goal) {
+  const text = String(goal || "");
+  const patterns = [
+    /(?:change|changes|changed|set|sets|update|updates)[\s\S]{0,100}?(?:to|as)\s*["“']([^"”']+)["”']/i,
+    /(?:become|becomes|show|shows|display|displays)[\s\S]{0,40}?["“']([^"”']+)["”']/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) return String(match[1]).trim();
+  }
+  return "";
+}
+
+function latestBrowserInteraction(run, calls) {
+  const source = Array.isArray(calls) ? calls : ((run && run.toolCalls) || []);
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    const call = source[index];
+    if (call.name !== "browser.interact") continue;
+    return call;
+  }
+  return null;
+}
+
+function browserInteractionEvidenceIssue(run, calls) {
+  if (!isInteractiveBrowserGoal(run && run.goal)) return "";
+  const interaction = latestBrowserInteraction(run, calls);
+  if (!interaction) {
+    return "This request includes a real browser interaction. Call browser.interact and verify the observed result before finishing; browser.check and source inspection alone are not enough.";
+  }
+  if (!interaction.result || !interaction.result.ok) {
+    const message = interaction.result && interaction.result.error && interaction.result.error.message;
+    return message
+      ? `The real browser interaction failed: ${message}`
+      : "The real browser interaction failed. Repair the page and run browser.interact again.";
+  }
+
+  const data = interaction.result.data || {};
+  if (Array.isArray(data.consoleErrors) && data.consoleErrors.length) {
+    return `The browser interaction produced runtime/console errors: ${data.consoleErrors.join("; ")}`;
+  }
+
+  const expected = expectedInteractionText(run.goal);
+  if (expected) {
+    const after = String(data.afterText || "");
+    if (!after.includes(expected)) {
+      return `The browser interaction ran, but the observed target text was "${after}" instead of containing "${expected}".`;
+    }
+  }
+
+  if (data.matched === false) {
+    return "The browser interaction ran, but its expected result did not match.";
+  }
+
+  return "";
+}
+
 function webInteractionIssue(run, changed) {
   const goal = String(run && run.goal || "").toLowerCase();
   if (!/\b(click|button|tap|interaction|interactive)\b/.test(goal)) return "";
