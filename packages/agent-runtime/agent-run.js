@@ -617,20 +617,19 @@ function webInteractionIssue(run, changed) {
   const html = htmlFiles.map((file) => latestReadContents(run, file)).join("\n");
   const scripts = jsFiles.map((file) => latestReadContents(run, file)).join("\n");
 
-  if (!/addEventListener\s*\(\s*["']click["']|\.onclick\s*=|onclick\s*=/.test(scripts + "\n" + html)) {
+  if (!/addEventListener\s*\(\s*["\']click["\']|\.onclick\s*=|onclick\s*=/.test(scripts + "\n" + html)) {
     return "The page loads, but the requested click interaction is not wired to a click handler.";
   }
 
   const ids = [];
-  for (const match of scripts.matchAll(/getElementById\s*\(\s*["']([^"']+)["']\s*\)/g)) ids.push(match[1]);
-  for (const match of scripts.matchAll(/querySelector\s*\(\s*["']#([^"']+)["']\s*\)/g)) ids.push(match[1]);
+  for (const match of scripts.matchAll(/getElementById\s*\(\s*["\']([^"\']+)["\']\s*\)/g)) ids.push(match[1]);
+  for (const match of scripts.matchAll(/querySelector\s*\(\s*["\']#([^"\']+)["\']\s*\)/g)) ids.push(match[1]);
 
   for (const id of ids) {
-    const escaped = id.replace(/[.*+?^$(){}|[\]\\]/g, "\\    const escaped = id.replace(/[.*+?^$(){}|[\]\\]/g, "\\function uniqueWrittenPaths(writes) {
-");");
-    const pattern = new RegExp(`\\bid\\s*=\\s*["']${escaped}["']`, "i");
+    const escaped = String(id).replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
+    const pattern = new RegExp("\\bid\\s*=\\s*[\"\']" + escaped + "[\"\']", "i");
     if (!pattern.test(html)) {
-      return `The JavaScript targets #${id}, but that element ID is not present in the changed HTML.`;
+      return "The JavaScript targets #" + id + ", but that element ID is not present in the changed HTML.";
     }
   }
 
