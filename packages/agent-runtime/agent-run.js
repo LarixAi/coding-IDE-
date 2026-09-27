@@ -486,6 +486,21 @@ async function executeRun(run, options) {
       }
 
       if (
+        call.name === "process.start"
+        && result.ok
+        && result.data
+        && result.data.suppressed
+        && !result.data.requiresLogs
+      ) {
+        run.messages.push({
+          role: "user",
+          content: result.data.reused
+            ? "A CodeMe preview process is already running. Do not call process.start again. Use browser.check to verify the current page."
+            : "Preview startup is managed by browser.check for this web repair. Do not call process.start again. Use browser.check now.",
+        });
+      }
+
+      if (
         call.name === "process.status"
         && result.ok
         && result.data
