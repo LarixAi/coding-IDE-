@@ -378,11 +378,14 @@ async function browserInteract(input) {
       url: checked.url || requestedUrl,
     });
     if (result && typeof result === "object") {
+      result.statusCode = checked.statusCode;
+      result.title = checked.title || "";
+      result.assets = Array.isArray(checked.assets) ? checked.assets : [];
       result.preview = {
         url: checked.url || requestedUrl,
         statusCode: checked.statusCode,
         title: checked.title || "",
-        assets: Array.isArray(checked.assets) ? checked.assets : [],
+        assets: result.assets,
       };
     }
     return result;
