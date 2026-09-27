@@ -446,6 +446,16 @@ function createPreviewRunner(vscode) {
 
         const running = await probe(plan.url);
         if (!running.available) {
+          if (isAssetFailure(running) && hasOwnedPreviewTerminal(vscode)) {
+            stopOwnedPreviewTerminals(vscode);
+            await waitForPreviewToStop(plan.url, 4000);
+            startPreview(vscode, root, plan.command, true);
+            await openPreview(vscode, plan.url);
+            return await waitForPage(plan.url, 45000);
+          }
+          if (isAssetFailure(running)) {
+            return running;
+          }
           startPreview(vscode, root, plan.command);
           await openPreview(vscode, plan.url);
           return await waitForPage(plan.url, 45000);
@@ -485,8 +495,39 @@ async function openPreview(vscode, url) {
   }
 }
 
-function startPreview(vscode, root, command) {
-  const existing = vscode.window.terminals.find((item) => item.name === PREVIEW_TERMINAL);
+function isAssetFailure(result) {
+  return Boolean(result && ["asset_unavailable", "asset_status", "asset_mime"].includes(result.code));
+}
+
+function ownedPreviewTerminals(vscode) {
+  return (vscode.window.terminals || []).filter((item) => (
+    item && (item.name === PREVIEW_TERMINAL || item.name === "CodeMe Process")
+  ));
+}
+
+function hasOwnedPreviewTerminal(vscode) {
+  return ownedPreviewTerminals(vscode).length > 0;
+}
+
+function stopOwnedPreviewTerminals(vscode) {
+  for (const terminal of ownedPreviewTerminals(vscode)) {
+    if (typeof terminal.dispose !== "function") continue;
+    try { terminal.dispose(); } catch {}
+  }
+}
+
+async function waitForPreviewToStop(url, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const current = await probe(url);
+    if (!current.available && !isAssetFailure(current)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return false;
+}
+
+function startPreview(vscode, root, command, forceNew) {
+  const existing = forceNew ? null : vscode.window.terminals.find((item) => item.name === PREVIEW_TERMINAL);
   const terminal = existing || vscode.window.createTerminal({ name: PREVIEW_TERMINAL, cwd: root });
   terminal.show(true);
   terminal.sendText(command);
@@ -502,5 +543,8 @@ module.exports = {
   extractLocalAssets,
   recoverFlagSocket,
   ensureStaticPreview,
+  isAssetFailure,
+  hasOwnedPreviewTerminal,
+  stopOwnedPreviewTerminals,
   createPreviewRunner,
 };
