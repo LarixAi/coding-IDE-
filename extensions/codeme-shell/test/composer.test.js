@@ -3,7 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider, ControlledToolProvider } = require("../../../packages/agent-runtime");
-const { composerKeyAction, composerStage, composerActivity, diffsByFile, formatGoal, droppedPaths, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
+const { composerKeyAction, composerStage, composerActivity, compactTools, linePreview, diffsByFile, formatGoal, droppedPaths, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
 const { describeFileRead } = require("../image-meta");
 const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels } = require("../composer-session");
 const { OllamaModelProvider } = require("../../../packages/agent-runtime/model-provider");
@@ -96,7 +96,61 @@ async function main() {
   assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "file.read", args: { path: "src/app.js" } } }), "Reading src/app.js");
   assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "repo.search", args: { query: "src/" } } }), "Searching src/");
   assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "browser.check", args: { url: "http://127.0.0.1:4173/" } } }), "Checking http://127.0.0.1:4173/");
+  assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "workspace.inspect", args: {} } }), "Inspecting workspace…");
+  assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "dir.create", args: { path: "src" } } }), "Creating folder src");
   assert.strictEqual(composerActivity({ lifecycle: "verifying" }), "Verifying");
+
+  const createdPreview = linePreview(null, "<h1>Hello CodeMe</h1>\n");
+  assert.strictEqual(createdPreview.additions, 1);
+  assert.strictEqual(createdPreview.removals, 0);
+  assert.strictEqual(createdPreview.lines[0].type, "add");
+
+  const editedPreview = linePreview("const value = 1;\n", "const value = 2;\n");
+  assert.strictEqual(editedPreview.additions, 1);
+  assert.strictEqual(editedPreview.removals, 1);
+  assert.ok(editedPreview.lines.some((line) => line.type === "remove" && line.text.includes("1")));
+  assert.ok(editedPreview.lines.some((line) => line.type === "add" && line.text.includes("2")));
+
+  const liveWrite = compactTools({
+    workspace: { state: "empty" },
+    toolCalls: [],
+    inFlight: {
+      kind: "tool",
+      name: "file.write",
+      args: { path: "index.html", contents: "<h1>Hello CodeMe</h1>\n" },
+    },
+  });
+  assert.strictEqual(liveWrite.length, 1);
+  assert.strictEqual(liveWrite[0].status, "running");
+  assert.strictEqual(liveWrite[0].operation, "create");
+  assert.strictEqual(liveWrite[0].path, "index.html");
+  assert.strictEqual(liveWrite[0].preview.additions, 1);
+
+  const repeatedWrite = compactTools({
+    workspace: { state: "project" },
+    toolCalls: [
+      {
+        name: "file.read",
+        args: { path: "src/app.js" },
+        result: { ok: true, data: { contents: "const value = 1;\n" } },
+      },
+      {
+        name: "file.write",
+        args: { path: "src/app.js", contents: "const value = 2;\n" },
+        result: { ok: true, data: { path: "src/app.js" } },
+      },
+    ],
+    inFlight: {
+      kind: "tool",
+      name: "file.write",
+      args: { path: "src/app.js", contents: "const value = 3;\n" },
+    },
+  });
+  const secondEdit = repeatedWrite[repeatedWrite.length - 1];
+  assert.strictEqual(secondEdit.operation, "edit");
+  assert.ok(secondEdit.preview.lines.some((line) => line.type === "remove" && line.text.includes("2")));
+  assert.ok(secondEdit.preview.lines.some((line) => line.type === "add" && line.text.includes("3")));
+
   const files = diffsByFile("diff --git a/src/app.js b/src/app.js\n+ok\n", ["src/app.js"]);
   assert.strictEqual(files[0].path, "src/app.js");
   assert.ok(files[0].diff.includes("+ok"));
@@ -153,6 +207,10 @@ async function main() {
   assert.ok(!html.includes("Read-only"));
   assert.ok(html.includes("ResourceURLs"));
   assert.ok(html.includes("dataset.source"));
+  assert.ok(html.includes("code-preview"));
+  assert.ok(html.includes("tool-stats"));
+  assert.ok(html.includes("Created "));
+  assert.ok(html.includes("Edited "));
   assert.ok(!html.includes("qwen3.5:9b"));
   assert.ok(!html.includes("workbench.action.chat.open"));
 
