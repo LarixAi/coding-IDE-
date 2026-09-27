@@ -8,6 +8,7 @@ const { describeFileRead } = require("../image-meta");
 const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels } = require("../composer-session");
 const { OllamaModelProvider } = require("../../../packages/agent-runtime/model-provider");
 const { renderComposer } = require("../composer-view");
+const { ConversationStore } = require("../conversation-store");
 
 const ANCHOR = "codeme-attachment-anchor-not-inlined";
 
@@ -57,6 +58,7 @@ function sessionFor(root, steps, models, host, extras = {}) {
   const selection = { value: null };
   const session = new ComposerSession({
     store: extras.store || new RunStore(path.join(root, "runs")),
+    historyStore: extras.historyStore || null,
     selectionStore: {
       get: () => selection.value,
       set: (value) => { selection.value = value; },
@@ -239,6 +241,10 @@ async function main() {
   assert.ok(html.includes("Edited "));
   assert.ok(html.includes("Patched "));
   assert.ok(html.includes("Started preview process"));
+  assert.ok(html.includes('id="new-chat"'));
+  assert.ok(html.includes('id="history-toggle"'));
+  assert.ok(html.includes('id="history-panel"'));
+  assert.ok(html.includes("Chat history"));
   assert.ok(!html.includes("qwen3.5:9b"));
   assert.ok(!html.includes("workbench.action.chat.open"));
 
@@ -389,13 +395,65 @@ async function main() {
   const second = await recovered.session.submit("try again");
   assert.strictEqual(second.ok, true);
   await waitFor(recovered.session, (item) => !item.running && item.stage === "Complete");
+  assert.ok(recovered.session.thread.some((item) => item.role === "user" && item.text === "try again"));
+  assert.ok(recovered.session.thread.some((item) => item.role === "assistant" && item.text === "done"));
+
+  const callsBeforeFollowUp = recovered.provider.calls.length;
   const third = await recovered.session.submit("follow up");
   assert.strictEqual(third.ok, true);
   assert.notStrictEqual(third.runId, second.runId);
   await waitFor(recovered.session, (item) => item.runId === third.runId && !item.running && item.stage === "Complete");
+
+  assert.ok(recovered.session.thread.some((item) => item.role === "user" && item.text === "try again"));
+  assert.ok(recovered.session.thread.some((item) => item.role === "assistant" && item.text === "done"));
+  assert.ok(recovered.session.thread.some((item) => item.role === "user" && item.text === "follow up"));
+  assert.ok(recovered.session.thread.some((item) => item.role === "assistant" && item.text === "second done"));
+
+  const followUpContext = recovered.provider.calls[callsBeforeFollowUp].messages.map((message) => message.content || "").join("\n");
+  assert.ok(followUpContext.includes("try again"));
+  assert.ok(followUpContext.includes("done"));
   recovered.session.publish(second.requestId, { id: second.runId, lifecycle: "executing_tool", inFlight: { name: "file.read" }, filesChanged: ["stale.md"], toolCalls: [], outcome: null });
   assert.strictEqual(recovered.session.runId, third.runId);
   assert.ok(!recovered.session.filesChanged.includes("stale.md"));
+
+  const historyDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-chat-history-"));
+  const historyStore = new ConversationStore(historyDirectory);
+  const persistent = sessionFor(root, [
+    { text: "First saved answer" },
+    { text: "Second saved answer" },
+  ], models, null, { historyStore });
+  await persistent.session.refreshModels();
+
+  const firstChatRun = await persistent.session.submit("First saved question");
+  assert.strictEqual(firstChatRun.ok, true);
+  await waitFor(persistent.session, (item) => item.stage === "Complete" && !item.running);
+  const firstChatId = persistent.session.conversationId;
+  assert.ok(/^chat_/.test(firstChatId));
+  assert.ok(persistent.session.thread.some((item) => item.text === "First saved question"));
+  assert.ok(persistent.session.thread.some((item) => item.text === "First saved answer"));
+  assert.strictEqual(persistent.session.snapshot().conversations.length, 1);
+
+  assert.strictEqual(persistent.session.newChat().ok, true);
+  assert.strictEqual(persistent.session.conversationId, "");
+  assert.deepStrictEqual(persistent.session.thread, []);
+
+  const secondChatRun = await persistent.session.submit("Second saved question");
+  assert.strictEqual(secondChatRun.ok, true);
+  await waitFor(persistent.session, (item) => item.stage === "Complete" && !item.running);
+  const secondChatId = persistent.session.conversationId;
+  assert.notStrictEqual(secondChatId, firstChatId);
+  assert.strictEqual(persistent.session.snapshot().conversations.length, 2);
+
+  assert.strictEqual(persistent.session.openChat(firstChatId).ok, true);
+  assert.strictEqual(persistent.session.conversationId, firstChatId);
+  assert.ok(persistent.session.thread.some((item) => item.text === "First saved question"));
+  assert.ok(persistent.session.thread.some((item) => item.text === "First saved answer"));
+  assert.ok(!persistent.session.thread.some((item) => item.text === "Second saved question"));
+
+  const restored = sessionFor(root, [], models, null, { historyStore });
+  assert.strictEqual(restored.session.conversationId, firstChatId);
+  assert.ok(restored.session.thread.some((item) => item.text === "First saved question"));
+  assert.strictEqual(restored.session.snapshot().conversations.length, 2);
 
   const stale = sessionFor(root, [
     { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
