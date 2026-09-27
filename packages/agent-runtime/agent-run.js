@@ -1027,10 +1027,29 @@ function defaultVerify(run, text) {
   if (run.mode === "controlled" && writes.length === 0 && promisesFile(text)) {
     return {
       status: "failed",
-      summary: "Call file.write with the full file contents. A sentence does not change the workspace.",
+      summary: "Make the required workspace change with file.patch or file.write. A sentence does not change the workspace.",
       evidence: [],
     };
   }
+
+  const failedBrowser = unresolvedBrowserFailure(run);
+  if (run.mode === "controlled" && requiresWorkspaceRepair(run) && failedBrowser) {
+    const message = failedBrowser.result && failedBrowser.result.error && failedBrowser.result.error.message;
+    return {
+      status: "failed",
+      summary: `The latest browser verification failed${message ? `: ${message}` : ""}. Repair the workspace, then run browser.check again successfully before finishing.`,
+      evidence: ["browser.check"],
+    };
+  }
+
+  if (run.mode === "controlled" && requiresWorkspaceRepair(run) && writes.length === 0) {
+    return {
+      status: "failed",
+      summary: "This is a repair/edit request, but no workspace change has been made yet. Inspect the cause, patch the relevant file, and verify the result before finishing.",
+      evidence: [],
+    };
+  }
+
   return {
     status: "passed",
     summary: "The answer follows recorded observations",
