@@ -247,7 +247,7 @@ async function executeRun(run, options) {
       run.verificationHistory.push({ ...verification, at: new Date().toISOString() });
       store.save(run);
       if (verification.status === "passed") return finishCompleted(run, store, text);
-      if (run.progress && (/file\.write/i.test(verification.summary) || promisesFile(text))) {
+      if (run.progress && (/file\.(write|patch)/i.test(verification.summary) || promisesFile(text))) {
         run.progress.writeNow = true;
         run.progress.focus = true;
         run.progress.semanticStagnation = 0;
@@ -446,7 +446,7 @@ function runIsBuild(options) {
 
 function writtenPaths(run) {
   return (run.toolCalls || [])
-    .filter((call) => call.name === "file.write" && call.result && call.result.ok)
+    .filter((call) => (call.name === "file.write" || call.name === "file.patch") && call.result && call.result.ok)
     .map((call) => String(call.args && call.args.path || "").replace(/\\/g, "/"));
 }
 
@@ -630,17 +630,17 @@ function systemPrompt(options) {
       "Commands have no shell. Pipes, redirects, and paths outside the workspace are rejected.",
       "A failing test is an observation. Repair the source and run the test again.",
       "Describing a file change or a capability call does not perform it. Use the matching tool.",
-      "Edits require file.write. Create a folder with dir.create. Do not use terminal.run for mkdir, ls, or node -e.",
+      "Use file.patch for a precise edit to an existing file and file.write for a new file or full replacement. Create folders with dir.create. Use process.start for a long-running preview server; do not use terminal.run for servers, mkdir, ls, or node -e.",
       "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
-      "To run or inspect the local site, call browser.check.",
+      "To run or inspect the local site, use process.start only when a long-running npm preview process must be started, then call browser.check. browser.check is the verification step.",
       isLayoutJob(options)
-        ? "This is a layout job. After the HTML and CSS are read, call file.write with the full new contents, then browser.check. Do not wait for tests or git."
+        ? "This is a layout job. After the HTML and CSS are read, use file.patch for a precise existing-file edit or file.write for a full replacement, then browser.check. Do not wait for tests or git."
         : runIsFolder(options)
           ? "This job only creates the named folder with dir.create. Do not use the terminal."
           : runIsInspect(options)
             ? "This job lists the workspace. Call dir.list with path \".\" and answer from that list. Do not edit files."
             : runIsBuild(options)
-              ? "This job creates or repairs project files. Create only what the request needs. In an empty workspace, a simple static HTML/CSS request must stay dependency-free: use file.write/dir.create, do not invent package.json or a server, and read every created file back before finishing. Framework or runtime projects may use their own project tooling when the request actually requires it."
+              ? "This job creates or repairs project files. Create only what the request needs. In an empty workspace, a simple static HTML/CSS request must stay dependency-free: use file.write/dir.create, do not invent package.json or a server, and read every created file back before finishing. For existing files prefer file.patch. For a long-running dev server use process.start, then verify with browser.check. If a server accepts a port, use a numeric port; never pass the literal string --port to server.listen()."
               : "Finish only after a passing test and a git diff that shows the final edit.",
       "A claim of success is not evidence.",
       strategyGuidance(options.strategyRecord),
@@ -669,7 +669,7 @@ function defaultVerify(run, text) {
   if (!run.observations.length) {
     return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
   }
-  const writes = (run.toolCalls || []).filter((call) => call.name === "file.write" && call.result && call.result.ok);
+  const writes = (run.toolCalls || []).filter((call) => (call.name === "file.write" || call.name === "file.patch") && call.result && call.result.ok);
   if (run.taskClass === "inspect" && run.mode === "controlled") {
     const listed = (run.toolCalls || []).some((call) => call.name === "dir.list" && call.result && call.result.ok);
     if (listed && String(text).trim()) {
@@ -851,7 +851,7 @@ function touch(run, lifecycle, detail) {
 }
 
 function recordChange(run, call, result) {
-  if (result.ok && call.name === "file.write" && call.args && call.args.path) {
+  if (result.ok && (call.name === "file.write" || call.name === "file.patch") && call.args && call.args.path) {
     if (run.progress) run.progress.writeNow = false;
     addChanged(run, call.args.path);
     setPlan(run, "edit", "in_progress");
@@ -954,7 +954,7 @@ async function settleTurn(run, store, registry, options, signal) {
   }
   if (outcome.action === "replan" || (run.progress.writeNow && run.mode === "controlled")) {
     const notice = run.progress.writeNow && run.taskClass !== "layout" && !isSiteLayoutGoal(run.goal)
-      ? `Call file.write now. ${run.verification && run.verification.summary ? run.verification.summary : "Put the full file contents in that tool call."} A sentence does not change the workspace.`
+      ? `Call file.patch or file.write now. ${run.verification && run.verification.summary ? run.verification.summary : "Make the file change with a tool call."} A sentence does not change the workspace.`
       : applyEditNotice(run.progress);
     if (!run.progress.writeNow) run.progress.writeNow = false;
     if (run.taskClass === "layout" || isSiteLayoutGoal(run.goal)) run.progress.writeNow = false;
