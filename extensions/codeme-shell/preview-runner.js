@@ -448,7 +448,15 @@ function createPreviewRunner(vscode) {
         if (!running.available) {
           if (isAssetFailure(running) && hasOwnedPreviewTerminal(vscode)) {
             stopOwnedPreviewTerminals(vscode);
-            await waitForPreviewToStop(plan.url, 4000);
+            const stopped = await waitForPreviewToStop(plan.url, 4000);
+            if (!stopped) {
+              return {
+                available: false,
+                code: "preview_restart_failed",
+                message: "CodeMe could not stop its previous preview process on this port. Stop the CodeMe preview terminal and retry.",
+                url: plan.url,
+              };
+            }
             startPreview(vscode, root, plan.command, true);
             await openPreview(vscode, plan.url);
             return await waitForPage(plan.url, 45000);
