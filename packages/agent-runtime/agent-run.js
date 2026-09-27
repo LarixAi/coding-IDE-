@@ -605,7 +605,7 @@ function verifyBuild(run) {
       };
     }
 
-    const preview = (run.toolCalls || []).find((call) => call.name === "browser.check" && call.result && call.result.ok);
+    const preview = latestSuccessfulBrowserPreview(run);
     if (!preview) {
       return {
         status: "failed",
@@ -614,21 +614,46 @@ function verifyBuild(run) {
       };
     }
 
+    const interactionIssue = browserInteractionEvidenceIssue(run, run.toolCalls || []);
+    if (interactionIssue) {
+      return {
+        status: "failed",
+        summary: interactionIssue,
+        evidence: ["file.write", "file.read", "browser.check"],
+      };
+    }
+
     return {
       status: "passed",
-      summary: "The dependency-free static site was created, read back, and verified in the browser preview.",
-      evidence: ["file.write", "file.read", "browser.check"],
+      summary: isInteractiveBrowserGoal(run.goal)
+        ? "The dependency-free static site was created, read back, and its requested interaction was verified in a real browser."
+        : "The dependency-free static site was created, read back, and verified in the browser preview.",
+      evidence: isInteractiveBrowserGoal(run.goal)
+        ? ["file.write", "file.read", "browser.check", "browser.interact"]
+        : ["file.write", "file.read", "browser.check"],
     };
   }
 
-  const preview = (run.toolCalls || []).some((call) => call.name === "browser.check" && call.result && call.result.ok);
+  const preview = Boolean(latestSuccessfulBrowserPreview(run));
   if (isNewWebsite(run.goal)) {
     const missing = ["package.json", "server.js", "index.html"].filter((name) => !hasWritten(paths, name));
     if (!missing.length && preview) {
+      const interactionIssue = browserInteractionEvidenceIssue(run, run.toolCalls || []);
+      if (interactionIssue) {
+        return {
+          status: "failed",
+          summary: interactionIssue,
+          evidence: ["file.write", "browser.check"],
+        };
+      }
       return {
         status: "passed",
-        summary: "The site files exist and the preview check succeeded",
-        evidence: ["file.write", "browser.check"],
+        summary: isInteractiveBrowserGoal(run.goal)
+          ? "The site files exist and the requested interaction passed in a real browser"
+          : "The site files exist and the preview check succeeded",
+        evidence: isInteractiveBrowserGoal(run.goal)
+          ? ["file.write", "browser.check", "browser.interact"]
+          : ["file.write", "browser.check"],
       };
     }
     const needed = missing.length ? `Still write ${missing.join(", ")} with file.write.` : "Call browser.check with http://127.0.0.1:4173/.";
@@ -637,10 +662,22 @@ function verifyBuild(run) {
   if (isWebsiteBuild(run.goal)) {
     const wrotePage = paths.some((file) => /\.(html?|css|js)$/i.test(file));
     if (wrotePage && preview) {
+      const interactionIssue = browserInteractionEvidenceIssue(run, run.toolCalls || []);
+      if (interactionIssue) {
+        return {
+          status: "failed",
+          summary: interactionIssue,
+          evidence: ["file.write", "browser.check"],
+        };
+      }
       return {
         status: "passed",
-        summary: "The missing site file was written and the preview check succeeded",
-        evidence: ["file.write", "browser.check"],
+        summary: isInteractiveBrowserGoal(run.goal)
+          ? "The site change was written and the requested interaction passed in a real browser"
+          : "The missing site file was written and the preview check succeeded",
+        evidence: isInteractiveBrowserGoal(run.goal)
+          ? ["file.write", "browser.check", "browser.interact"]
+          : ["file.write", "browser.check"],
       };
     }
     if (!wrotePage) {
@@ -1361,12 +1398,28 @@ function defaultVerify(run, text) {
     const htmlWrite = writes.some((call) => /\.(html?|css)$/i.test(String(call.args && call.args.path || "")));
     const lastWrite = writes[writes.length - 1];
     const after = lastWrite ? (run.toolCalls || []).filter((call) => call.iteration > lastWrite.iteration) : [];
-    const preview = after.find((call) => call.name === "browser.check" && call.result && call.result.ok);
+    const preview = after.find((call) => (
+      (call.name === "browser.check" || call.name === "browser.interact")
+      && call.result
+      && call.result.ok
+    ));
     if (htmlWrite && preview) {
+      const interactionIssue = browserInteractionEvidenceIssue(run, after);
+      if (interactionIssue) {
+        return {
+          status: "failed",
+          summary: interactionIssue,
+          evidence: ["file.write", "browser.check"],
+        };
+      }
       return {
         status: "passed",
-        summary: "The layout change is visible in the preview",
-        evidence: ["file.write", "browser.check"],
+        summary: isInteractiveBrowserGoal(run.goal)
+          ? "The layout change and requested interaction were verified in a real browser"
+          : "The layout change is visible in the preview",
+        evidence: isInteractiveBrowserGoal(run.goal)
+          ? ["file.write", "browser.check", "browser.interact"]
+          : ["file.write", "browser.check"],
       };
     }
     return {
