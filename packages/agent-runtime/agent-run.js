@@ -227,7 +227,7 @@ async function executeRun(run, options) {
   while (!STOPPED.has(run.lifecycle)) {
     if (cancelled(run, signal)) return finishCancelled(run, store);
     if (run.iteration >= run.maxIterations) {
-      const done = maybeFinishLayout(run, store, lastDecisionText(run));
+      const done = maybeFinishVerifiedWork(run, store, lastDecisionText(run));
       if (done) return done;
       if (grantRepairReserve(run, store)) continue;
       return finishFailed(run, store, "iteration_limit", "Maximum iterations reached");
@@ -521,7 +521,7 @@ async function executeRun(run, options) {
       }
     }
 
-    const done = maybeFinishLayout(run, store, text);
+    const done = maybeFinishVerifiedWork(run, store, text);
     if (done) return done;
 
     const settled = await settleTurn(run, store, capabilityRegistry, options, signal);
@@ -1010,6 +1010,35 @@ function requiresWorkspaceRepair(run) {
     || text.includes("does not work");
 }
 
+function latestSuccessfulBrowserPreview(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call.name !== "browser.check") continue;
+    if (call.result && call.result.ok) return call;
+    return null;
+  }
+  return null;
+}
+
+function requestedWebAssetsNotLoaded(run, previewCall) {
+  const goal = String(run && run.goal || "");
+  const requested = [];
+  for (const match of goal.matchAll(/\b([A-Za-z0-9._/-]+\.(?:css|js|mjs))\b/gi)) {
+    const file = String(match[1] || "").replace(/^\/+/, "");
+    if (file && !requested.includes(file)) requested.push(file);
+  }
+  if (!requested.length) return [];
+  const data = previewCall && previewCall.result && previewCall.result.data;
+  const assets = data && Array.isArray(data.assets) ? data.assets : [];
+  const loaded = new Set(
+    assets
+      .filter((asset) => asset && asset.ok)
+      .map((asset) => String(asset.path || "").replace(/^\/+/, "").replace(/\\/g, "/")),
+  );
+  return requested.filter((file) => !loaded.has(file.replace(/\\/g, "/")));
+}
+
 function unresolvedBrowserFailure(run) {
   const calls = (run && run.toolCalls) || [];
   for (let index = calls.length - 1; index >= 0; index -= 1) {
@@ -1284,6 +1313,41 @@ function defaultVerify(run, text) {
       evidence,
     };
   }
+  const failedBrowser = unresolvedBrowserFailure(run);
+
+  if (
+    run.mode === "controlled"
+    && requiresWorkspaceRepair(run)
+    && writes.length === 0
+    && isBrowserEditTask(run)
+    && !failedBrowser
+  ) {
+    const preview = latestSuccessfulBrowserPreview(run);
+    if (preview) {
+      const missingRequestedAssets = requestedWebAssetsNotLoaded(run, preview);
+      if (missingRequestedAssets.length) {
+        return {
+          status: "failed",
+          summary: `The page is reachable, but these requested assets are not confirmed loaded: ${missingRequestedAssets.join(", ")}.`,
+          evidence: ["browser.check"],
+        };
+      }
+      const interactionIssue = webInteractionIssue(run, []);
+      if (!interactionIssue) {
+        return {
+          status: "passed",
+          summary: "The workspace already satisfies the requested web repair and the result is verified in the browser.",
+          evidence: ["file.read", "browser.check"],
+        };
+      }
+      return {
+        status: "failed",
+        summary: interactionIssue,
+        evidence: ["file.read", "browser.check"],
+      };
+    }
+  }
+
   if (run.mode === "controlled" && writes.length === 0 && promisesFile(text)) {
     return {
       status: "failed",
@@ -1292,7 +1356,6 @@ function defaultVerify(run, text) {
     };
   }
 
-  const failedBrowser = unresolvedBrowserFailure(run);
   if (run.mode === "controlled" && requiresWorkspaceRepair(run) && failedBrowser) {
     const message = failedBrowser.result && failedBrowser.result.error && failedBrowser.result.error.message;
     return {
@@ -1332,6 +1395,21 @@ function finishCompleted(run, store, text) {
 function lastDecisionText(run) {
   const decision = run.decisions && run.decisions[run.decisions.length - 1];
   return decision && decision.text ? String(decision.text) : "";
+}
+
+function maybeFinishVerifiedWork(run, store, text) {
+  if (run.mode !== "controlled") return null;
+  if (
+    run.taskClass !== "layout"
+    && !isSiteLayoutGoal(run.goal)
+    && !requiresWorkspaceRepair(run)
+  ) return null;
+
+  const verification = defaultVerify(run, text || "Verified from recorded checks.");
+  if (verification.status !== "passed") return null;
+  run.verification = verification;
+  run.verificationHistory.push({ ...verification, at: new Date().toISOString() });
+  return finishCompleted(run, store, text || verification.summary);
 }
 
 function maybeFinishLayout(run, store, text) {
