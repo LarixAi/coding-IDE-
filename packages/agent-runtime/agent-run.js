@@ -2240,16 +2240,23 @@ function promisesFile(text) {
 async function prepareResearch(run, capabilityRegistry, options, signal, store) {
   if (isDependencyFreeStatic(run && run.projectDecision)) return;
   if (isLocalRepairWithoutOutsideEvidence(run)) return;
-  if (!needsOutsideEvidence(run && run.goal)) return;
   if (run.taskClass === "layout" || run.taskClass === "folder" || isSiteLayoutGoal(run.goal) || isWorkspaceInventory(run.goal) || isLocalFollowUp(run.goal)) return;
   if (run.progress && run.progress.runtimeDirectedEscalation) return;
+
   const listed = capabilityRegistry && typeof capabilityRegistry.list === "function" ? capabilityRegistry.list() : [];
-  const research = recommendCapability(listed);
-  if (!research || !research.name) return;
   const selected = selectCapability(run.goal, listed, {
     composerMode: options.composerMode || run.composerMode,
     taskClass: run.taskClass,
   });
+  const needsOpeningEvidence = (
+    needsOutsideEvidence(run && run.goal)
+    || run.taskClass === "build"
+    || Boolean(selected && selected.category === "task")
+  );
+  if (!needsOpeningEvidence) return;
+
+  const research = recommendCapability(listed);
+  if (!research || !research.name) return;
   run.progress.recommendedName = research.name;
   run.progress.recommendedDescription = research.description || "";
   run.progress.recommendedFields = (research.inputSchema && research.inputSchema.required) || [];
