@@ -165,10 +165,15 @@ function previousFileContents(run, file, beforeIndex) {
   const calls = (run && run.toolCalls) || [];
   for (let index = Math.min(beforeIndex, calls.length) - 1; index >= 0; index -= 1) {
     const call = calls[index];
-    if (call.name !== "file.read" || !call.result || !call.result.ok) continue;
+    if (!call.result || !call.result.ok) continue;
     if (String(call.args && call.args.path || "") !== file) continue;
-    const contents = call.result.data && call.result.data.contents;
-    if (typeof contents === "string") return contents;
+    if (call.name === "file.write" && typeof (call.args && call.args.contents) === "string") {
+      return call.args.contents;
+    }
+    if (call.name === "file.read") {
+      const contents = call.result.data && call.result.data.contents;
+      if (typeof contents === "string") return contents;
+    }
   }
   return null;
 }
