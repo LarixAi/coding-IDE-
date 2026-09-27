@@ -133,9 +133,38 @@ async function waitForPage(url, timeoutMs) {
   };
 }
 
+function recoverFlagSocket(vscode, root) {
+  const candidate = path.join(root, "--port");
+  let stat;
+  try {
+    stat = fs.lstatSync(candidate);
+  } catch {
+    return false;
+  }
+  if (!stat.isSocket()) return false;
+
+  for (const terminal of vscode.window.terminals || []) {
+    if (terminal && terminal.name === PREVIEW_TERMINAL && typeof terminal.dispose === "function") {
+      try { terminal.dispose(); } catch {}
+    }
+  }
+  try {
+    fs.unlinkSync(candidate);
+  } catch {}
+  return true;
+}
+
 function createPreviewRunner(vscode) {
   return {
     async check(root, requestedUrl) {
+      if (recoverFlagSocket(vscode, root)) {
+        return {
+          available: false,
+          code: "invalid_port_binding",
+          message: "The server treated --port as a Unix socket path. Fix server.js so server.listen() receives a numeric port such as 4173, then retry the preview.",
+          url: requestedUrl,
+        };
+      }
       const plan = previewPlan(root, requestedUrl);
       if (!plan.ok) {
         return {
@@ -209,5 +238,6 @@ module.exports = {
   previewPlan,
   resolvePreviewUrl,
   portFromText,
+  recoverFlagSocket,
   createPreviewRunner,
 };
