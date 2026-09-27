@@ -1739,6 +1739,124 @@ async function main() {
     assert.strictEqual(host.state.reads, 2);
   });
 
+  await test("failed process logs must be read before a repair patch is allowed", async () => {
+    const root = tempDir();
+    fs.writeFileSync(path.join(root, "server.js"), 'module.exports = { value: "broken" };\n', "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      name: "process-recovery",
+      scripts: { start: "node server.js" },
+    }, null, 2), "utf8");
+
+    let patches = 0;
+    let logReads = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 2,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: ["server.js", "package.json"].map((filePath) => ({ path: filePath, type: "file" })),
+        };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile(filePath, oldText, newText) {
+        patches += 1;
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        assert.ok(before.includes(oldText));
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile() { throw new Error("file.write should not be needed"); },
+      async createDirectory(dirPath) { return { path: dirPath }; },
+      async search() { return { query: "", matches: [] }; },
+      async runTerminal() { throw new Error("terminal.run should not be used"); },
+      async processStatus() {
+        return { found: true, status: "failed", command: "npm start", exitCode: 1 };
+      },
+      async processLogs() {
+        logReads += 1;
+        return {
+          found: true,
+          status: "failed",
+          command: "npm start",
+          exitCode: 1,
+          output: "ReferenceError: broken is not defined at server.js:1",
+        };
+      },
+      async startProcess() { throw new Error("process.start should not be used"); },
+      async runTests() { throw new Error("no tests"); },
+      async gitStatus() { throw new Error("not git"); },
+      async gitDiff() { throw new Error("not git"); },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck() { throw new Error("browser not needed"); },
+      async browserInteract() { throw new Error("browser not needed"); },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "process.status", args: {} }] },
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: { path: "server.js", oldText: '"broken"', newText: '"fixed"' },
+        }],
+      },
+      { toolCalls: [{ name: "process.logs", args: {} }] },
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: { path: "server.js", oldText: '"broken"', newText: '"fixed"' },
+        }],
+      },
+      { toolCalls: [{ name: "file.read", args: { path: "server.js" } }] },
+      { text: "The failed process evidence was used and the repair was saved." },
+    ]);
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: "Fix the server implementation after the failed process.",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 8,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(patches, 1);
+    assert.strictEqual(logReads, 1);
+    assert.ok(fs.readFileSync(path.join(root, "server.js"), "utf8").includes('"fixed"'));
+
+    const patchCalls = run.toolCalls.filter((call) => call.name === "file.patch");
+    assert.strictEqual(patchCalls.length, 2);
+    assert.strictEqual(patchCalls[0].result.ok, false);
+    assert.strictEqual(patchCalls[0].result.error.code, "policy_denied");
+    assert.strictEqual(patchCalls[0].ruleDecision.rule, "recovery.process_logs_required");
+    assert.strictEqual(patchCalls[0].ruleDecision.tier, "recovery");
+    assert.strictEqual(patchCalls[1].result.ok, true);
+
+    const deniedIndex = run.toolCalls.indexOf(patchCalls[0]);
+    const logsIndex = run.toolCalls.findIndex((call) => call.name === "process.logs" && call.result && call.result.ok);
+    const allowedIndex = run.toolCalls.indexOf(patchCalls[1]);
+    assert.ok(logsIndex > deniedIndex);
+    assert.ok(allowedIndex > logsIndex);
+  });
+
   await test("iteration limit stops a run that never finishes", async () => {
     const files = ["package.json", "README.md", "src/components/Badge.tsx"];
     const provider = new ScriptedModelProvider(files.map((file) => ({ toolCalls: [{ name: "file.read", args: { path: file } }] })));
