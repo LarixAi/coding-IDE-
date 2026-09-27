@@ -50,6 +50,25 @@ async function run() {
     assert.strictEqual(read.data.contents, "base\ncodeme-needle\n");
   });
 
+  await test("file.patch replaces exactly one existing span", async () => {
+    const patched = await runTool("file.patch", {
+      path: "README.md",
+      oldText: "base",
+      newText: "patched-base",
+    });
+    assert.strictEqual(patched.ok, true, JSON.stringify(patched));
+    assert.strictEqual(patched.data.replacements, 1);
+    const read = await runTool("file.read", { path: "README.md" });
+    assert.strictEqual(read.ok, true);
+    assert.strictEqual(read.data.contents, "patched-base\ncodeme-needle\n");
+  });
+
+  await test("workspace paths cannot be mistaken for command flags", async () => {
+    const result = await runTool("file.read", { path: "--port" });
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.error.code, "flag_like_path");
+  });
+
   await test("file.read rejects a path outside the workspace", async () => {
     const result = await runTool("file.read", { path: "../outside.txt" });
     assert.strictEqual(result.ok, false);
