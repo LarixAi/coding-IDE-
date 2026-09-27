@@ -89,8 +89,6 @@ function lastProgressTalk(run) {
 
 function composerActivity(run) {
   const stage = composerStage(run);
-  const talk = lastProgressTalk(run);
-  if (talk && stage !== "Complete" && stage !== "Failed" && stage !== "Cancelled") return talk;
   const args = run && run.inFlight && run.inFlight.args ? run.inFlight.args : {};
   const target = args.path || args.query || args.url || "";
   if (stage === "Understanding") return "Understanding…";
