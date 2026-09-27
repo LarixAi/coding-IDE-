@@ -176,8 +176,8 @@ function isolationBackend() {
     const bwrap = findExecutable("bwrap");
     if (bwrap) {
       return {
-        kind: "bubblewrap",
-        securityBoundary: true,
+        kind: "bubblewrap-readonly-host",
+        securityBoundary: false,
         network: "denied",
         executable: bwrap,
       };
@@ -189,6 +189,29 @@ function isolationBackend() {
     network: "best_effort_blocked",
     executable: "",
   };
+}
+
+function isSyntaxOnly(parsed) {
+  return Boolean(
+    parsed
+    && parsed.program === "node"
+    && Array.isArray(parsed.args)
+    && parsed.args.length === 2
+    && parsed.args[0] === "--check"
+  );
+}
+
+function executableInfo(program) {
+  const found = findExecutable(program);
+  if (!found) return { executable: program, readRoot: "" };
+  let resolved = found;
+  try { resolved = fs.realpathSync(found); } catch {}
+  const normalized = resolved.replace(/\\/g, "/");
+  if (normalized.startsWith("/opt/homebrew/")) return { executable: resolved, readRoot: "/opt/homebrew" };
+  if (normalized.startsWith("/usr/") || normalized.startsWith("/bin/") || normalized.startsWith("/sbin/")) {
+    return { executable: resolved, readRoot: "" };
+  }
+  return { executable: resolved, readRoot: path.dirname(path.dirname(resolved)) };
 }
 
 function sandboxEnvironment(root) {
@@ -220,8 +243,25 @@ function sandboxEnvironment(root) {
   };
 }
 
-function macProfile(root) {
-  const escaped = String(root).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+function macProfile(root, runtimeRoot) {
+  const quote = (value) => String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const readable = [
+    root,
+    "/System",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/Library/Frameworks",
+    "/Library/Apple",
+    "/opt/homebrew",
+    "/private/var/db/dyld",
+    "/dev",
+  ];
+  if (runtimeRoot) readable.push(runtimeRoot);
+  const readRules = [...new Set(readable)]
+    .filter((item) => item && fs.existsSync(item))
+    .map((item) => `(subpath "${quote(item)}")`)
+    .join(" ");
   return [
     "(version 1)",
     "(deny default)",
@@ -229,20 +269,21 @@ function macProfile(root) {
     "(allow signal)",
     "(allow sysctl-read)",
     "(allow mach-lookup)",
-    "(allow file-read*)",
-    `(allow file-write* (subpath "${escaped}"))`,
+    `(allow file-read* ${readRules})`,
+    `(allow file-write* (subpath "${quote(root)}"))`,
     "(deny network*)",
   ].join("");
 }
 
 function commandForBackend(backend, sandboxRoot, parsed) {
+  const program = executableInfo(parsed.program);
   if (backend.kind === "macos-sandbox-exec") {
     return {
       executable: backend.executable,
-      args: ["-p", macProfile(sandboxRoot), parsed.program, ...parsed.args],
+      args: ["-p", macProfile(sandboxRoot, program.readRoot), program.executable, ...parsed.args],
     };
   }
-  if (backend.kind === "bubblewrap") {
+  if (backend.kind === "bubblewrap-readonly-host") {
     return {
       executable: backend.executable,
       args: [
@@ -254,12 +295,12 @@ function commandForBackend(backend, sandboxRoot, parsed) {
         "--proc", "/proc",
         "--dev", "/dev",
         "--",
-        parsed.program,
+        program.executable,
         ...parsed.args,
       ],
     };
   }
-  return { executable: parsed.program, args: parsed.args };
+  return { executable: program.executable, args: parsed.args };
 }
 
 function executeCommand(spec, options) {
@@ -337,7 +378,8 @@ function linkDependencies(workspaceRoot, sandboxRoot, backend) {
   }
 }
 
-function createSandboxRunner() {
+function createSandboxRunner(options = {}) {
+  const allowSoftExecution = options.allowSoftExecution === true;
   return {
     async run(workspaceRoot, input) {
       const root = path.resolve(String(workspaceRoot || ""));
@@ -360,6 +402,20 @@ function createSandboxRunner() {
       try {
         copied = copyWorkspace(root, sandboxRoot);
         const backend = isolationBackend();
+        if (!backend.securityBoundary && !allowSoftExecution && !isSyntaxOnly(parsed)) {
+          return {
+            available: false,
+            code: "sandbox_unavailable",
+            message: "A strong OS sandbox is not available for executable project code. Only node --check syntax validation is allowed without one.",
+            command: String(args.command || ""),
+            isolation: backend.kind,
+            securityBoundary: false,
+            network: backend.network,
+            workspace: "ephemeral_copy",
+            discarded: true,
+            changedPaths: [],
+          };
+        }
         const dependenciesAvailable = linkDependencies(root, sandboxRoot, backend);
         const env = sandboxEnvironment(sandboxRoot);
         const spec = commandForBackend(backend, sandboxRoot, parsed);
@@ -371,6 +427,7 @@ function createSandboxRunner() {
         );
 
         return {
+          available: true,
           command: String(args.command || ""),
           exitCode: executed.exitCode,
           stdout: executed.stdout,
@@ -397,6 +454,7 @@ function createSandboxRunner() {
 
 module.exports = {
   parseSandboxCommand,
+  isSyntaxOnly,
   isolationBackend,
   copyWorkspace,
   changedPaths,
