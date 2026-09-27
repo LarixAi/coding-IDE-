@@ -173,7 +173,18 @@ async function executeRun(run, options) {
   const folder = await createRequestedFolder(run, registry, store);
   if (folder) return folder;
   if (!cancelled(run, signal)) await prepareResearch(run, capabilityRegistry, options, signal, store);
-  if (!cancelled(run, signal)) await showWorkspace(run, registry, store);
+  if (!cancelled(run, signal)) {
+    const workspace = await showWorkspace(run, registry, store);
+    if (workspace && workspace.ok === false) {
+      const error = workspace.error || {};
+      return finishFailed(
+        run,
+        store,
+        error.code || "workspace_inspection_failed",
+        error.message || "CodeMe could not inspect the active workspace",
+      );
+    }
+  }
 
   while (!STOPPED.has(run.lifecycle)) {
     if (cancelled(run, signal)) return finishCancelled(run, store);
@@ -882,16 +893,58 @@ async function maybeDirectSelected(run, selected, registry, options, signal, sto
 }
 
 async function showWorkspace(run, registry, store) {
-  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return;
-  if (run.taskClass === "folder") return;
-  if (!registry.definitions().some((tool) => tool.name === "dir.list")) return;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return null;
+  if (run.taskClass === "folder") return null;
+
+  const definitions = registry.definitions();
+  if (definitions.some((tool) => tool.name === "workspace.inspect")) {
+    let inspected;
+    try {
+      inspected = await registry.call("workspace.inspect", {});
+    } catch (error) {
+      inspected = {
+        ok: false,
+        tool: "workspace.inspect",
+        error: {
+          code: "workspace_inspection_failed",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+
+    if (!inspected || !inspected.ok) return inspected || {
+      ok: false,
+      tool: "workspace.inspect",
+      error: { code: "workspace_inspection_failed", message: "Workspace inspection returned no result" },
+    };
+
+    const data = inspected.data && typeof inspected.data === "object" ? inspected.data : {};
+    run.workspace = data;
+    if (!Array.isArray(run.events)) run.events = [];
+    run.events.push({
+      type: "workspace",
+      state: data.state || "unknown",
+      root: data.root || "",
+      entries: typeof data.entries === "number" ? data.entries : null,
+      at: new Date().toISOString(),
+    });
+    run.messages.push({
+      role: "user",
+      content: `CodeMe inspected the active workspace before this run. Treat this as trusted local context: ${JSON.stringify(data)}. Do not invent a different project root.`,
+    });
+    store.save(run);
+
+    if (data.state === "empty") return inspected;
+  }
+
+  if (!definitions.some((tool) => tool.name === "dir.list")) return null;
   let result;
   try {
     result = await registry.call("dir.list", { path: "." });
   } catch {
-    return;
+    return null;
   }
-  if (!result || !result.ok) return;
+  if (!result || !result.ok) return null;
   const entries = result.data && Array.isArray(result.data.entries) ? result.data.entries : [];
   const files = entries.slice(0, 80).map((entry) => entry.path).filter(Boolean);
   run.messages.push({
@@ -899,6 +952,7 @@ async function showWorkspace(run, registry, store) {
     content: `Workspace files: ${files.join(", ") || "none"}. This is the open folder. Use these paths. Do not invent a different project.`,
   });
   store.save(run);
+  return result;
 }
 
 function promisesFile(text) {
