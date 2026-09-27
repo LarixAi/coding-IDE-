@@ -767,18 +767,7 @@ async function main() {
         ],
       },
       { toolCalls: [{ name: "browser.check", args: { url: "styles.css" } }] },
-      {
-        toolCalls: [{
-          name: "browser.interact",
-          args: {
-            url: "index.html",
-            action: "click",
-            targetText: "Click Me",
-            expectedText: "It works!",
-          },
-        }],
-      },
-      { text: "This should never be needed because the run should auto-complete." },
+      { text: "This should never be needed because CodeMe should auto-verify the click." },
     ]);
 
     const { store } = trackedStore(tempDir());
@@ -797,15 +786,17 @@ async function main() {
     assert.strictEqual(run.filesChanged.length, 0);
     assert.strictEqual(run.verification.status, "passed");
     assert.ok(/already satisfied|real browser/i.test(run.verification.summary));
-    assert.strictEqual(provider.calls.length, 3);
+    assert.strictEqual(provider.calls.length, 2);
     assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.result && call.result.ok));
     assert.ok(run.toolCalls.some((call) => (
       call.name === "browser.interact"
+      && call.directedBy === "runtime"
       && call.result
       && call.result.ok
       && call.result.data
       && call.result.data.afterText === "It works!"
     )));
+    assert.ok(!String(run.error && run.error.message || "").includes("no workspace change"));
   });
 
   await test("failed web assets force server repair before completion", async () => {
