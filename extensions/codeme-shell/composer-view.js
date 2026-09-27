@@ -364,7 +364,7 @@ function renderComposer(nonce) {
         const item = items[index];
         const row = document.createElement("details");
         row.className = "tool-card " + (item.status || "");
-        const hasPreview = Boolean(item.name === "file.write" && item.preview && item.preview.lines && item.preview.lines.length);
+        const hasPreview = Boolean((item.name === "file.write" || item.name === "file.patch") && item.preview && item.preview.lines && item.preview.lines.length);
         row.open = hasPreview && (item.status === "running" || index >= items.length - 3);
 
         const summary = document.createElement("summary");
@@ -377,7 +377,7 @@ function renderComposer(nonce) {
         summary.appendChild(kind);
         summary.appendChild(label);
 
-        if (item.name === "file.write" && item.preview) {
+        if ((item.name === "file.write" || item.name === "file.patch") && item.preview) {
           const stats = document.createElement("span");
           stats.className = "tool-stats";
           const add = document.createElement("span");
@@ -430,7 +430,7 @@ function renderComposer(nonce) {
       }
     }
     function toolKind(item) {
-      if (item.name === "file.write" || item.name === "file.read") {
+      if (item.name === "file.write" || item.name === "file.patch" || item.name === "file.read") {
         const name = String(item.path || "");
         const dot = name.lastIndexOf(".");
         return dot >= 0 ? name.slice(dot + 1).toUpperCase().slice(0, 4) : "FILE";
@@ -440,6 +440,7 @@ function renderComposer(nonce) {
       if (item.name === "repo.search") return "FIND";
       if (item.name === "tests.run") return "TEST";
       if (item.name === "terminal.run") return "TERM";
+      if (item.name === "process.start") return "PROC";
       if (item.name === "browser.check") return "WEB";
       if (item.name === "capability.invoke" || item.name === "capability.list") return "HUB";
       if (item.name === "diagnostics.run") return "DIAG";
@@ -458,9 +459,11 @@ function renderComposer(nonce) {
           : (live ? "Editing " : "Edited ");
         return verb + (item.path || "file");
       }
+      if (item.name === "file.patch") return (live ? "Patching " : "Patched ") + (item.path || "file");
       if (item.name === "repo.search") return (live ? "Searching " : "Searched ") + (item.path || "workspace");
       if (item.name === "tests.run") return live ? "Running tests" : "Ran tests";
       if (item.name === "terminal.run") return live ? "Running command" : "Ran command";
+      if (item.name === "process.start") return live ? "Starting preview process" : "Started preview process";
       if (item.name === "browser.check") return live ? "Checking preview" : "Checked preview";
       if (item.name === "diagnostics.run") return live ? "Checking diagnostics" : "Checked diagnostics";
       if (item.name === "git.diff") return live ? "Reviewing changes" : "Reviewed changes";
