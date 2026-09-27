@@ -118,17 +118,8 @@ function isWebsiteBuild(goal) {
   return isBuildGoal(goal) && /\b(website|site|page)\b/i.test(String(goal || ""));
 }
 
-function isSimpleStaticScaffoldGoal(goal) {
-  const text = String(goal || "").toLowerCase();
-  if (!isWebsiteBuild(goal)) return false;
-  const explicitlyStatic = /\b(simple|basic|static|html|css)\b/.test(text);
-  if (!explicitlyStatic) return false;
-  const needsRuntime = /\b(react|next(?:\.js)?|vue|vite|angular|svelte|node|express|server|backend|database|api|payment|payments|auth|login|typescript|framework|npm|package|full[- ]?stack|production|e-?commerce|shop|dashboard|booking|bid)\b/.test(text);
-  return !needsRuntime;
-}
-
 function strategyGuidance(strategy) {
   return (strategy && strategy.guidance) || STRATEGIES.general.guidance;
 }
 
-module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite, isSimpleStaticScaffoldGoal };
+module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite };
