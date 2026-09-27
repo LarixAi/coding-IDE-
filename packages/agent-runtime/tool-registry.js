@@ -155,7 +155,7 @@ class ToolRegistry {
 
   definitions() {
     if (typeof this.provider.definitions === "function") return this.provider.definitions();
-    return READ_ONLY_TOOLS.map((name) => ({ name, ...DEFINITIONS[name] }));
+    return [];
   }
 
   async call(name, args) {
