@@ -708,11 +708,13 @@ async function main() {
       registry: new ToolRegistry(new ControlledToolProvider(host)),
       store,
       mode: "controlled",
-      maxIterations: 12,
+      maxIterations: 4,
     }).done;
 
     assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
     assert.strictEqual(run.verification.status, "passed");
+    assert.strictEqual(run.repairReserveUsed, 4);
+    assert.ok(run.events.some((event) => event.type === "repair_reserve" && event.granted === 4));
     assert.strictEqual(previewCalls, 2);
     assert.strictEqual(processCalls, 0);
     assert.ok(run.filesChanged.includes("server.js"));
