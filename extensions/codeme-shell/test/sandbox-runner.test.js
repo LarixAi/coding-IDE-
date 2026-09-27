@@ -31,7 +31,7 @@ async function main() {
   );
 
   const backend = isolationBackend();
-  assert.ok(["macos-sandbox-exec", "bubblewrap", "workspace-copy"].includes(backend.kind));
+  assert.ok(["macos-sandbox-exec", "bubblewrap-readonly-host", "workspace-copy"].includes(backend.kind));
   assert.strictEqual(typeof backend.securityBoundary, "boolean");
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-sandbox-test-"));
@@ -48,7 +48,7 @@ async function main() {
   fs.writeFileSync(path.join(root, "live.txt"), "unchanged", "utf8");
 
   try {
-    const result = await createSandboxRunner().run(root, {
+    const result = await createSandboxRunner({ allowSoftExecution: true }).run(root, {
       command: "node script.js",
       timeoutMs: 10000,
     });
@@ -62,7 +62,7 @@ async function main() {
     assert.strictEqual(fs.readFileSync(path.join(root, "live.txt"), "utf8"), "unchanged");
 
     fs.writeFileSync(path.join(root, "broken.js"), "const = ;\n", "utf8");
-    const broken = await createSandboxRunner().run(root, {
+    const broken = await createSandboxRunner({ allowSoftExecution: true }).run(root, {
       command: "node --check broken.js",
       timeoutMs: 10000,
     });
