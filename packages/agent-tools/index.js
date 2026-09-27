@@ -178,7 +178,7 @@ function validateSandboxCommand(command) {
 
   function safeRelative(value) {
     const candidate = String(value || "");
-    if (!candidate || path.isAbsolute(candidate) || /^[A-Za-z]:[\\/]/.test(candidate) || candidate.includes("..")) return false;
+    if (!candidate || candidate.startsWith("-") || path.isAbsolute(candidate) || /^[A-Za-z]:[\\/]/.test(candidate) || candidate.includes("..")) return false;
     return true;
   }
 
