@@ -48,6 +48,28 @@ async function main() {
   fs.writeFileSync(path.join(root, "live.txt"), "unchanged", "utf8");
 
   try {
+    const guarded = await createSandboxRunner().run(root, {
+      command: "node script.js",
+      timeoutMs: 10000,
+    });
+    if (backend.securityBoundary) {
+      assert.strictEqual(guarded.available, true, JSON.stringify(guarded));
+      assert.strictEqual(guarded.exitCode, 0, JSON.stringify(guarded));
+      assert.strictEqual(fs.existsSync(path.join(root, "generated.txt")), false);
+    } else {
+      assert.strictEqual(guarded.available, false, JSON.stringify(guarded));
+      assert.strictEqual(guarded.code, "sandbox_unavailable");
+      assert.strictEqual(fs.existsSync(path.join(root, "generated.txt")), false);
+    }
+
+    const syntaxOnly = await createSandboxRunner().run(root, {
+      command: "node --check script.js",
+      timeoutMs: 10000,
+    });
+    assert.strictEqual(syntaxOnly.available, true, JSON.stringify(syntaxOnly));
+    assert.strictEqual(syntaxOnly.exitCode, 0, JSON.stringify(syntaxOnly));
+    assert.strictEqual(fs.existsSync(path.join(root, "generated.txt")), false);
+
     const result = await createSandboxRunner({ allowSoftExecution: true }).run(root, {
       command: "node script.js",
       timeoutMs: 10000,
