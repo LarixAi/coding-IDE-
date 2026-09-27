@@ -584,8 +584,25 @@ function verifyBuild(run) {
   return { status: "failed", summary: "Write each file the request needs with file.write", evidence: [] };
 }
 
-function changedWebAssetsNotLoaded(changed, previewCall) {
-  const required = (changed || []).filter((file) => /\.(css|js|mjs)$/i.test(String(file || "")));
+function serverEntryFromWorkspace(run) {
+  const scripts = run && run.workspace && run.workspace.scripts;
+  const start = scripts && typeof scripts.start === "string" ? scripts.start : "";
+  const match = String(start).match(/(?:^|\s)node\s+(?:--[\w-]+\s+)*([^\s;&|]+)/);
+  return match ? String(match[1] || "").replace(/^['"]|['"]$/g, "").replace(/\\/g, "/") : "";
+}
+
+function isServerRuntimeFile(run, file) {
+  const normalized = String(file || "").replace(/\\/g, "/");
+  const entry = serverEntryFromWorkspace(run);
+  if (entry && normalized === entry) return true;
+  return /(^|\/)(server|backend|api)\.(js|mjs|cjs|ts)$/i.test(normalized);
+}
+
+function changedWebAssetsNotLoaded(run, changed, previewCall) {
+  const required = (changed || []).filter((file) => (
+    /\.(css|js|mjs)$/i.test(String(file || ""))
+    && !isServerRuntimeFile(run, file)
+  ));
   if (!required.length) return [];
   const data = previewCall && previewCall.result && previewCall.result.data;
   const assets = data && Array.isArray(data.assets) ? data.assets : [];
@@ -611,31 +628,47 @@ function latestReadContents(run, file) {
   return "";
 }
 
+function readPaths(run, pattern) {
+  const paths = [];
+  for (const call of (run && run.toolCalls) || []) {
+    if (call.name !== "file.read" || !call.result || !call.result.ok) continue;
+    const file = String(call.args && call.args.path || "").replace(/\\/g, "/");
+    if (!file || !pattern.test(file) || paths.includes(file)) continue;
+    paths.push(file);
+  }
+  return paths;
+}
+
 function webInteractionIssue(run, changed) {
   const goal = String(run && run.goal || "").toLowerCase();
   if (!/\b(click|button|tap|interaction|interactive)\b/.test(goal)) return "";
 
-  const htmlFiles = (changed || []).filter((file) => /\.html?$/i.test(String(file || "")));
-  const jsFiles = (changed || []).filter((file) => /\.(js|mjs)$/i.test(String(file || "")));
-  if (!jsFiles.length) return "This task asks for an interaction, but no JavaScript file was changed or created.";
+  const htmlFiles = readPaths(run, /\.html?$/i);
+  const jsFiles = readPaths(run, /\.(js|mjs)$/i).filter((file) => !isServerRuntimeFile(run, file));
+  if (!jsFiles.length) return "This task asks for an interaction, but no client JavaScript file was inspected.";
 
   const html = htmlFiles.map((file) => latestReadContents(run, file)).join("\n");
   const scripts = jsFiles.map((file) => latestReadContents(run, file)).join("\n");
 
-  if (!/addEventListener\s*\(\s*["\']click["\']|\.onclick\s*=|onclick\s*=/.test(scripts + "\n" + html)) {
+  if (!/addEventListener\s*\(\s*["']click["']|\.onclick\s*=|onclick\s*=/.test(scripts + "\n" + html)) {
     return "The page loads, but the requested click interaction is not wired to a click handler.";
   }
 
   const ids = [];
-  for (const match of scripts.matchAll(/getElementById\s*\(\s*["\']([^"\']+)["\']\s*\)/g)) ids.push(match[1]);
-  for (const match of scripts.matchAll(/querySelector\s*\(\s*["\']#([^"\']+)["\']\s*\)/g)) ids.push(match[1]);
+  for (const match of scripts.matchAll(/getElementById\s*\(\s*["']([^"']+)["']\s*\)/g)) ids.push(match[1]);
+  for (const match of scripts.matchAll(/querySelector\s*\(\s*["']#([^"']+)["']\s*\)/g)) ids.push(match[1]);
 
   for (const id of ids) {
     const escaped = String(id).replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
-    const pattern = new RegExp("\\bid\\s*=\\s*[\"\']" + escaped + "[\"\']", "i");
+    const pattern = new RegExp("\\bid\\s*=\\s*[\"']" + escaped + "[\"']", "i");
     if (!pattern.test(html)) {
-      return "The JavaScript targets #" + id + ", but that element ID is not present in the changed HTML.";
+      return "The JavaScript targets #" + id + ", but that element ID is not present in the inspected HTML.";
     }
+  }
+
+  const requestedText = /it works!?/i.test(run.goal || "") ? "it works!" : "";
+  if (requestedText && !scripts.toLowerCase().includes(requestedText)) {
+    return "The click handler exists, but the requested button text “It works!” is not present in the client JavaScript.";
   }
 
   return "";
@@ -992,7 +1025,7 @@ function defaultVerify(run, text) {
         };
       }
 
-      const missingAssets = changedWebAssetsNotLoaded(changed, preview);
+      const missingAssets = changedWebAssetsNotLoaded(run, changed, preview);
       if (missingAssets.length) {
         return {
           status: "failed",
