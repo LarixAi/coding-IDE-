@@ -4,7 +4,7 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const net = require("net");
-const { createPreviewRunner, portFromText, previewPlan, recoverFlagSocket, ensureStaticPreview, entryPointFromStartScript, portFromSourceText, extractLocalAssets } = require("../preview-runner");
+const { createPreviewRunner, portFromText, previewPlan, recoverFlagSocket, ensureStaticPreview, entryPointFromStartScript, portFromSourceText, extractLocalAssets, isAssetFailure, hasOwnedPreviewTerminal, stopOwnedPreviewTerminals } = require("../preview-runner");
 
 function mockVscode(commands) {
   const sent = [];
@@ -50,6 +50,21 @@ async function main() {
   assert.strictEqual(portFromSourceText("server.listen(3000);"), 3000);
   assert.strictEqual(portFromSourceText("const PORT = process.env.PORT || 3000;\nserver.listen(PORT);"), 3000);
   assert.strictEqual(portFromSourceText("const port = 3001;\napp.listen(port);"), 3001);
+  assert.strictEqual(isAssetFailure({ code: "asset_status" }), true);
+  assert.strictEqual(isAssetFailure({ code: "connection_refused" }), false);
+
+  let ownedDisposed = 0;
+  let unrelatedDisposed = 0;
+  const ownedMock = mockVscode([]);
+  ownedMock.vscode.window.terminals.push(
+    { name: "CodeMe Process", dispose() { ownedDisposed += 1; } },
+    { name: "CodeMe Preview", dispose() { ownedDisposed += 1; } },
+    { name: "User Terminal", dispose() { unrelatedDisposed += 1; } },
+  );
+  assert.strictEqual(hasOwnedPreviewTerminal(ownedMock.vscode), true);
+  stopOwnedPreviewTerminals(ownedMock.vscode);
+  assert.strictEqual(ownedDisposed, 2);
+  assert.strictEqual(unrelatedDisposed, 0);
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-preview-"));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: "serve src -l 4173" } }));
