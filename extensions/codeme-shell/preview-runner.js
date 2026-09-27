@@ -265,31 +265,30 @@ function createPreviewRunner(vscode) {
         };
       }
       if (plan.shouldStart) {
+        if (!plan.command) {
+          try {
+            const staticPreview = await ensureStaticPreview(root, plan.port);
+            const parsed = new URL(plan.url);
+            parsed.hostname = "127.0.0.1";
+            parsed.port = String(staticPreview.port);
+            const staticUrl = parsed.toString();
+            await openPreview(vscode, staticUrl);
+            return await waitForPage(staticUrl, 5000);
+          } catch (error) {
+            return {
+              available: false,
+              code: error && error.code ? String(error.code) : "preview_unavailable",
+              message: error instanceof Error ? error.message : String(error),
+              url: plan.url,
+            };
+          }
+        }
+
         const running = await probe(plan.url);
         if (!running.available) {
-          if (!plan.command) {
-            try {
-              const staticPreview = await ensureStaticPreview(root, plan.port);
-              const parsed = new URL(plan.url);
-              parsed.hostname = "127.0.0.1";
-              parsed.port = String(staticPreview.port);
-              const staticUrl = parsed.toString();
-              await openPreview(vscode, staticUrl);
-              return await waitForPage(staticUrl, 5000);
-            } catch (error) {
-              return {
-                available: false,
-                code: error && error.code ? String(error.code) : "preview_unavailable",
-                message: error instanceof Error ? error.message : String(error),
-                url: plan.url,
-              };
-            }
-          }
           startPreview(vscode, root, plan.command);
           await openPreview(vscode, plan.url);
-          const page = await waitForPage(plan.url, 45000);
-          if (page.available) return page;
-          return page;
+          return await waitForPage(plan.url, 45000);
         }
         await openPreview(vscode, plan.url);
         return running;
