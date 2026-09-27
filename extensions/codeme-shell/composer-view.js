@@ -604,6 +604,7 @@ function renderComposer(nonce) {
       if (item.name === "repo.search") return "FIND";
       if (item.name === "tests.run") return "TEST";
       if (item.name === "terminal.run") return "TERM";
+      if (item.name === "sandbox.run") return "SBOX";
       if (item.name === "process.start" || item.name === "process.status" || item.name === "process.logs") return "PROC";
       if (item.name === "browser.check" || item.name === "browser.interact") return "WEB";
       if (item.name === "capability.invoke" || item.name === "capability.list") return "HUB";
@@ -627,6 +628,7 @@ function renderComposer(nonce) {
       if (item.name === "repo.search") return (live ? "Searching " : "Searched ") + (item.path || "workspace");
       if (item.name === "tests.run") return live ? "Running tests" : "Ran tests";
       if (item.name === "terminal.run") return (live ? "Running " : "Ran ") + (item.command || "command");
+      if (item.name === "sandbox.run") return (live ? "Running in sandbox " : "Sandbox ran ") + (item.command || "command");
       if (item.name === "process.start") {
         if (!live && item.suppressed && item.reused) return "Reused running preview";
         if (!live && item.suppressed && item.requiresLogs) return "Skipped restart until logs are read";
