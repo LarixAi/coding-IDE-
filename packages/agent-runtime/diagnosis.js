@@ -29,6 +29,9 @@ function diagnose(call, result) {
     return { class: "bad_code", retry: false, next: "repair" };
   }
   if (code === "exit_status") return { class: "bad_code", retry: false, next: "repair" };
+  if (code === "sandbox_unavailable" || code === "sandbox_too_large") {
+    return { class: "environment", retry: false, next: "fallback" };
+  }
   if (code === "not_found") return { class: "wrong_command", retry: false, next: "inspect" };
   if (code === "capability_unavailable" || code === "hub_rejected" || code === "malformed_response") {
     return { class: "provider", retry: false, next: "fallback" };
