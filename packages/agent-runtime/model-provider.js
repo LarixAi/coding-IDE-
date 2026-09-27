@@ -30,6 +30,7 @@ const PROVIDER_NAMES = {
   "git.diff": "git_diff",
   "diagnostics.run": "diagnostics_run",
   "browser.check": "browser_check",
+  "browser.interact": "browser_interact",
   "dir.create": "dir_create",
   "dir.list": "dir_list",
   "capability.list": "capability_list",
