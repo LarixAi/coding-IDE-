@@ -96,6 +96,7 @@ async function main() {
   assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "file.read", args: { path: "src/app.js" } } }), "Reading src/app.js");
   assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "repo.search", args: { query: "src/" } } }), "Searching src/");
   assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "browser.check", args: { url: "http://127.0.0.1:4173/" } } }), "Checking http://127.0.0.1:4173/");
+  assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "process.start", args: { command: "npm start" } } }), "Starting preview process…");
   assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "workspace.inspect", args: {} } }), "Inspecting workspace…");
   assert.strictEqual(composerActivity({ lifecycle: "executing_tool", inFlight: { name: "dir.create", args: { path: "src" } } }), "Creating folder src");
   assert.strictEqual(composerActivity({ lifecycle: "verifying" }), "Verifying");
@@ -125,6 +126,28 @@ async function main() {
   assert.strictEqual(liveWrite[0].operation, "create");
   assert.strictEqual(liveWrite[0].path, "index.html");
   assert.strictEqual(liveWrite[0].preview.additions, 1);
+
+  const patchCard = compactTools({
+    workspace: { state: "project" },
+    toolCalls: [],
+    inFlight: {
+      kind: "tool",
+      name: "file.patch",
+      args: { path: "src/app.js", oldText: "const value = 1;", newText: "const value = 2;" },
+    },
+  });
+  assert.strictEqual(patchCard.length, 1);
+  assert.strictEqual(patchCard[0].status, "running");
+  assert.strictEqual(patchCard[0].operation, "edit");
+  assert.strictEqual(patchCard[0].preview.additions, 1);
+  assert.strictEqual(patchCard[0].preview.removals, 1);
+
+  const processCard = compactTools({
+    toolCalls: [],
+    inFlight: { kind: "tool", name: "process.start", args: { command: "npm start" } },
+  });
+  assert.strictEqual(processCard[0].name, "process.start");
+  assert.strictEqual(processCard[0].status, "running");
 
   const repeatedWrite = compactTools({
     workspace: { state: "project" },
@@ -211,6 +234,8 @@ async function main() {
   assert.ok(html.includes("tool-stats"));
   assert.ok(html.includes("Created "));
   assert.ok(html.includes("Edited "));
+  assert.ok(html.includes("Patched "));
+  assert.ok(html.includes("Started preview process"));
   assert.ok(!html.includes("qwen3.5:9b"));
   assert.ok(!html.includes("workbench.action.chat.open"));
 
