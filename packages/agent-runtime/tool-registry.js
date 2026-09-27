@@ -75,6 +75,17 @@ const DEFINITIONS = {
     description: "Run one short Node command or npm test and wait for it to finish. Never use this to start a website/dev server or append &: use browser.check for web previews.",
     parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
   },
+  "sandbox.run": {
+    description: "Run an approved command in a disposable copy of the workspace. Sandbox writes are discarded and never modify the live project. Use it for experiments, build/test checks, or reproducing errors before editing. Supported commands: node <file>, node --check <file>, node --test [file], npm test, npm run <script>, python3 <file.py>, or python3 -m pytest [path].",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string" },
+        timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 },
+      },
+      required: ["command"],
+    },
+  },
   "process.start": {
     description: "Start a long-running non-browser workspace process when explicitly needed. For website/dev-server previews, use browser.check instead; CodeMe owns preview startup and reuse.",
     parameters: {
@@ -137,6 +148,7 @@ function availableTools(names, host) {
   return names.filter((name) => {
     if (name === "workspace.inspect") return Boolean(host && typeof host.inspectWorkspace === "function");
     if (name === "file.patch") return Boolean(host && typeof host.patchFile === "function");
+    if (name === "sandbox.run") return Boolean(host && typeof host.runSandbox === "function");
     if (name === "process.start") return Boolean(host && typeof host.startProcess === "function");
     if (name === "process.status") return Boolean(host && typeof host.processStatus === "function");
     if (name === "process.logs") return Boolean(host && typeof host.processLogs === "function");
