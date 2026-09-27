@@ -4,7 +4,7 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const net = require("net");
-const { createPreviewRunner, portFromText, previewPlan, recoverFlagSocket, ensureStaticPreview, entryPointFromStartScript, portFromSourceText } = require("../preview-runner");
+const { createPreviewRunner, portFromText, previewPlan, recoverFlagSocket, ensureStaticPreview, entryPointFromStartScript, portFromSourceText, extractLocalAssets } = require("../preview-runner");
 
 function mockVscode(commands) {
   const sent = [];
@@ -117,6 +117,56 @@ async function main() {
   assert.strictEqual(staticMock.vscode.window.terminals.length, 0);
   const staticServer = await ensureStaticPreview(staticRoot, 4173);
   if (staticServer && staticServer.server) await new Promise((resolve) => staticServer.server.close(resolve));
+
+  const assetRefs = extractLocalAssets(
+    '<link rel="stylesheet" href="styles.css"><script src="script.js"></script>',
+    "http://127.0.0.1:3000/",
+  );
+  assert.deepStrictEqual(assetRefs.map((item) => [item.kind, item.path]), [
+    ["style", "styles.css"],
+    ["script", "script.js"],
+  ]);
+
+  const assetsLive = await listen((req, res) => {
+    if (req.url === "/styles.css") {
+      res.writeHead(200, { "Content-Type": "text/css" });
+      res.end("body { color: green; }");
+      return;
+    }
+    if (req.url === "/script.js") {
+      res.writeHead(200, { "Content-Type": "text/javascript" });
+      res.end("document.body.dataset.ready = 'yes';");
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end('<title>Assets</title><link rel="stylesheet" href="/styles.css"><script src="/script.js"></script>');
+  });
+  const assetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-assets-preview-"));
+  fs.writeFileSync(path.join(assetRoot, "package.json"), JSON.stringify({ scripts: { start: `serve . -l ${assetsLive.port}` } }));
+  const assetMock = mockVscode([]);
+  const assetResult = await createPreviewRunner(assetMock.vscode).check(assetRoot, assetsLive.url);
+  assert.strictEqual(assetResult.available, true);
+  assert.strictEqual(assetResult.assets.length, 2);
+  assert.ok(assetResult.assets.every((item) => item.ok));
+  assert.deepStrictEqual(assetResult.assets.map((item) => item.path).sort(), ["script.js", "styles.css"]);
+  await new Promise((resolve) => assetsLive.server.close(resolve));
+
+  const brokenAssets = await listen((req, res) => {
+    if (req.url === "/styles.css" || req.url === "/script.js") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end("<html>wrong asset</html>");
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end('<title>Broken Assets</title><link rel="stylesheet" href="/styles.css"><script src="/script.js"></script>');
+  });
+  const brokenRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-broken-assets-"));
+  fs.writeFileSync(path.join(brokenRoot, "package.json"), JSON.stringify({ scripts: { start: `serve . -l ${brokenAssets.port}` } }));
+  const brokenResult = await createPreviewRunner(mockVscode([]).vscode).check(brokenRoot, brokenAssets.url);
+  assert.strictEqual(brokenResult.available, false);
+  assert.strictEqual(brokenResult.code, "asset_mime");
+  assert.ok(/styles\.css|script\.js/.test(brokenResult.message));
+  await new Promise((resolve) => brokenAssets.server.close(resolve));
 
   const live = await listen((_req, res) => {
     res.writeHead(200, { "Content-Type": "text/html" });
