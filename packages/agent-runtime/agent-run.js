@@ -230,7 +230,11 @@ async function executeRun(run, options) {
       const done = maybeFinishVerifiedWork(run, store, lastDecisionText(run));
       if (done) return done;
       if (grantRepairReserve(run, store)) continue;
-      return finishFailed(run, store, "iteration_limit", "Maximum iterations reached");
+      const probe = defaultVerify(run, lastDecisionText(run) || "Verification incomplete.");
+      run.verification = probe;
+      run.verificationHistory.push({ ...probe, at: new Date().toISOString() });
+      const reason = probe && probe.summary ? `Maximum iterations reached — ${probe.summary}` : "Maximum iterations reached";
+      return finishFailed(run, store, "iteration_limit", reason);
     }
 
     touch(run, "awaiting_model");
@@ -513,6 +517,11 @@ async function executeRun(run, options) {
       }
 
       store.save(run);
+
+      if (call.name === "browser.check" && result.ok) {
+        const verifiedNow = maybeFinishVerifiedWork(run, store, text);
+        if (verifiedNow) return verifiedNow;
+      }
 
       if (options.interruptAfterTool) {
         touch(run, "interrupted");
@@ -1159,6 +1168,89 @@ function systemPrompt(options) {
   ].join(" ");
 }
 
+function verifyAlreadySatisfiedWebRepair(run) {
+  if (!run || run.mode !== "controlled") return null;
+  const writes = (run.toolCalls || []).filter((call) => (
+    (call.name === "file.write" || call.name === "file.patch")
+    && call.result
+    && call.result.ok
+  ));
+  if (writes.length || !requiresWorkspaceRepair(run) || !isBrowserEditTask(run)) return null;
+  if (unresolvedBrowserFailure(run)) {
+    return {
+      status: "failed",
+      summary: "The latest browser verification is still failing.",
+      evidence: ["browser.check"],
+    };
+  }
+
+  const preview = latestSuccessfulBrowserPreview(run);
+  if (!preview) {
+    return {
+      status: "failed",
+      summary: "The source was inspected, but the page has not passed browser.check yet.",
+      evidence: ["file.read"],
+    };
+  }
+
+  const missingAssets = requestedWebAssetsNotLoaded(run, preview);
+  if (missingAssets.length) {
+    return {
+      status: "failed",
+      summary: `The page loaded, but these requested assets were not confirmed loaded: ${missingAssets.join(", ")}.`,
+      evidence: ["browser.check"],
+    };
+  }
+
+  const goal = String(run.goal || "").toLowerCase();
+  const htmlFiles = readPaths(run, /\.html?$/i);
+  const clientJsFiles = readPaths(run, /\.(js|mjs)$/i).filter((file) => !isServerRuntimeFile(run, file));
+  const html = htmlFiles.map((file) => latestReadContents(run, file)).join("\n");
+  const scripts = clientJsFiles.map((file) => latestReadContents(run, file)).join("\n");
+  const combined = scripts + "\n" + html;
+
+  if (/\b(click|button|tap|interaction|interactive)\b/.test(goal)) {
+    if (!htmlFiles.length) {
+      return {
+        status: "failed",
+        summary: "The browser passed, but the HTML containing the interactive element has not been inspected.",
+        evidence: ["browser.check"],
+      };
+    }
+    if (!clientJsFiles.length && !/\bonclick\s*=/.test(html)) {
+      return {
+        status: "failed",
+        summary: "The browser passed, but no client JavaScript or inline click handler was inspected.",
+        evidence: ["file.read", "browser.check"],
+      };
+    }
+    const clickWired = /addEventListener\s*\(\s*["']click["']/i.test(combined)
+      || /\.onclick\s*=/i.test(combined)
+      || /\bonclick\s*=/i.test(combined)
+      || /\.on\s*\(\s*["']click["']/i.test(combined);
+    if (!clickWired) {
+      return {
+        status: "failed",
+        summary: "The page and assets load, but CodeMe has not confirmed click-handler wiring in the inspected source.",
+        evidence: ["file.read", "browser.check"],
+      };
+    }
+    if (/it works!?/i.test(run.goal || "") && !/it works!?/i.test(combined)) {
+      return {
+        status: "failed",
+        summary: "The click handler is present, but the requested “It works!” result is not present in the inspected source.",
+        evidence: ["file.read", "browser.check"],
+      };
+    }
+  }
+
+  return {
+    status: "passed",
+    summary: "The existing web repair is already satisfied: the relevant source was inspected and the page plus requested assets passed browser verification.",
+    evidence: ["file.read", "browser.check"],
+  };
+}
+
 function defaultVerify(run, text) {
   if (!run.observations.length) {
     return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
@@ -1314,39 +1406,8 @@ function defaultVerify(run, text) {
     };
   }
   const failedBrowser = unresolvedBrowserFailure(run);
-
-  if (
-    run.mode === "controlled"
-    && requiresWorkspaceRepair(run)
-    && writes.length === 0
-    && isBrowserEditTask(run)
-    && !failedBrowser
-  ) {
-    const preview = latestSuccessfulBrowserPreview(run);
-    if (preview) {
-      const missingRequestedAssets = requestedWebAssetsNotLoaded(run, preview);
-      if (missingRequestedAssets.length) {
-        return {
-          status: "failed",
-          summary: `The page is reachable, but these requested assets are not confirmed loaded: ${missingRequestedAssets.join(", ")}.`,
-          evidence: ["browser.check"],
-        };
-      }
-      const interactionIssue = webInteractionIssue(run, []);
-      if (!interactionIssue) {
-        return {
-          status: "passed",
-          summary: "The workspace already satisfies the requested web repair and the result is verified in the browser.",
-          evidence: ["file.read", "browser.check"],
-        };
-      }
-      return {
-        status: "failed",
-        summary: interactionIssue,
-        evidence: ["file.read", "browser.check"],
-      };
-    }
-  }
+  const alreadySatisfied = verifyAlreadySatisfiedWebRepair(run);
+  if (alreadySatisfied && alreadySatisfied.status === "passed") return alreadySatisfied;
 
   if (run.mode === "controlled" && writes.length === 0 && promisesFile(text)) {
     return {
