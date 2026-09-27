@@ -5,7 +5,7 @@ const path = require("path");
 const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider, ControlledToolProvider } = require("../../../packages/agent-runtime");
 const { composerKeyAction, composerStage, composerActivity, compactTools, linePreview, diffsByFile, formatGoal, droppedPaths, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
 const { describeFileRead } = require("../image-meta");
-const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels } = require("../composer-session");
+const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels, finalAssistantText } = require("../composer-session");
 const { OllamaModelProvider } = require("../../../packages/agent-runtime/model-provider");
 const { renderComposer } = require("../composer-view");
 const { ConversationStore } = require("../conversation-store");
@@ -245,6 +245,8 @@ async function main() {
   assert.ok(html.includes('id="history-toggle"'));
   assert.ok(html.includes('id="history-panel"'));
   assert.ok(html.includes("Chat history"));
+  assert.ok(html.includes("hasFinalAssistant"));
+  assert.ok(html.includes("Verified"));
   assert.ok(!html.includes("qwen3.5:9b"));
   assert.ok(!html.includes("workbench.action.chat.open"));
 
@@ -419,7 +421,9 @@ async function main() {
   const historyDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-chat-history-"));
   const historyStore = new ConversationStore(historyDirectory);
   const persistent = sessionFor(root, [
+    { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
     { text: "First saved answer" },
+    { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
     { text: "Second saved answer" },
   ], models, null, { historyStore });
   await persistent.session.refreshModels();
@@ -476,6 +480,46 @@ async function main() {
   assert.strictEqual(isProgressTalk("Great, I found the current pages."), true);
   assert.strictEqual(isProgressTalk("The layout now uses a tighter header and a two-column showroom."), false);
   assert.strictEqual(looksLikeWorkspaceEdit("make a better website layout"), true);
+  const inventoryText = finalAssistantText({
+    lifecycle: "completed",
+    taskClass: "inspect",
+    filesChanged: [],
+    toolCalls: [{
+      name: "dir.list",
+      result: {
+        ok: true,
+        data: {
+          entries: [
+            { path: "index.html", type: "file" },
+            { path: "package.json", type: "file" },
+            { path: "server.js", type: "file" },
+          ],
+        },
+      },
+    }],
+    outcome: {
+      summary: "The workspace contains three files.\n\nThe workspace contains three files.",
+    },
+  });
+  assert.strictEqual(
+    inventoryText,
+    "This project contains 3 files:\n• `index.html`\n• `package.json`\n• `server.js`",
+  );
+
+  const editText = finalAssistantText({
+    lifecycle: "completed",
+    taskClass: "bug-fix",
+    filesChanged: ["index.html"],
+    verification: {
+      status: "passed",
+      evidence: ["file.patch", "file.read", "browser.check"],
+    },
+  });
+  assert.strictEqual(
+    editText,
+    "Done — I applied the requested change to `index.html` and verified the result in the browser.",
+  );
+
   const layout = sessionFor(root, [
     { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
     { text: "1. Restyle the header\n2. Tighten the hero\n3. Switch to Code to apply edits" },
