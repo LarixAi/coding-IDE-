@@ -552,6 +552,17 @@ function renderComposer(nonce) {
           if (item.expectedText) interaction.push("Expected: " + item.expectedText);
           if (interaction.length) detailParts.push(interaction.join("\n"));
         }
+        if (item.name === "sandbox.run") {
+          const sandboxInfo = [];
+          if (item.isolation) sandboxInfo.push("Isolation: " + item.isolation);
+          sandboxInfo.push("OS security boundary: " + (item.securityBoundary ? "yes" : "no"));
+          if (item.network) sandboxInfo.push("Network: " + item.network);
+          if (item.discarded) sandboxInfo.push("Writes discarded: yes");
+          if (item.changedPaths && item.changedPaths.length) {
+            sandboxInfo.push("Temporary changes: " + item.changedPaths.join(", "));
+          }
+          if (sandboxInfo.length) detailParts.push(sandboxInfo.join("\n"));
+        }
         if (item.error) detailParts.push("Error\n" + item.error);
         if (item.output) detailParts.push("Output\n" + item.output);
         if (!hasPreview && detailParts.length) {
