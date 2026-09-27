@@ -142,35 +142,15 @@ function waitForShellIntegration(terminal) {
 }
 
 async function runTerminal(command) {
-  const cwd = workspaceFolder().uri.fsPath;
-  const terminal = vscode.window.createTerminal({ name: "CodeMe", shellPath: "/bin/bash", cwd });
-  try {
-    const shellIntegration = await waitForShellIntegration(terminal);
-    const execution = await new Promise((resolve) => {
-      setTimeout(() => resolve(shellIntegration.executeCommand(command)), 300);
-    });
-    const endEvent = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        disposable.dispose();
-        reject(Object.assign(new Error("Terminal command timed out"), { code: "terminal_timeout" }));
-      }, 20000);
-      const disposable = vscode.window.onDidEndTerminalShellExecution((event) => {
-        if (event.shellIntegration !== shellIntegration) return;
-        clearTimeout(timer);
-        disposable.dispose();
-        resolve(event);
-      });
-    });
-    let output = "";
-    for await (const chunk of execution.read()) {
-      output += chunk;
-      if (output.length > 100000) break;
-    }
-    const ended = await endEvent;
-    return { exitCode: ended.exitCode ?? 1, output };
-  } finally {
-    terminal.dispose();
-  }
+  const result = await runProcess(command);
+  const stdout = String(result.stdout || "");
+  const stderr = String(result.stderr || "");
+  return {
+    exitCode: result.exitCode,
+    stdout,
+    stderr,
+    output: [stdout, stderr].filter(Boolean).join(stderr && stdout ? "\n" : ""),
+  };
 }
 
 function processWorkspaceKey() {
