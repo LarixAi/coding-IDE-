@@ -65,7 +65,7 @@ function stageForTool(name) {
   if (name === "repo.search") return "Searching";
   if (name === "workspace.inspect" || name === "dir.list" || name === "file.read") return "Reading";
   if (name === "file.write" || name === "file.patch" || name === "dir.create") return "Editing";
-  if (name === "tests.run" || name === "terminal.run" || name === "process.start") return "Testing";
+  if (name === "tests.run" || name === "terminal.run" || name === "process.start" || name === "process.status" || name === "process.logs") return "Testing";
   if (name === "capability.invoke" || name === "capability.list") return "Researching";
   if (name === "browser.check") return "Testing";
   if (name === "diagnostics.run" || name === "git.diff" || name === "git.status") return "Verifying";
@@ -109,6 +109,8 @@ function composerActivity(run) {
     const tool = run && run.inFlight && run.inFlight.name;
     if (tool === "browser.check") return target ? `Checking ${target}` : "Checking preview";
     if (tool === "process.start") return "Starting preview process…";
+    if (tool === "process.status") return "Checking process status…";
+    if (tool === "process.logs") return "Reading process logs…";
     if (tool === "terminal.run") return "Running command…";
     return "Running tests";
   }
