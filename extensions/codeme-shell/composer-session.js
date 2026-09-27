@@ -180,6 +180,7 @@ class ComposerSession {
     this.tools = [];
     this.thread = [];
     this.verification = null;
+    this.projectDecision = null;
     this.diff = "";
     this.runId = "";
     this.requestId = "";
@@ -203,6 +204,7 @@ class ComposerSession {
       tools: this.tools.map((item) => ({ ...item })),
       thread: this.thread.map((item) => ({ ...item })),
       verification: this.verification,
+      projectDecision: this.projectDecision ? { ...this.projectDecision } : null,
       diff: this.diff,
       models: this.models.map((model) => ({ ...model })),
       selected: this.selected ? { ...this.selected } : null,
@@ -289,6 +291,7 @@ class ComposerSession {
     this.tools = [];
     this.thread = [{ role: "user", text: goal }];
     this.verification = null;
+    this.projectDecision = null;
     this.diff = "";
     this.active = { requestId, runId: "", handle: null };
     const publishing = new PublishingStore(this.store, (run) => this.publish(requestId, run));
@@ -350,6 +353,7 @@ class ComposerSession {
     this.tools = compactTools(run);
     this.thread = threadFrom(run);
     this.verification = run.verification || null;
+    this.projectDecision = run.projectDecision ? { ...run.projectDecision } : null;
     this.outcome = run.outcome || null;
     this.error = run.lifecycle === "failed" && run.error ? run.error.message : "";
     this.notice = this.composerMode === "ask" && looksLikeWorkspaceEdit(run.goal || "")
