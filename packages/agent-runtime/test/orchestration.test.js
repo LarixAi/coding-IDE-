@@ -665,6 +665,112 @@ async function main() {
     assert.ok(context.includes("this is not a Git repository"));
   });
 
+  await test("already-satisfied button repair completes from browser evidence without a new write", async () => {
+    const root = tempDir();
+    fs.writeFileSync(path.join(root, "index.html"), [
+      '<!doctype html>',
+      '<link rel="stylesheet" href="styles.css">',
+      '<button id="actionBtn">Click Me</button>',
+      '<script src="script.js"></script>',
+      "",
+    ].join("\n"), "utf8");
+    fs.writeFileSync(path.join(root, "styles.css"), "#actionBtn { color: white; }\n", "utf8");
+    fs.writeFileSync(
+      path.join(root, "script.js"),
+      'document.getElementById("actionBtn").addEventListener("click", function () { this.textContent = "It works!"; });\n',
+      "utf8",
+    );
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      name: "already-fixed",
+      scripts: { start: "node server.js" },
+    }, null, 2), "utf8");
+
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 4,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["html", "css", "javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: ["index.html", "styles.css", "script.js", "package.json"]
+            .map((filePath) => ({ path: filePath, type: "file" })),
+        };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile() { throw new Error("no patch should be needed"); },
+      async writeFile() { throw new Error("no write should be needed"); },
+      async createDirectory(dirPath) { return { path: dirPath }; },
+      async search() { return { query: "", matches: [] }; },
+      async runTerminal() { return { exitCode: 0, output: "" }; },
+      async processStatus() {
+        return { found: true, status: "running", command: "npm start", exitCode: null };
+      },
+      async processLogs() {
+        return { found: true, status: "running", command: "npm start", output: "Server running" };
+      },
+      async startProcess() { throw new Error("must not start another preview"); },
+      async runTests() { throw new Error("no tests"); },
+      async gitStatus() { throw new Error("not git"); },
+      async gitDiff() { throw new Error("not git"); },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) {
+        return {
+          available: true,
+          statusCode: 200,
+          title: "Already fixed",
+          url,
+          assets: [
+            { kind: "style", path: "styles.css", statusCode: 200, contentType: "text/css", ok: true },
+            { kind: "script", path: "script.js", statusCode: 200, contentType: "text/javascript", ok: true },
+          ],
+        };
+      },
+    };
+
+    const provider = new ScriptedModelProvider([
+      {
+        toolCalls: [
+          { name: "file.read", args: { path: "index.html" } },
+          { name: "file.read", args: { path: "styles.css" } },
+          { name: "file.read", args: { path: "script.js" } },
+        ],
+      },
+      { toolCalls: [{ name: "browser.check", args: { url: "styles.css" } }] },
+      { text: "This should never be needed because the run should auto-complete." },
+    ]);
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'The button still does not work. Fix it so clicking "Click Me" changes the button text to "It works!", and do not finish until styles.css and script.js load successfully.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 4,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(run.filesChanged.length, 0);
+    assert.strictEqual(run.verification.status, "passed");
+    assert.ok(run.verification.summary.includes("already satisfies"));
+    assert.strictEqual(provider.calls.length, 2);
+    assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.result && call.result.ok));
+  });
+
   await test("failed web assets force server repair before completion", async () => {
     const root = tempDir();
     fs.writeFileSync(path.join(root, "index.html"), [
