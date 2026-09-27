@@ -437,7 +437,7 @@ function compactObservation(call) {
 
 // After stagnation the runtime narrows the offered tools to the ones that can change
 // the outcome. Browsing and workaround tools are withheld until progress resumes.
-const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "dir.create", "dir.list", "process.start", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check"];
+const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "dir.create", "dir.list", "process.start", "process.status", "process.logs", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check"];
 
 function focusTools(state, definitions) {
   if (!state) return definitions;
