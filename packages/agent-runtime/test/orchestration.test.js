@@ -146,6 +146,41 @@ async function main() {
     assert.strictEqual(source.includes("registry.call"), true);
   });
 
+  await test("workspace inspection is injected before the first model turn", async () => {
+    const provider = new ScriptedModelProvider([{ text: "Workspace understood." }]);
+    const host = workspaceHost(FIXTURE);
+    host.inspectWorkspace = async () => ({
+      state: "project",
+      root: "badge-demo",
+      entries: 3,
+      git: false,
+      projectMarkers: ["package.json"],
+      languages: ["typescript"],
+      frameworks: [],
+      packageManager: "npm",
+      scripts: {},
+    });
+    const { store } = trackedStore(tempDir());
+    const handle = startAgentRun({
+      goal: "describe this project",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ReadOnlyToolProvider(host)),
+      store,
+      verify: () => ({ status: "passed", summary: "ok", evidence: ["workspace.inspect"] }),
+    });
+    const run = await handle.done;
+    assert.strictEqual(run.lifecycle, "completed");
+    assert.strictEqual(run.workspace.state, "project");
+    assert.strictEqual(run.workspace.root, "badge-demo");
+    assert.ok(run.events.some((event) => event.type === "workspace" && event.state === "project"));
+    assert.strictEqual(provider.calls.length, 1);
+    const context = provider.calls[0].messages.map((message) => message.content || "").join("\n");
+    assert.ok(context.includes("CodeMe inspected the active workspace before this run."));
+    assert.ok(context.includes("\"root\":\"badge-demo\""));
+  });
+
   await test("write, terminal, and test tools stay blocked", async () => {
     const host = workspaceHost(FIXTURE);
     const registry = new ToolRegistry(new ReadOnlyToolProvider(host));
