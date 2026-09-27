@@ -417,6 +417,145 @@ async function main() {
     assert.ok(run.toolCalls.some((call) => call.name === "process.start" && call.result && call.result.error && call.result.error.code === "policy_denied"));
   });
 
+  await test("simple existing HTML edit skips research tests and Git, then verifies in browser", async () => {
+    const root = tempDir();
+    fs.writeFileSync(path.join(root, "index.html"), '<h1 style="color: blue; text-align: center;">Hello CodeMe</h1>\n', "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      name: "hello-codeme",
+      scripts: { start: "node server.js" },
+    }, null, 2), "utf8");
+
+    const state = { tests: 0, git: 0, research: 0 };
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 2,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["html", "javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: [
+            { path: "index.html", type: "file" },
+            { path: "package.json", type: "file" },
+          ],
+        };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        assert.ok(before.includes(oldText));
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile() { throw new Error("not used"); },
+      async createDirectory(dirPath) { return { path: dirPath }; },
+      async search() { return { query: "", matches: [] }; },
+      async runTerminal() { return { exitCode: 0, output: "" }; },
+      async startProcess(command) { return { started: true, command }; },
+      async runTests() {
+        state.tests += 1;
+        throw new Error("tests.run must not be called");
+      },
+      async gitStatus() {
+        state.git += 1;
+        throw Object.assign(new Error("not git"), { code: "not_a_repository" });
+      },
+      async gitDiff() {
+        state.git += 1;
+        throw Object.assign(new Error("not git"), { code: "not_a_repository" });
+      },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) { return { available: true, statusCode: 200, title: "Hello CodeMe", url }; },
+    };
+
+    const capabilities = {
+      async listCapabilities() {
+        return [{
+          name: "research.problem",
+          description: "Research documentation.",
+          category: "research",
+          risk: "read",
+          permissions: ["network"],
+          inputSchema: {
+            type: "object",
+            properties: { question: { type: "string" } },
+            required: ["question"],
+          },
+        }];
+      },
+      async invoke() {
+        state.research += 1;
+        throw new Error("research must not run for this local edit");
+      },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "file.read", args: { path: "index.html" } }] },
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: {
+            path: "index.html",
+            oldText: "color: blue",
+            newText: "color: red",
+          },
+        }],
+      },
+      { toolCalls: [{ name: "file.read", args: { path: "index.html" } }] },
+      { toolCalls: [{ name: "browser.check", args: { url: "index.html" } }] },
+      { text: "The heading is red now." },
+    ]);
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: "Now change the heading to red",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      capabilities,
+      mode: "controlled",
+      maxIterations: 8,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(run.projectDecision.kind, "existing_project_edit");
+    assert.strictEqual(run.verification.status, "passed");
+    assert.deepStrictEqual(run.verification.evidence, ["file.patch", "file.read", "browser.check"]);
+    assert.strictEqual(state.tests, 0);
+    assert.strictEqual(state.git, 0);
+    assert.strictEqual(state.research, 0);
+    assert.ok(fs.readFileSync(path.join(root, "index.html"), "utf8").includes("color: red"));
+
+    for (const modelCall of provider.calls) {
+      const names = modelCall.tools.map((tool) => tool.name);
+      assert.strictEqual(names.includes("tests.run"), false);
+      assert.strictEqual(names.includes("git.diff"), false);
+      assert.strictEqual(names.includes("git.status"), false);
+      assert.strictEqual(names.includes("capability.invoke"), false);
+      assert.strictEqual(names.includes("capability.list"), false);
+      assert.strictEqual(names.includes("file.patch"), true);
+      assert.strictEqual(names.includes("browser.check"), true);
+    }
+
+    const context = provider.calls[0].messages.map((message) => message.content || "").join("\n");
+    assert.ok(context.includes("there is no test script"));
+    assert.ok(context.includes("this is not a Git repository"));
+  });
+
   await test("write, terminal, and test tools stay blocked", async () => {
     const host = workspaceHost(FIXTURE);
     const registry = new ToolRegistry(new ReadOnlyToolProvider(host));
