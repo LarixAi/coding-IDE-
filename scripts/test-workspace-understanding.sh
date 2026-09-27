@@ -13,3 +13,4 @@ fi
 
 "$node" "$root/packages/agent-tools/test/contract.test.js"
 "$node" "$root/extensions/codeme-shell/test/workspace-inspector.test.js"
+"$node" "$root/packages/agent-runtime/test/orchestration.test.js"
