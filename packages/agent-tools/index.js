@@ -15,6 +15,7 @@ const TOOLS = {
   "diagnostics.run": [],
   "tests.run": ["command"],
   "browser.check": ["url"],
+  "browser.interact": ["url", "action"],
   "dir.create": ["path"],
   "dir.list": ["path"],
 };
@@ -41,6 +42,16 @@ function validate(tool, args) {
   if (required.includes("path")) {
     const pathError = validateWorkspacePath(input.path);
     if (pathError) return failure(tool, pathError.code, pathError.message);
+  }
+  if (tool === "browser.interact") {
+    if (String(input.action || "").toLowerCase() !== "click") {
+      return failure(tool, "invalid_args", "browser.interact currently supports action=click");
+    }
+    const selector = typeof input.selector === "string" ? input.selector.trim() : "";
+    const targetText = typeof input.targetText === "string" ? input.targetText.trim() : "";
+    if (!selector && !targetText) {
+      return failure(tool, "invalid_args", "browser.interact click requires selector or targetText");
+    }
   }
   return null;
 }
@@ -118,6 +129,8 @@ async function dispatch(host, tool, args) {
       return host.runTests(args.command);
     case "browser.check":
       return host.browserCheck(args.url);
+    case "browser.interact":
+      return host.browserInteract(args);
     case "dir.create":
       return host.createDirectory(args.path);
     case "dir.list":
@@ -128,7 +141,7 @@ async function dispatch(host, tool, args) {
 }
 
 const READ_ONLY_TOOLS = ["workspace.inspect", "file.read", "repo.search", "process.status", "process.logs", "git.status", "git.diff", "diagnostics.run", "browser.check", "dir.list"];
-const CONTROLLED_TOOLS = ["workspace.inspect", "file.read", "file.write", "file.patch", "repo.search", "terminal.run", "process.start", "process.status", "process.logs", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "dir.create", "dir.list"];
+const CONTROLLED_TOOLS = ["workspace.inspect", "file.read", "file.write", "file.patch", "repo.search", "terminal.run", "process.start", "process.status", "process.logs", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "browser.interact", "dir.create", "dir.list"];
 
 function validateProcessCommand(command) {
   const text = typeof command === "string" && command.trim() ? command.trim() : "npm start";
