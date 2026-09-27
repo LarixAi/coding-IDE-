@@ -3,6 +3,7 @@ const cp = require("child_process");
 const { execute, executeReadOnly } = require("../../packages/agent-tools");
 const { createPreviewRunner } = require("./preview-runner");
 const { describeFileRead } = require("./image-meta");
+const { inspectWorkspace } = require("./workspace-inspector");
 
 const preview = createPreviewRunner(vscode);
 
@@ -203,6 +204,7 @@ async function browserCheck(url) {
 }
 
 const host = {
+  inspectWorkspace: () => inspectWorkspace(vscode),
   readFile,
   writeFile,
   createDirectory,
