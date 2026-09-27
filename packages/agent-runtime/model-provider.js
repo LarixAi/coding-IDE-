@@ -23,6 +23,8 @@ const PROVIDER_NAMES = {
   "repo.search": "repo_search",
   "terminal.run": "terminal_run",
   "process.start": "process_start",
+  "process.status": "process_status",
+  "process.logs": "process_logs",
   "tests.run": "tests_run",
   "git.status": "git_status",
   "git.diff": "git_diff",
