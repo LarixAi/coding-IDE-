@@ -310,7 +310,16 @@ async function executeRun(run, options) {
 
       let result;
       try {
-        if (call.name === "capability.list" || call.name === "capability.invoke") {
+        if (isSimpleEmptyScaffold(run) && !isSimpleScaffoldTool(call.name)) {
+          result = {
+            ok: false,
+            tool: call.name,
+            error: {
+              code: "policy_denied",
+              message: "Simple empty-workspace scaffolds are limited to workspace inspection and file/folder tools.",
+            },
+          };
+        } else if (call.name === "capability.list" || call.name === "capability.invoke") {
           if (isSiteLayoutGoal(run.goal) && run.progress && run.progress.inspectSatisfied && call.name === "capability.invoke") {
             result = {
               ok: false,
@@ -559,10 +568,13 @@ function isSimpleEmptyScaffold(run) {
   );
 }
 
+function isSimpleScaffoldTool(name) {
+  return ["workspace.inspect", "dir.list", "dir.create", "file.write", "file.read"].includes(name);
+}
+
 function toolsForRun(run, localTools, capabilityTools) {
   if (!isSimpleEmptyScaffold(run)) return localTools.concat(capabilityTools);
-  const allowed = new Set(["workspace.inspect", "dir.list", "dir.create", "file.write", "file.read"]);
-  return localTools.filter((tool) => allowed.has(tool.name));
+  return localTools.filter((tool) => isSimpleScaffoldTool(tool.name));
 }
 
 async function createRequestedFolder(run, registry, store) {
