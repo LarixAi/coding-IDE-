@@ -48,6 +48,8 @@ function createRun(options) {
     outcome: null,
     iteration: 0,
     maxIterations: options.maxIterations ?? 8,
+    repairReserve: options.repairReserve ?? 4,
+    repairReserveUsed: 0,
     maxRetries: options.maxRetries ?? 2,
     maxIdenticalActions: options.maxIdenticalActions ?? 4,
     actionCounts: {},
@@ -226,6 +228,7 @@ async function executeRun(run, options) {
     if (run.iteration >= run.maxIterations) {
       const done = maybeFinishLayout(run, store, lastDecisionText(run));
       if (done) return done;
+      if (grantRepairReserve(run, store)) continue;
       return finishFailed(run, store, "iteration_limit", "Maximum iterations reached");
     }
 
@@ -810,6 +813,37 @@ function isSimpleLocalWorkspaceTask(run) {
   const text = String(run.goal || "").toLowerCase();
   if (/\b(create|scaffold|new project|new app|new website|database|backend|api integration)\b/.test(text)) return false;
   return /\b(change|edit|update|set|make|fix|repair|heading|title|button|text|colour|color|centre|center|style|css|html|spacing|font|background)\b/.test(text);
+}
+
+function grantRepairReserve(run, store) {
+  if (!run || run.mode !== "controlled") return false;
+  const total = Number(run.repairReserve || 0);
+  const used = Number(run.repairReserveUsed || 0);
+  if (total <= used) return false;
+
+  const browserFailure = unresolvedBrowserFailure(run);
+  const verificationFailed = run.verification && run.verification.status === "failed";
+  const hasRepairEvidence = requiresWorkspaceRepair(run)
+    && (browserFailure || verificationFailed)
+    && ((run.filesChanged || []).length > 0 || (run.diagnoses || []).some((item) => item.next === "repair"));
+  if (!hasRepairEvidence) return false;
+
+  const grant = Math.min(4, total - used);
+  run.repairReserveUsed = used + grant;
+  run.maxIterations += grant;
+  run.messages.push({
+    role: "user",
+    content: `Repair reserve granted: ${grant} additional model turns. Do not restart investigation. Finish the current repair by reading back the changed file(s), running the required verification, and only then answer.`,
+  });
+  if (!Array.isArray(run.events)) run.events = [];
+  run.events.push({
+    type: "repair_reserve",
+    granted: grant,
+    used: run.repairReserveUsed,
+    at: new Date().toISOString(),
+  });
+  store.save(run);
+  return true;
 }
 
 function requiresWorkspaceRepair(run) {
