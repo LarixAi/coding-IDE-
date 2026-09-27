@@ -21,19 +21,19 @@ const STRATEGIES = {
     id: "feature",
     version: 1,
     taskClass: "feature",
-    guidance: "Inspect first, implement incrementally against the tracked requirements, and verify each requirement with tools.",
+    guidance: "Inspect first, implement incrementally against the tracked requirements, prefer file.patch for precise edits to existing files, and verify each requirement with tools.",
   },
   general: {
     id: "general",
     version: 1,
     taskClass: "general",
-    guidance: "Inspect, plan, implement, diagnose, and verify. A claim of success is not evidence.",
+    guidance: "Inspect, plan, implement, diagnose, and verify. Prefer file.patch for precise existing-file edits and file.write for new files or full replacements. A claim of success is not evidence.",
   },
   layout: {
     id: "layout",
     version: 1,
     taskClass: "layout",
-    guidance: "Inspect the current HTML and CSS once. Apply a better layout with file.write on those workspace files. Then call browser.check. Do not search the same query again.",
+    guidance: "Inspect the current HTML and CSS once. Apply the layout with file.patch for precise edits or file.write for full replacements. Then call browser.check. Do not search the same query again.",
   },
   folder: {
     id: "folder",
@@ -45,7 +45,7 @@ const STRATEGIES = {
     id: "build",
     version: 1,
     taskClass: "build",
-    guidance: "Inspect the workspace first. Create only the files the request actually needs. For a simple static site in an empty workspace, use file.write/dir.create only, do not add a package manager or server, and read every created file back before finishing. For framework or runtime projects, preserve any existing setup and verify using the project's own tooling. Do not use the terminal to list files, install packages, or create folders.",
+    guidance: "Inspect the workspace first. Create only the files the request actually needs. For a simple static site in an empty workspace, use file.write/dir.create only, do not add a package manager or server, and read every created file back before finishing. For existing files prefer file.patch. For framework or runtime projects, preserve the setup, use process.start only for a long-running npm preview process, and verify with browser.check. Never pass the literal string --port to server.listen(); the listen value must be numeric. Do not use terminal.run to list files, install packages, or run long-lived servers.",
   },
 };
 
