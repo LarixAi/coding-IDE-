@@ -7,6 +7,7 @@ const TOOLS = {
   "file.patch": ["path", "oldText", "newText"],
   "repo.search": ["query"],
   "terminal.run": ["command"],
+  "sandbox.run": ["command"],
   "process.start": [],
   "process.status": [],
   "process.logs": [],
@@ -84,7 +85,7 @@ async function execute(host, tool, args) {
       data
       && typeof data.exitCode === "number"
       && data.exitCode !== 0
-      && (tool === "terminal.run" || tool === "tests.run" || tool === "process.start")
+      && (tool === "terminal.run" || tool === "sandbox.run" || tool === "tests.run" || tool === "process.start")
     ) {
       return failure(tool, "exit_status", `Command exited ${data.exitCode}`, data);
     }
@@ -113,6 +114,8 @@ async function dispatch(host, tool, args) {
       return host.search(args.query);
     case "terminal.run":
       return host.runTerminal(args.command);
+    case "sandbox.run":
+      return host.runSandbox(args);
     case "process.start":
       return host.startProcess(args.command || "npm start");
     case "process.status":
@@ -141,7 +144,7 @@ async function dispatch(host, tool, args) {
 }
 
 const READ_ONLY_TOOLS = ["workspace.inspect", "file.read", "repo.search", "process.status", "process.logs", "git.status", "git.diff", "diagnostics.run", "browser.check", "dir.list"];
-const CONTROLLED_TOOLS = ["workspace.inspect", "file.read", "file.write", "file.patch", "repo.search", "terminal.run", "process.start", "process.status", "process.logs", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "browser.interact", "dir.create", "dir.list"];
+const CONTROLLED_TOOLS = ["workspace.inspect", "file.read", "file.write", "file.patch", "repo.search", "terminal.run", "sandbox.run", "process.start", "process.status", "process.logs", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "browser.interact", "dir.create", "dir.list"];
 
 function validateProcessCommand(command) {
   const text = typeof command === "string" && command.trim() ? command.trim() : "npm start";
@@ -155,6 +158,56 @@ function validateProcessCommand(command) {
     code: "command_rejected",
     message: "process.start is limited to npm start, npm run dev, or npm run preview",
   };
+}
+
+function validateSandboxCommand(command) {
+  const text = typeof command === "string" ? command.trim() : "";
+  if (!text) {
+    return { code: "invalid_args", message: "sandbox.run requires a non-empty command" };
+  }
+  if (/[\0\n\r;&|`$<>]/.test(text) || /["']/.test(text)) {
+    return {
+      code: "command_rejected",
+      message: "Sandbox commands do not support shell syntax, quoting, pipes, redirects, or backgrounding",
+    };
+  }
+
+  const parts = text.split(/\s+/);
+  const program = parts.shift();
+  const args = parts;
+
+  function safeRelative(value) {
+    const candidate = String(value || "");
+    if (!candidate || path.isAbsolute(candidate) || /^[A-Za-z]:[\\/]/.test(candidate) || candidate.includes("..")) return false;
+    return true;
+  }
+
+  if (program === "node") {
+    if (args.length === 1 && safeRelative(args[0])) return null;
+    if (args.length === 2 && args[0] === "--check" && safeRelative(args[1])) return null;
+    if (args.length <= 2 && args[0] === "--test" && (!args[1] || safeRelative(args[1]))) return null;
+    return {
+      code: "command_rejected",
+      message: "sandbox.run supports node <file>, node --check <file>, or node --test [file]",
+    };
+  }
+
+  if (program === "npm") {
+    if (args.length === 1 && args[0] === "test") return null;
+    if (args.length === 2 && args[0] === "run" && /^[A-Za-z0-9:_-]+$/.test(args[1])) return null;
+    return { code: "command_rejected", message: "sandbox.run supports npm test or npm run <script>" };
+  }
+
+  if (program === "python3") {
+    if (args.length === 1 && safeRelative(args[0]) && /\.py$/i.test(args[0])) return null;
+    if (args.length >= 2 && args.length <= 3 && args[0] === "-m" && args[1] === "pytest" && (!args[2] || safeRelative(args[2]))) return null;
+    return {
+      code: "command_rejected",
+      message: "sandbox.run supports python3 <file.py> or python3 -m pytest [path]",
+    };
+  }
+
+  return { code: "command_rejected", message: "sandbox.run allows node, npm, or python3 commands only" };
 }
 
 function validateCommand(command) {
@@ -203,6 +256,16 @@ async function executeControlled(host, tool, args) {
     const commandError = validateCommand(input.command);
     if (commandError) return failure(tool, commandError.code, commandError.message);
   }
+  if (tool === "sandbox.run") {
+    const commandError = validateSandboxCommand(input.command);
+    if (commandError) return failure(tool, commandError.code, commandError.message);
+    if (input.timeoutMs !== undefined) {
+      const timeoutMs = Number(input.timeoutMs);
+      if (!Number.isFinite(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) {
+        return failure(tool, "invalid_args", "sandbox.run timeoutMs must be between 1000 and 120000");
+      }
+    }
+  }
   if (tool === "process.start") {
     const commandError = validateProcessCommand(input.command || "npm start");
     if (commandError) return failure(tool, commandError.code, commandError.message);
@@ -218,6 +281,7 @@ module.exports = {
   executeReadOnly,
   executeControlled,
   validateCommand,
+  validateSandboxCommand,
   validateProcessCommand,
   validateWorkspacePath,
 };
