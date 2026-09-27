@@ -3,7 +3,7 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
-const { ModelProvider, OllamaModelProvider, ReadOnlyToolProvider, ToolRegistry, ExternalCapabilityProvider, RunStore, createRun, startAgentRun, resumeRun } = require("../index.js");
+const { ModelProvider, OllamaModelProvider, ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry, ExternalCapabilityProvider, RunStore, createRun, startAgentRun, resumeRun } = require("../index.js");
 
 const FIXTURE = path.join(__dirname, "../../qwen-qualify/fixture");
 const MODEL = process.env.CODEME_QWEN_MODEL || "qwen3.5:9b";
@@ -179,6 +179,127 @@ async function main() {
     const context = provider.calls[0].messages.map((message) => message.content || "").join("\n");
     assert.ok(context.includes("CodeMe inspected the active workspace before this run."));
     assert.ok(context.includes("\"root\":\"badge-demo\""));
+  });
+
+  await test("empty static scaffold uses only file tools and reads every created file back", async () => {
+    const root = tempDir();
+    const state = { terminalCalls: 0, testCalls: 0, capabilityCalls: 0 };
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "empty",
+          root: path.basename(root),
+          entries: 0,
+          git: false,
+          projectMarkers: [],
+          languages: [],
+          frameworks: [],
+          packageManager: null,
+          scripts: {},
+        };
+      },
+      async writeFile(filePath, contents) {
+        const full = path.join(root, filePath);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, contents, "utf8");
+        return { path: filePath, bytes: Buffer.byteLength(contents) };
+      },
+      async readFile(filePath) {
+        const full = path.join(root, filePath);
+        return { path: filePath, contents: fs.readFileSync(full, "utf8") };
+      },
+      async createDirectory(dirPath) {
+        fs.mkdirSync(path.join(root, dirPath), { recursive: true });
+        return { path: dirPath };
+      },
+      async listDirectory() {
+        return { path: ".", entries: [] };
+      },
+      async runTerminal() {
+        state.terminalCalls += 1;
+        return { exitCode: 0, output: "" };
+      },
+      async runTests() {
+        state.testCalls += 1;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      async search() { return { query: "", matches: [] }; },
+      async gitStatus() { return { branch: null, changes: [] }; },
+      async gitDiff() { return { diff: "" }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) { return { available: false, code: "browser_unavailable", message: "not used", url }; },
+    };
+
+    const provider = new ScriptedModelProvider([
+      {
+        toolCalls: [
+          { name: "file.write", args: { path: "index.html", contents: "<!doctype html><h1>Hello CodeMe</h1><link rel=\"stylesheet\" href=\"style.css\">" } },
+          { name: "file.write", args: { path: "style.css", contents: "h1 { font-family: sans-serif; }" } },
+        ],
+      },
+      {
+        toolCalls: [
+          { name: "file.read", args: { path: "index.html" } },
+          { name: "file.read", args: { path: "style.css" } },
+        ],
+      },
+      { text: "Created index.html and style.css and verified both files." },
+    ]);
+
+    const capabilities = {
+      async listCapabilities() {
+        return [{
+          name: "research.problem",
+          description: "Research an unknown technical problem.",
+          category: "research",
+          risk: "read",
+          permissions: ["evidence", "network"],
+          inputSchema: {
+            type: "object",
+            properties: { question: { type: "string" } },
+            required: ["question"],
+          },
+        }];
+      },
+      async invoke() {
+        state.capabilityCalls += 1;
+        throw new Error("simple scaffold must not invoke external capabilities");
+      },
+    };
+
+    const { store } = trackedStore(tempDir());
+    const handle = startAgentRun({
+      goal: "Create a simple HTML website with a heading that says Hello CodeMe.",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      capabilities,
+      mode: "controlled",
+      maxIterations: 6,
+    });
+    const run = await handle.done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(run.workspace.state, "empty");
+    assert.deepStrictEqual(run.filesChanged.sort(), ["index.html", "style.css"]);
+    assert.strictEqual(fs.readFileSync(path.join(root, "index.html"), "utf8").includes("Hello CodeMe"), true);
+    assert.strictEqual(fs.existsSync(path.join(root, "package.json")), false);
+    assert.strictEqual(fs.existsSync(path.join(root, "server.js")), false);
+    assert.strictEqual(state.terminalCalls, 0);
+    assert.strictEqual(state.testCalls, 0);
+    assert.strictEqual(state.capabilityCalls, 0);
+    assert.strictEqual(run.verification.status, "passed");
+    assert.deepStrictEqual(run.verification.evidence, ["file.write", "file.read"]);
+
+    for (const call of provider.calls) {
+      const names = call.tools.map((tool) => tool.name);
+      assert.strictEqual(names.includes("terminal.run"), false);
+      assert.strictEqual(names.includes("tests.run"), false);
+      assert.strictEqual(names.includes("capability.invoke"), false);
+      assert.strictEqual(names.includes("capability.list"), false);
+    }
   });
 
   await test("write, terminal, and test tools stay blocked", async () => {
