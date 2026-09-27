@@ -588,7 +588,12 @@ function renderComposer(nonce) {
       if (item.name === "repo.search") return (live ? "Searching " : "Searched ") + (item.path || "workspace");
       if (item.name === "tests.run") return live ? "Running tests" : "Ran tests";
       if (item.name === "terminal.run") return live ? "Running command" : "Ran command";
-      if (item.name === "process.start") return live ? "Starting preview process" : "Started preview process";
+      if (item.name === "process.start") {
+        if (!live && item.suppressed && item.reused) return "Reused running preview";
+        if (!live && item.suppressed && item.requiresLogs) return "Skipped restart until logs are read";
+        if (!live && item.suppressed && item.reason === "browser_check_owns_preview") return "Preview start handled by browser check";
+        return live ? "Starting preview process" : "Started preview process";
+      }
       if (item.name === "process.status") return live ? "Checking process status" : "Checked process status";
       if (item.name === "process.logs") return live ? "Reading process logs" : "Read process logs";
       if (item.name === "browser.check") return live ? "Checking preview" : "Checked preview";
