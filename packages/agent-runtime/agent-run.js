@@ -579,22 +579,42 @@ function verifyBuild(run) {
   return { status: "failed", summary: "Write each file the request needs with file.write", evidence: [] };
 }
 
-function wasReadAfterWrite(run, file) {
+function uniqueWrittenPaths(writes) {
+  const paths = [];
+  for (const call of writes || []) {
+    const file = String(call.args && call.args.path || "").replace(/\\/g, "/");
+    if (file && !paths.includes(file)) paths.push(file);
+  }
+  return paths;
+}
+
+function callsAfter(run, target) {
   const calls = run.toolCalls || [];
-  let writeIndex = -1;
+  const index = calls.indexOf(target);
+  return index >= 0 ? calls.slice(index + 1) : [];
+}
+
+function wasReadAfterMutation(run, file) {
+  const calls = run.toolCalls || [];
+  let mutationIndex = -1;
   for (let index = 0; index < calls.length; index += 1) {
     const call = calls[index];
-    if (call.name === "file.write" && call.result && call.result.ok && String(call.args && call.args.path || "").replace(/\\/g, "/") === file) {
-      writeIndex = index;
+    const path = String(call.args && call.args.path || "").replace(/\\/g, "/");
+    if ((call.name === "file.write" || call.name === "file.patch") && call.result && call.result.ok && path === file) {
+      mutationIndex = index;
     }
   }
-  if (writeIndex < 0) return false;
-  for (let index = writeIndex + 1; index < calls.length; index += 1) {
+  if (mutationIndex < 0) return false;
+  for (let index = mutationIndex + 1; index < calls.length; index += 1) {
     const call = calls[index];
     const path = String(call.args && call.args.path || "").replace(/\\/g, "/");
     if (call.name === "file.read" && call.result && call.result.ok && path === file) return true;
   }
   return false;
+}
+
+function wasReadAfterWrite(run, file) {
+  return wasReadAfterMutation(run, file);
 }
 
 function applyProjectDecision(run, store) {
@@ -854,44 +874,79 @@ function defaultVerify(run, text) {
     };
   }
   if (run.mode === "controlled" && writes.length) {
+    const changed = uniqueWrittenPaths(writes);
     const lastWrite = writes[writes.length - 1];
-    const after = (run.toolCalls || []).filter((call) => call.iteration > lastWrite.iteration);
-    const htmlWrite = writes.some((call) => /\.(html?|css)$/i.test(String(call.args && call.args.path || "")));
-    const preview = after.find((call) => call.name === "browser.check" && call.result && call.result.ok);
-    if ((run.taskClass === "layout" || htmlWrite) && htmlWrite && preview) {
+    const after = callsAfter(run, lastWrite);
+    const webWrite = writes.some((call) => /\.(html?|css|js|jsx|ts|tsx)$/i.test(String(call.args && call.args.path || "")));
+    const allReadBack = changed.every((file) => wasReadAfterMutation(run, file));
+
+    if (webWrite) {
+      const preview = after.find((call) => call.name === "browser.check" && call.result && call.result.ok);
+      if (!allReadBack) {
+        return {
+          status: "failed",
+          summary: "Read the changed web file back once, then verify the page with browser.check.",
+          evidence: ["file.patch"],
+        };
+      }
+      if (!preview) {
+        return {
+          status: "failed",
+          summary: "The web edit is saved. Verify the visible result with browser.check; tests and Git are not substitutes for the browser preview.",
+          evidence: ["file.patch", "file.read"],
+        };
+      }
       return {
         status: "passed",
-        summary: "The layout change is visible in the preview",
-        evidence: ["file.write", "browser.check"],
+        summary: "The web edit was saved, read back, and verified in the browser.",
+        evidence: ["file.patch", "file.read", "browser.check"],
       };
     }
-    const passedTest = after.find((call) => (
-      (call.name === "tests.run" || (call.name === "terminal.run" && call.args && String(call.args.command || "").includes("test")))
-      && call.result
-      && call.result.ok
-    ));
-    const diff = after.find((call) => call.name === "git.diff" && call.result && call.result.ok);
-    const notRepo = after.find((call) => (
-      call.name === "git.diff"
-      && call.result
-      && call.result.ok === false
-      && call.result.error
-      && call.result.error.code === "not_a_repository"
-    ));
-    if (passedTest && !diff && notRepo) {
-      return {
-        status: "passed",
-        summary: "The edit is saved. This folder is not a git repository, so there is no diff.",
-        evidence: ["file.write", "tests.run"],
-      };
-    }
-    if (!passedTest || !diff) {
+
+    if (!allReadBack) {
       return {
         status: "failed",
-        summary: "A write is not complete until a later passing test and git diff are recorded",
-        evidence: ["file.write"],
+        summary: "Read each changed file back once to confirm the saved contents.",
+        evidence: ["file.patch"],
       };
     }
+
+    const evidence = ["file.patch", "file.read"];
+    if (workspaceHasTests(run)) {
+      const passedTest = after.find((call) => (
+        (call.name === "tests.run" || (call.name === "terminal.run" && call.args && String(call.args.command || "").includes("test")))
+        && call.result
+        && call.result.ok
+      ));
+      if (!passedTest) {
+        return {
+          status: "failed",
+          summary: "This project has a test script. Run the available tests after the edit.",
+          evidence,
+        };
+      }
+      evidence.push("tests.run");
+    }
+
+    if (workspaceHasGit(run)) {
+      const diff = after.find((call) => call.name === "git.diff" && call.result && call.result.ok);
+      if (!diff) {
+        return {
+          status: "failed",
+          summary: "This project uses Git. Review the final change with git.diff.",
+          evidence,
+        };
+      }
+      evidence.push("git.diff");
+    }
+
+    return {
+      status: "passed",
+      summary: workspaceHasTests(run) || workspaceHasGit(run)
+        ? "The edit was saved and verified with the checks available in this workspace."
+        : "The edit was saved and confirmed by reading the changed file back.",
+      evidence,
+    };
   }
   if (run.mode === "controlled" && writes.length === 0 && promisesFile(text)) {
     return {
