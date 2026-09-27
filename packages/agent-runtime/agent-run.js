@@ -306,7 +306,8 @@ async function executeRun(run, options) {
       continue;
     }
 
-    for (const call of calls) {
+    for (const requestedCall of calls) {
+      const call = routeToolCall(run, requestedCall);
       if (cancelled(run, signal)) return finishCancelled(run, store);
       const key = actionKey(call);
       if ((run.failureCounts[key] || 0) >= run.maxRetries) {
@@ -401,6 +402,7 @@ async function executeRun(run, options) {
         iteration: run.iteration,
         name: call.name,
         args: call.args || {},
+        routedFrom: call.routedFrom || null,
         result,
       };
       run.toolCalls.push(record);
@@ -748,6 +750,59 @@ function readPaths(run, pattern) {
     paths.push(file);
   }
   return paths;
+}
+
+function previewTargetFromRun(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call.name !== "file.read" || !call.result || !call.result.ok) continue;
+    const candidate = String((call.args && call.args.path) || "");
+    if (/\.html?$/i.test(candidate)) return candidate;
+  }
+  return "index.html";
+}
+
+function isPreviewStartCommand(command) {
+  const text = String(command || "").trim();
+  if (!text) return false;
+  const withoutBackground = text.replace(/\s*&\s*$/, "").trim();
+  if (/^npm\s+(?:start|run\s+(?:dev|preview))$/i.test(withoutBackground)) return true;
+  if (/^node\s+(?:--[\w-]+\s+)*[^\s]+\.m?js$/i.test(withoutBackground)) {
+    return /(?:^|\/)(?:server|app|index|main)(?:\.[^.]+)?\.m?js$/i.test(withoutBackground.replace(/^node\s+(?:--[\w-]+\s+)*/, ""));
+  }
+  return false;
+}
+
+function routeToolCall(run, rawCall) {
+  const call = rawCall && typeof rawCall === "object"
+    ? { ...rawCall, args: { ...((rawCall && rawCall.args) || {}) } }
+    : rawCall;
+  if (!call || !isBrowserEditTask(run)) return call;
+
+  if (call.name === "terminal.run" && isPreviewStartCommand(call.args && call.args.command)) {
+    return {
+      name: "browser.check",
+      args: { url: previewTargetFromRun(run) },
+      routedFrom: {
+        name: "terminal.run",
+        command: String((call.args && call.args.command) || ""),
+      },
+    };
+  }
+
+  if (call.name === "process.start") {
+    return {
+      name: "browser.check",
+      args: { url: previewTargetFromRun(run) },
+      routedFrom: {
+        name: "process.start",
+        command: String((call.args && call.args.command) || ""),
+      },
+    };
+  }
+
+  return call;
 }
 
 function isInteractiveBrowserGoal(goal) {
@@ -1351,7 +1406,7 @@ function systemPrompt(options) {
       "Describing a file change or a capability call does not perform it. Use the matching tool.",
       "Use file.patch for a precise edit to an existing file and file.write for a new file or full replacement. Create folders with dir.create. Use process.start for a long-running preview server; do not use terminal.run for servers, mkdir, ls, or node -e.",
       "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
-      "To run or inspect the local site, use process.start only when a long-running npm preview process must be started, then call browser.check. For user-visible interactions such as click/button/tap behaviour, browser.check is not enough: call browser.interact and verify the real resulting text/state before finishing.",
+      "For local website previews, do not start the server with terminal.run or background shell commands. Call browser.check on the HTML page; CodeMe owns preview startup and reuse. For user-visible interactions such as click/button/tap behaviour, browser.check is not enough: browser.interact must verify the real resulting text/state before finishing.",
       isLayoutJob(options)
         ? "This is a layout job. After the HTML and CSS are read, use file.patch for a precise existing-file edit or file.write for a full replacement, then browser.check. Do not wait for tests or git."
         : runIsFolder(options)
