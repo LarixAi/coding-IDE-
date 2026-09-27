@@ -264,6 +264,19 @@ function resolveRuleDecision(input = {}) {
     ));
   }
 
+  if (
+    facts.failedProcessNeedsLogs
+    && WORKSPACE_MUTATION_TOOLS.has(name)
+  ) {
+    candidates.push(candidate(
+      "recovery",
+      "recovery.process_logs_required",
+      "deny",
+      "The latest CodeMe-owned process failed. Read process.logs and use the recorded error as evidence before changing workspace files.",
+      originalCall,
+    ));
+  }
+
   if (name === "process.start") {
     candidates.push(candidate(
       "recovery",
