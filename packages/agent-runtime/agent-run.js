@@ -200,10 +200,9 @@ async function executeRun(run, options) {
     store.save(run);
   }
 
-  // Local repairs stay local-first, but keep the read-only capability registry
-  // available so stagnation can escalate once instead of trapping a small model
-  // in an investigation loop. Dependency-free static scaffolds remain fully local.
-  const capabilitiesDisabled = isDependencyFreeStatic(run.projectDecision);
+  // Simple local repairs stay fully local until they actually stagnate.
+  // If that happens, settleTurn lazily discovers a read-only research capability.
+  const capabilitiesDisabled = isDependencyFreeStatic(run.projectDecision) || isLocalRepairWithoutOutsideEvidence(run);
   const capabilityRegistry = await loadCapabilityRegistry(capabilitiesDisabled ? null : options.capabilities);
   const capabilityRecords = capabilityRegistry.list();
   const capabilityTools = capabilityRecords.length ? capabilityToolDefinitions(capabilityRecords) : [];
@@ -1743,7 +1742,10 @@ function defaultVerify(run, text) {
     const changed = uniqueWrittenPaths(writes);
     const lastWrite = writes[writes.length - 1];
     const after = callsAfter(run, lastWrite);
-    const webWrite = writes.some((call) => /\.(html?|css|js|jsx|ts|tsx)$/i.test(String(call.args && call.args.path || "")));
+    const webWrite = writes.some((call) => {
+      const file = String(call.args && call.args.path || "");
+      return /\.(html?|css|js|jsx|ts|tsx)$/i.test(file) && !isServerRuntimeFile(run, file);
+    });
     const allReadBack = changed.every((file) => wasReadAfterMutation(run, file));
 
     if (webWrite) {
@@ -2065,9 +2067,15 @@ function pushObservation(run, call, result) {
 async function settleTurn(run, store, registry, options, signal) {
   const outcome = closeIteration(run, registry);
   store.save(run);
-  if (outcome.action === "stop") return finishFailed(run, store, "stagnation", outcome.stopSummary);
+  if (outcome.action === "stop") {
+    if (await maybeEscalateStagnantLocalRepair(run, options, signal, store)) {
+      return { researched: true };
+    }
+    return finishFailed(run, store, "stagnation", outcome.stopSummary);
+  }
   if (
     outcome.action === "research"
+    && !isLocalRepairWithoutOutsideEvidence(run)
     && !isSiteLayoutGoal(run.goal)
     && run.taskClass !== "layout"
   ) {
@@ -2096,6 +2104,36 @@ async function settleTurn(run, store, registry, options, signal) {
     return { focused: true };
   }
   return null;
+}
+
+async function maybeEscalateStagnantLocalRepair(run, options, signal, store) {
+  if (!isLocalRepairWithoutOutsideEvidence(run)) return false;
+  if (!run || !run.progress || run.progress.runtimeDirectedEscalation) return false;
+  if (isDependencyFreeStatic(run.projectDecision)) return false;
+  if (run.taskClass === "layout" || isSiteLayoutGoal(run.goal)) return false;
+  if (!options || !options.capabilities) return false;
+
+  let registry;
+  try {
+    registry = await loadCapabilityRegistry(options.capabilities);
+  } catch {
+    return false;
+  }
+
+  const listed = registry && typeof registry.list === "function" ? registry.list() : [];
+  const research = recommendCapability(listed);
+  if (!research || !research.name) return false;
+
+  run.progress.recommendedName = research.name;
+  run.progress.recommendedDescription = research.description || "";
+  run.progress.recommendedFields = (research.inputSchema && research.inputSchema.required) || [];
+  run.messages.push({
+    role: "user",
+    content: "Local repair attempts have genuinely stagnated. CodeMe is escalating once to the read-only evidence hub before deciding to stop.",
+  });
+  store.save(run);
+  await directResearch(run, registry, options, signal, store, false);
+  return true;
 }
 
 async function maybeDirectSelected(run, selected, registry, options, signal, store) {
@@ -2295,7 +2333,8 @@ async function directResearch(run, registry, options, signal, store, opening) {
 function closeIteration(run, registry) {
   if (!run.progress) run.progress = createProgressState();
   if (
-    !run.progress.recommendedName
+    !isLocalRepairWithoutOutsideEvidence(run)
+    && !run.progress.recommendedName
     && !isSiteLayoutGoal(run.goal)
     && run.taskClass !== "layout"
     && registry
