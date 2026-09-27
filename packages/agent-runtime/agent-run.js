@@ -737,6 +737,9 @@ function projectPolicyViolation(run, call) {
   if ((name === "capability.invoke" || name === "capability.list") && isSimpleLocalWorkspaceTask(run)) {
     return "This is a local workspace edit and does not need external research. Inspect and verify the local files instead.";
   }
+  if (name === "process.start" && isBrowserEditTask(run)) {
+    return "For browser-visible edits, browser.check owns preview startup and verification. Do not start a second preview process.";
+  }
   return "";
 }
 
@@ -748,6 +751,7 @@ function toolsForRun(run, localTools, capabilityTools) {
   let local = localTools.slice();
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
+  if (isBrowserEditTask(run)) local = local.filter((tool) => tool.name !== "process.start");
 
   const external = isSimpleLocalWorkspaceTask(run) ? [] : capabilityTools;
   return local.concat(external);
@@ -773,6 +777,35 @@ function isSimpleLocalWorkspaceTask(run) {
   const text = String(run.goal || "").toLowerCase();
   if (/\b(create|scaffold|new project|new app|new website|database|backend|api integration)\b/.test(text)) return false;
   return /\b(change|edit|update|set|make|fix|repair|heading|title|button|text|colour|color|centre|center|style|css|html|spacing|font|background)\b/.test(text);
+}
+
+function requiresWorkspaceRepair(run) {
+  if (!run || run.mode !== "controlled") return false;
+  if (["bug-fix", "layout", "build", "feature"].includes(run.taskClass)) return true;
+  const text = String(run.goal || "").toLowerCase();
+  return /\b(fix|repair|change|update|edit|make|add|remove|button|click|broken)\b/.test(text)
+    || text.includes("doesn't work")
+    || text.includes("does not work");
+}
+
+function unresolvedBrowserFailure(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call.name !== "browser.check") continue;
+    return call.result && call.result.ok ? null : call;
+  }
+  return null;
+}
+
+function isBrowserEditTask(run) {
+  if (!run || !run.workspace || run.workspace.state === "empty") return false;
+  const text = String(run.goal || "").toLowerCase();
+  const visible = /\b(page|website|site|html|css|style|heading|button|click|browser|frontend|front-end)\b/.test(text);
+  if (!visible) return false;
+  const explicitRunOnly = /\b(start|run|launch|serve)\b/.test(text)
+    && !/\b(change|edit|fix|repair|button|click|style|css|html|page|heading)\b/.test(text);
+  return !explicitRunOnly;
 }
 
 function verificationPolicyText(run) {
