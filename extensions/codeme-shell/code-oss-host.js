@@ -123,6 +123,7 @@ function runProcess(command) {
 }
 
 function waitForShellIntegration(terminal) {
+  if (terminal && terminal.shellIntegration) return Promise.resolve(terminal.shellIntegration);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       disposable.dispose();
