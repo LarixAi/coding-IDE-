@@ -12,9 +12,25 @@ function renderComposer(nonce) {
   <style>
     html, body { height: 100%; }
     body { margin: 0; color: #dfe4ec; background: #1c2027; font-family: var(--vscode-font-family); font-size: 13px; overflow: hidden; }
-    .shell { height: 100%; min-width: 0; display: flex; flex-direction: column; }
-    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 10px; flex-shrink: 0; }
-    h1 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
+    .shell { position: relative; height: 100%; min-width: 0; display: flex; flex-direction: column; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 8px 0 10px; flex-shrink: 0; border-bottom: 1px solid #252b33; }
+    .title-tools { display: flex; align-items: center; gap: 4px; min-width: 0; }
+    h1 { margin: 0 4px 0 0; font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
+    .header-action { display: inline-flex; align-items: center; justify-content: center; height: 24px; min-width: 24px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: #97a3b6; cursor: pointer; font: inherit; font-size: 11px; }
+    .header-action:hover { background: #2a3038; color: #dfe4ec; }
+    .header-action:disabled { opacity: 0.35; cursor: default; }
+    #new-chat { font-size: 17px; line-height: 1; }
+    .history-panel { display: none; position: absolute; z-index: 20; top: 34px; left: 8px; right: 8px; max-height: min(420px, 62%); overflow: hidden; border: 1px solid #343b46; border-radius: 9px; background: #171b21; box-shadow: 0 12px 28px #0008; }
+    .history-panel.on { display: flex; flex-direction: column; }
+    .history-head { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 10px; border-bottom: 1px solid #292f38; color: #dfe4ec; font-size: 12px; }
+    .history-head button { border: 0; background: transparent; color: #788495; cursor: pointer; font-size: 16px; }
+    .history-list { overflow: auto; padding: 5px; }
+    .history-empty { padding: 16px 10px; color: #697587; font-size: 11px; text-align: center; }
+    .history-item { display: block; width: 100%; padding: 8px 9px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+    .history-item:hover { background: #222831; }
+    .history-item.active { background: #26313a; }
+    .history-title { display: block; overflow: hidden; color: #cbd2dc; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .history-meta { display: block; margin-top: 2px; color: #667284; font-size: 10px; }
     header .pickers { display: flex; align-items: center; gap: 6px; min-width: 0; }
     #model, #mode { max-width: min(140px, 46%); min-width: 0; background: transparent; color: #dfe4ec; border: 0; height: 22px; font: inherit; font-size: 12px; text-align: right; }
     .thread { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px 16px; }
@@ -91,7 +107,11 @@ function renderComposer(nonce) {
 <body>
   <div class="shell">
     <header>
-      <h1>CodeMe</h1>
+      <div class="title-tools">
+        <h1>CodeMe</h1>
+        <button type="button" class="header-action" id="new-chat" title="New chat" aria-label="New chat">＋</button>
+        <button type="button" class="header-action" id="history-toggle" title="Chat history" aria-label="Chat history">History</button>
+      </div>
       <div class="pickers">
         <select id="mode" aria-label="Mode">
           <option value="ask">Ask</option>
@@ -101,6 +121,13 @@ function renderComposer(nonce) {
         <select id="model" aria-label="Model"></select>
       </div>
     </header>
+    <div class="history-panel" id="history-panel">
+      <div class="history-head">
+        <strong>Chat history</strong>
+        <button type="button" id="history-close" aria-label="Close chat history">×</button>
+      </div>
+      <div class="history-list" id="history-list"></div>
+    </div>
     <div class="thread" id="thread">
       <p class="empty" id="empty">Ask about this workspace.</p>
       <div id="messages"></div>
@@ -135,6 +162,11 @@ function renderComposer(nonce) {
     const mode = document.getElementById("mode");
     const stage = document.getElementById("stage");
     const activity = document.getElementById("activity");
+    const newChat = document.getElementById("new-chat");
+    const historyToggle = document.getElementById("history-toggle");
+    const historyPanel = document.getElementById("history-panel");
+    const historyClose = document.getElementById("history-close");
+    const historyList = document.getElementById("history-list");
     const projectDecision = document.getElementById("project-decision");
     const messages = document.getElementById("messages");
     const tools = document.getElementById("tools");
@@ -193,6 +225,15 @@ function renderComposer(nonce) {
     send.addEventListener("click", sendPrompt);
     stop.addEventListener("click", () => vscode.postMessage({ type: "cancel", requestId }));
     document.getElementById("attach").addEventListener("click", () => vscode.postMessage({ type: "pick" }));
+    newChat.addEventListener("click", () => {
+      historyPanel.classList.remove("on");
+      vscode.postMessage({ type: "new-chat" });
+      prompt.focus();
+    });
+    historyToggle.addEventListener("click", () => {
+      historyPanel.classList.toggle("on");
+    });
+    historyClose.addEventListener("click", () => historyPanel.classList.remove("on"));
     function setMic(on) {
       listening = on;
       mic.classList.toggle("on", on);
@@ -344,6 +385,9 @@ function renderComposer(nonce) {
         chips.appendChild(chip);
       }
       renderThread(state.thread || []);
+      renderHistory(state.conversations || [], state.conversationId || "");
+      newChat.disabled = running;
+      historyToggle.disabled = running;
       renderProjectDecision(state.projectDecision || null);
       renderTools(state.tools || []);
       if (running) {
@@ -381,6 +425,52 @@ function renderComposer(nonce) {
       projectDecision.appendChild(title);
       projectDecision.appendChild(meta);
       if (reason.textContent) projectDecision.appendChild(reason);
+    }
+
+    function renderHistory(items, activeId) {
+      historyList.innerHTML = "";
+      if (!items.length) {
+        const emptyHistory = document.createElement("div");
+        emptyHistory.className = "history-empty";
+        emptyHistory.textContent = "No previous chats in this workspace.";
+        historyList.appendChild(emptyHistory);
+        return;
+      }
+      for (const item of items) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "history-item" + (item.id === activeId ? " active" : "");
+        row.dataset.chatId = item.id;
+
+        const title = document.createElement("span");
+        title.className = "history-title";
+        title.textContent = item.title || "New chat";
+
+        const meta = document.createElement("span");
+        meta.className = "history-meta";
+        const count = Number(item.messageCount || 0);
+        meta.textContent = formatChatTime(item.updatedAt) + " · " + count + (count === 1 ? " message" : " messages");
+
+        row.appendChild(title);
+        row.appendChild(meta);
+        row.addEventListener("click", () => {
+          historyPanel.classList.remove("on");
+          vscode.postMessage({ type: "open-chat", id: item.id });
+        });
+        historyList.appendChild(row);
+      }
+    }
+
+    function formatChatTime(value) {
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) return "Recently";
+      const today = new Date();
+      const sameDay = date.getFullYear() === today.getFullYear()
+        && date.getMonth() === today.getMonth()
+        && date.getDate() === today.getDate();
+      return sameDay
+        ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : date.toLocaleDateString([], { day: "numeric", month: "short" });
     }
 
     function formatSize(size) {
