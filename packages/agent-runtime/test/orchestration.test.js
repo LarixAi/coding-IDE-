@@ -359,6 +359,113 @@ async function main() {
     assert.ok(tools.includes("file.patch"));
   });
 
+  await test("stale process.start is suppressed during browser repair without starting another server", async () => {
+    const root = tempDir();
+    fs.writeFileSync(path.join(root, "index.html"), '<h1 id="title">Hello CodeMe</h1>\n', "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      name: "preview-reuse",
+      scripts: { start: "node server.js" },
+    }, null, 2), "utf8");
+
+    let starts = 0;
+    let statuses = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 2,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["html", "javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: [
+            { path: "index.html", type: "file" },
+            { path: "package.json", type: "file" },
+          ],
+        };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile() { throw new Error("not used"); },
+      async createDirectory(dirPath) { return { path: dirPath }; },
+      async search() { return { query: "", matches: [] }; },
+      async runTerminal() { return { exitCode: 0, output: "" }; },
+      async processStatus() {
+        statuses += 1;
+        return { found: true, status: "running", command: "npm start", exitCode: null };
+      },
+      async processLogs() {
+        return { found: true, status: "running", command: "npm start", output: "Server running at http://localhost:3000" };
+      },
+      async startProcess() {
+        starts += 1;
+        return { started: true, status: "running", command: "npm start" };
+      },
+      async runTests() { throw new Error("not used"); },
+      async gitStatus() { throw new Error("not used"); },
+      async gitDiff() { throw new Error("not used"); },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) {
+        return { available: true, statusCode: 200, title: "Hello CodeMe", url, assets: [] };
+      },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "process.start", args: { command: "npm start" } }] },
+      { toolCalls: [{ name: "file.read", args: { path: "index.html" } }] },
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: { path: "index.html", oldText: "Hello CodeMe", newText: "Hello Again" },
+        }],
+      },
+      { toolCalls: [{ name: "file.read", args: { path: "index.html" } }] },
+      { toolCalls: [{ name: "browser.check", args: { url: "index.html" } }] },
+      { text: "Updated the heading." },
+    ]);
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: "Fix the page and change the heading. Make sure it works in the browser.",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 8,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(starts, 0);
+    assert.ok(statuses >= 1);
+
+    const staleStart = run.toolCalls.find((call) => call.name === "process.start");
+    assert.ok(staleStart);
+    assert.strictEqual(staleStart.result.ok, true);
+    assert.strictEqual(staleStart.result.data.suppressed, true);
+    assert.strictEqual(staleStart.result.data.reused, true);
+    assert.strictEqual(staleStart.result.data.reason, "already_running");
+    assert.ok(!run.toolCalls.some((call) => (
+      call.name === "process.start" && call.result && call.result.ok === false
+    )));
+  });
+
   await test("static project policy hard-blocks package scaffolding and process tools", async () => {
     const root = tempDir();
     let writes = 0;
@@ -425,7 +532,7 @@ async function main() {
       scripts: { start: "node server.js" },
     }, null, 2), "utf8");
 
-    const state = { tests: 0, git: 0, research: 0 };
+    const state = { tests: 0, git: 0, research: 0, capabilityLists: 0 };
     const host = {
       async inspectWorkspace() {
         return {
@@ -482,6 +589,7 @@ async function main() {
 
     const capabilities = {
       async listCapabilities() {
+        state.capabilityLists += 1;
         return [{
           name: "research.problem",
           description: "Research documentation.",
@@ -538,6 +646,7 @@ async function main() {
     assert.strictEqual(state.tests, 0);
     assert.strictEqual(state.git, 0);
     assert.strictEqual(state.research, 0);
+    assert.strictEqual(state.capabilityLists, 0);
     assert.ok(fs.readFileSync(path.join(root, "index.html"), "utf8").includes("color: red"));
 
     for (const modelCall of provider.calls) {
