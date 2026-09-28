@@ -175,6 +175,11 @@ function contentToolCalls(content, offeredTools) {
     if (candidate.startsWith("{") && candidate.endsWith("}")) candidates.push(candidate);
   }
 
+  for (const match of text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi)) {
+    const candidate = String(match[1] || "").trim();
+    if (candidate.startsWith("{") && candidate.endsWith("}")) candidates.push(candidate);
+  }
+
   const calls = [];
   const seen = new Set();
   for (const candidate of candidates) {
