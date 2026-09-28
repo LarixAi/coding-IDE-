@@ -165,7 +165,7 @@ function normalizeMessage(message, offeredTools = []) {
 }
 
 function contentToolCall(content, offeredTools) {
-  const text = stripThinking(content).trim();
+  const text = toolJsonText(content);
   if (!text.startsWith("{") || !text.endsWith("}")) return null;
 
   let parsed;
@@ -195,6 +195,12 @@ function contentToolCall(content, offeredTools) {
   if (!validToolArguments(args, offered.parameters)) return null;
 
   return { name: offered.name, args };
+}
+
+function toolJsonText(content) {
+  const text = stripThinking(content).trim();
+  const fenced = text.match(/^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i);
+  return fenced ? fenced[1].trim() : text;
 }
 
 function validToolArguments(args, schema) {
