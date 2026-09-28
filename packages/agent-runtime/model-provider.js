@@ -66,7 +66,7 @@ class OllamaModelProvider extends ModelProvider {
     const signal = AbortSignal.any(signals);
     try {
       const response = await postJson(this.baseUrl, "/api/chat", chatBody(input), signal);
-      const decision = normalizeMessage(response.message || {});
+      const decision = normalizeMessage(response.message || {}, input.tools || []);
       const promptTokens = typeof response.prompt_eval_count === "number" ? response.prompt_eval_count : null;
       const completionTokens = typeof response.eval_count === "number" ? response.eval_count : null;
       if (promptTokens !== null || completionTokens !== null) {
@@ -129,22 +129,104 @@ function toOllamaTool(tool) {
   };
 }
 
-function normalizeMessage(message) {
-  const calls = message.tool_calls || [];
+function normalizeMessage(message, offeredTools = []) {
+  const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+  const nativeCalls = calls.map((call) => {
+    const providerName = call.function && call.function.name;
+    const rawArgs = call.function ? call.function.arguments || {} : {};
+    let args = {};
+    try {
+      args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+    } catch {
+      args = {};
+    }
+    return { name: CONTRACT_NAMES[providerName] || providerName, args };
+  }).filter((call) => call.name);
+
+  if (nativeCalls.length) {
+    return {
+      text: stripThinking(message.content || ""),
+      toolCalls: nativeCalls,
+    };
+  }
+
+  const fallback = contentToolCall(message.content || "", offeredTools);
+  if (fallback) {
+    return {
+      text: "",
+      toolCalls: [fallback],
+    };
+  }
+
   return {
     text: stripThinking(message.content || ""),
-    toolCalls: calls.map((call) => {
-      const providerName = call.function && call.function.name;
-      const rawArgs = call.function ? call.function.arguments || {} : {};
-      let args = {};
-      try {
-        args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
-      } catch {
-        args = {};
-      }
-      return { name: CONTRACT_NAMES[providerName] || providerName, args };
-    }),
+    toolCalls: [],
   };
+}
+
+function contentToolCall(content, offeredTools) {
+  const text = stripThinking(content).trim();
+  if (!text.startsWith("{") || !text.endsWith("}")) return null;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+
+  const providerName = typeof parsed.name === "string" ? parsed.name.trim() : "";
+  if (!providerName) return null;
+
+  const offered = (offeredTools || []).find((tool) => (
+    tool && (PROVIDER_NAMES[tool.name] || tool.name) === providerName
+  ));
+  if (!offered) return null;
+
+  let args = parsed.arguments ?? parsed.args ?? {};
+  if (typeof args === "string") {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      return null;
+    }
+  }
+  if (!validToolArguments(args, offered.parameters)) return null;
+
+  return { name: offered.name, args };
+}
+
+function validToolArguments(args, schema) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return false;
+  if (!schema || typeof schema !== "object") return true;
+  if (schema.type && schema.type !== "object") return false;
+
+  for (const field of schema.required || []) {
+    if (!Object.prototype.hasOwnProperty.call(args, field)) return false;
+  }
+
+  const properties = schema.properties && typeof schema.properties === "object"
+    ? schema.properties
+    : {};
+  for (const [key, value] of Object.entries(args)) {
+    const rule = properties[key];
+    if (!rule || !rule.type) continue;
+    if (!matchesSchemaType(value, rule.type)) return false;
+  }
+  return true;
+}
+
+function matchesSchemaType(value, type) {
+  if (Array.isArray(type)) return type.some((item) => matchesSchemaType(value, item));
+  if (type === "string") return typeof value === "string";
+  if (type === "number") return typeof value === "number" && Number.isFinite(value);
+  if (type === "integer") return Number.isInteger(value);
+  if (type === "boolean") return typeof value === "boolean";
+  if (type === "array") return Array.isArray(value);
+  if (type === "object") return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  if (type === "null") return value === null;
+  return true;
 }
 
 function stripThinking(text) {
