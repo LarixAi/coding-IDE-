@@ -2358,16 +2358,39 @@ function defaultVerify(run, text) {
       }
       evidence.push("browser.check");
 
-      const interactionRequired = isInteractiveBrowserGoal(run.goal)
-        || /\b(form|booking|checkout)\b/i.test(String(run.goal || ""));
+      const goalText = String(run.goal || "");
+      const formFlowRequired = /\b(form|booking|checkout)\b/i.test(goalText);
+      const interactionRequired = isInteractiveBrowserGoal(run.goal) || formFlowRequired;
       if (interactionRequired) {
-        const interaction = after.find((call) => call.name === "browser.interact" && call.result && call.result.ok);
-        if (!interaction) {
+        const interactions = after.filter((call) => call.name === "browser.interact" && call.result && call.result.ok);
+        if (!interactions.length) {
           return {
             status: "failed",
             summary: "The page loads, but the end-to-end form or interaction has not been exercised successfully in the real browser.",
             evidence,
           };
+        }
+
+        if (formFlowRequired) {
+          const confirmationRequired = /\b(confirm|confirmation|success|receipt)\b/i.test(goalText);
+          const sequence = interactions.find((call) => {
+            const action = String(call.args && call.args.action || "").toLowerCase();
+            const steps = Array.isArray(call.args && call.args.steps) ? call.args.steps : [];
+            if (action !== "sequence") return false;
+            const actions = steps.map((step) => String(step && step.action || "").toLowerCase());
+            if (!actions.includes("fill") || !actions.includes("click")) return false;
+            if (confirmationRequired && !actions.includes("asserttext")) return false;
+            return true;
+          });
+          if (!sequence) {
+            return {
+              status: "failed",
+              summary: confirmationRequired
+                ? "The booking/form flow must be verified in one browser.interact sequence that fills fields, submits the form, and asserts confirmation text."
+                : "The booking/form flow must be verified in one browser.interact sequence that fills fields and submits the form.",
+              evidence,
+            };
+          }
         }
         evidence.push("browser.interact");
       }
