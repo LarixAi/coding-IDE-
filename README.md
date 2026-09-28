@@ -57,3 +57,9 @@ curl http://127.0.0.1:5678/healthz
 ```
 
 Do not commit API keys, n8n tokens, or other secrets.
+
+## In-IDE browser preview
+
+CodeMe browser verification stays inside the IDE. When the agent uses `browser.check` or `browser.interact`, the preview runner opens the verified localhost URL in Code - OSS's built-in Simple Browser editor using `simpleBrowser.show`. It does not call the operating system's external browser.
+
+This keeps the working loop in one place: Composer, files, terminal, diagnostics, and the live browser preview remain inside CodeMe.
