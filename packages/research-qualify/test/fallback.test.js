@@ -4,7 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, startAgentRun, ControlledToolProvider, ToolRegistry } = require("../../agent-runtime");
-const { createWorkspaceHost } = require("../../coding-qualify/host");
+const { createResearchWorkspaceHost } = require("../host");
 const { N8nCapabilityProvider } = require("../../n8n-capability");
 const { REQUIREMENTS } = require("../acceptance");
 const { fallbackComplete, workspaceChanges } = require("../verify");
@@ -115,7 +115,7 @@ async function main() {
     mode: "controlled",
     requirements: REQUIREMENTS,
     provider,
-    registry: new ToolRegistry(new ControlledToolProvider(createWorkspaceHost(workspace))),
+    registry: new ToolRegistry(new ControlledToolProvider(createResearchWorkspaceHost(workspace))),
     store,
     capabilities: hub,
     maxIterations: 14,
