@@ -6,7 +6,7 @@ const path = require("path");
 const assert = require("assert");
 const { ModelProvider, OllamaModelProvider, ControlledToolProvider, ToolRegistry, ExternalCapabilityProvider, RunStore, startAgentRun } = require("../agent-runtime");
 const { CAPABILITY_CATALOG } = require("../agent-runtime/capability-registry");
-const { createWorkspaceHost } = require("../coding-qualify/host");
+const { createResearchWorkspaceHost } = require("./host");
 const { N8nCapabilityProvider } = require("../n8n-capability");
 const { REQUIREMENTS } = require("./acceptance");
 const { localComplete, researchComplete, workspaceChanges } = require("./verify");
@@ -138,7 +138,7 @@ async function execute(label, capabilities, verify) {
     mode: "controlled",
     requirements: REQUIREMENTS,
     provider,
-    registry: new ToolRegistry(new ControlledToolProvider(createWorkspaceHost(workspace))),
+    registry: new ToolRegistry(new ControlledToolProvider(createResearchWorkspaceHost(workspace))),
     store,
     capabilities,
     maxIterations: 40,
