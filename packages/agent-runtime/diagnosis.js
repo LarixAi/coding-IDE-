@@ -25,6 +25,8 @@ function diagnose(call, result) {
     || code === "browser_console_error"
     || code === "browser_target_not_found"
     || code === "browser_target_not_clickable"
+    || code === "browser_target_not_fillable"
+    || code === "browser_fill_failed"
   ) {
     return { class: "bad_code", retry: false, next: "repair" };
   }
