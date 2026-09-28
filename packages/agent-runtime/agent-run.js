@@ -3019,7 +3019,10 @@ async function settleTurn(run, store, registry, options, signal) {
     return { focused: true };
   }
   if (run.progress.focus) {
-    run.messages.push({ role: "user", content: focusNotice(run.progress) });
+    const notice = isReadAllFilesGoal(run.goal)
+      ? "Continue the read-all inspection with tools. Use dir.list on any unlisted project folders and file.read on unread project files. Do not edit, test, research externally, or merely list the remaining filenames in prose."
+      : focusNotice(run.progress);
+    run.messages.push({ role: "user", content: notice });
     store.save(run);
     return { focused: true };
   }
@@ -3136,6 +3139,19 @@ async function showWorkspace(run, registry, store) {
 
     const data = inspected.data && typeof inspected.data === "object" ? inspected.data : {};
     run.workspace = data;
+    const inspectCall = { name: "workspace.inspect", args: {} };
+    const inspectRecord = {
+      id: `call_${crypto.randomBytes(4).toString("hex")}`,
+      iteration: run.iteration,
+      name: inspectCall.name,
+      args: inspectCall.args,
+      result: inspected,
+      directedBy: "runtime",
+    };
+    run.toolCalls.push(inspectRecord);
+    const inspectObservation = observe(inspectCall, inspected);
+    inspectObservation.directedBy = "runtime";
+    run.observations.push(inspectObservation);
     if (!Array.isArray(run.events)) run.events = [];
     run.events.push({
       type: "workspace",
@@ -3161,6 +3177,20 @@ async function showWorkspace(run, registry, store) {
     return null;
   }
   if (!result || !result.ok) return null;
+  const listCall = { name: "dir.list", args: { path: "." } };
+  const listRecord = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: listCall.name,
+    args: listCall.args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(listRecord);
+  const listObservation = observe(listCall, result);
+  listObservation.directedBy = "runtime";
+  run.observations.push(listObservation);
+  pushObservation(run, listCall, result);
   const entries = result.data && Array.isArray(result.data.entries) ? result.data.entries : [];
   const files = entries.slice(0, 80).map((entry) => entry.path).filter(Boolean);
   run.messages.push({
