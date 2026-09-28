@@ -34,6 +34,15 @@ Current gate: **Gate 11 autonomous hardening is recorded** in `docs/GATE_11_AUTO
 
 ## Local and remote AI models over Tailscale
 
+The launcher automatically loads machine-specific endpoint settings from a repository-root `.env` file. Create it once with:
+
+```bash
+cp .env.example .env
+```
+
+The `.env.example` file is only a template; the running IDE does not receive those values until they are copied to `.env` (or exported in the shell).
+
+
 CodeMe keeps the local Ollama instance on the Mac and can also discover models from the `codeme-ai` server over Tailscale. n8n stays local.
 
 Current endpoints:
