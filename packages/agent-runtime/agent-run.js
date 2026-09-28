@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
-const { createProgressState, recommendCapability, selectCapability, isSiteLayoutGoal, htmlCssRead, capabilityGuidance, writeFindingsNotice, applyEditNotice, alreadySearched, applyIteration, noteResearch, researchQuestion, postResearchBrief, openingResearchBrief, markQuestionSeen, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
+const { createProgressState, recommendCapability, selectCapability, capabilityIntent, isSiteLayoutGoal, htmlCssRead, capabilityGuidance, writeFindingsNotice, applyEditNotice, alreadySearched, applyIteration, noteResearch, researchQuestion, postResearchBrief, openingResearchBrief, markQuestionSeen, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
 const { lockModel } = require("./model-lock");
 const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isLocalFollowUp } = require("./strategy");
 const { decideProject, isDependencyFreeStatic, projectDecisionContext } = require("./project-decision");
@@ -201,10 +201,15 @@ async function executeRun(run, options) {
     store.save(run);
   }
 
-  // Dependency-free static scaffolds never need the hub. Existing projects still
-  // discover the registry so an explicit planning/knowledge intent can be routed
-  // before the local-repair shortcut hides external capabilities from the model.
-  const capabilitiesDisabled = isDependencyFreeStatic(run.projectDecision);
+  // Dependency-free static scaffolds never need the hub. Simple local edits also
+  // skip registry discovery entirely, while explicit task/knowledge/research intent
+  // may still discover a capability before the coding loop begins.
+  const openingIntent = capabilityIntent(run.goal, {
+    composerMode: options.composerMode || run.composerMode,
+    taskClass: run.taskClass,
+  });
+  const capabilitiesDisabled = isDependencyFreeStatic(run.projectDecision)
+    || (isLocalRepairWithoutOutsideEvidence(run) && !openingIntent);
   const capabilityRegistry = await loadCapabilityRegistry(capabilitiesDisabled ? null : options.capabilities);
   const capabilityRecords = capabilityRegistry.list();
   const capabilityTools = capabilityRecords.length ? capabilityToolDefinitions(capabilityRecords) : [];
