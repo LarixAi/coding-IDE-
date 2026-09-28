@@ -11,6 +11,15 @@ const { hasNoEditDirective, stripNegatedEditing } = require("./intent");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 const STOPPED = new Set(["completed", "cancelled", "failed", "awaiting_user"]);
+const READ_ONLY_COMPOSER_TOOLS = new Set([
+  "workspace.inspect",
+  "file.read",
+  "repo.search",
+  "dir.list",
+  "git.status",
+  "git.diff",
+  "diagnostics.run",
+]);
 
 function createRun(options) {
   const lock = options.modelLock || lockModel(options);
@@ -19,7 +28,7 @@ function createRun(options) {
   const effectiveMode = noEdit ? "read_only" : requestedMode;
   options = { ...options, mode: effectiveMode };
   const strategy = options.strategyRecord || selectStrategy(options.goal, options);
-  const requirements = inferRequirements(options.goal, options);
+  const requirements = effectiveMode === "chat_only" ? [] : inferRequirements(options.goal, options);
   const run = {
     schemaVersion: 1,
     id: `run_${crypto.randomBytes(8).toString("hex")}`,
@@ -199,26 +208,28 @@ async function executeRun(run, options) {
   }
   store.save(run);
 
-  const folder = await createRequestedFolder(run, registry, store);
-  if (folder) return folder;
-  if (!cancelled(run, signal)) {
-    const workspace = await showWorkspace(run, registry, store);
-    if (workspace && workspace.ok === false) {
-      const error = workspace.error || {};
-      return finishFailed(
-        run,
-        store,
-        error.code || "workspace_inspection_failed",
-        error.message || "CodeMe could not inspect the active workspace",
-      );
+  if (run.mode !== "chat_only") {
+    const folder = await createRequestedFolder(run, registry, store);
+    if (folder) return folder;
+    if (!cancelled(run, signal)) {
+      const workspace = await showWorkspace(run, registry, store);
+      if (workspace && workspace.ok === false) {
+        const error = workspace.error || {};
+        return finishFailed(
+          run,
+          store,
+          error.code || "workspace_inspection_failed",
+          error.message || "CodeMe could not inspect the active workspace",
+        );
+      }
     }
-  }
 
-  applyProjectDecision(run, store);
-  const verificationPolicy = verificationPolicyText(run);
-  if (verificationPolicy) {
-    run.messages.push({ role: "user", content: verificationPolicy });
-    store.save(run);
+    applyProjectDecision(run, store);
+    const verificationPolicy = verificationPolicyText(run);
+    if (verificationPolicy) {
+      run.messages.push({ role: "user", content: verificationPolicy });
+      store.save(run);
+    }
   }
 
   // Dependency-free static scaffolds never need the hub. Simple local edits also
@@ -228,7 +239,8 @@ async function executeRun(run, options) {
     composerMode: options.composerMode || run.composerMode,
     taskClass: run.taskClass,
   });
-  const capabilitiesDisabled = isDependencyFreeStatic(run.projectDecision)
+  const capabilitiesDisabled = run.mode === "chat_only"
+    || isDependencyFreeStatic(run.projectDecision)
     || (isLocalRepairWithoutOutsideEvidence(run) && !openingIntent);
   const capabilityRegistry = await loadCapabilityRegistry(capabilitiesDisabled ? null : options.capabilities);
   const capabilityRecords = capabilityRegistry.list();
@@ -256,7 +268,9 @@ async function executeRun(run, options) {
     }
   }
 
-  if (!cancelled(run, signal)) await prepareResearch(run, capabilityRegistry, options, signal, store);
+  if (run.mode !== "chat_only" && !cancelled(run, signal)) {
+    await prepareResearch(run, capabilityRegistry, options, signal, store);
+  }
 
   while (!STOPPED.has(run.lifecycle)) {
     if (cancelled(run, signal)) return finishCancelled(run, store);
@@ -1713,11 +1727,16 @@ function recordRuleDecision(run, decision, requestedCall) {
 }
 
 function toolsForRun(run, localTools, capabilityTools) {
+  if (run && run.mode === "chat_only") return [];
+
   if (isDependencyFreeStatic(run && run.projectDecision)) {
     return localTools.filter((tool) => isStaticScaffoldTool(tool.name));
   }
 
   let local = localTools.slice();
+  if (run && run.mode === "read_only") {
+    local = local.filter((tool) => READ_ONLY_COMPOSER_TOOLS.has(tool.name));
+  }
   if (run && run.noEdit) local = local.filter((tool) => !READ_ONLY_BLOCKED_TOOLS.has(tool.name));
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
@@ -2109,6 +2128,16 @@ async function createRequestedFolder(run, registry, store) {
 function systemPrompt(options) {
   const capabilities = options.capabilities;
   const hub = capabilities && typeof capabilities.listCapabilities === "function" ? "external capabilities are separate from tools" : "no external capability hub is configured";
+  if (options.mode === "chat_only") {
+    return [
+      "You are in CodeMe Chat mode.",
+      "This mode is conversation only.",
+      "Do not inspect or make claims about the workspace unless the user has pasted that information into the conversation.",
+      "Do not call tools, capabilities, terminal commands, tests, browser checks, or file operations.",
+      "Do not promise that you changed, checked, ran, created, fixed, or verified anything in the workspace.",
+      "Answer conversationally from the visible conversation and general model knowledge.",
+    ].join(" ");
+  }
   if (options.mode === "controlled") {
     return [
       "You are a CodeMe agent run with workspace-scoped tools.",
@@ -2147,15 +2176,16 @@ function systemPrompt(options) {
     "Use tools for repository facts.",
     "A tool result is an observation. It does not by itself finish the goal.",
     "If a tool fails, report the failure and do not invent file contents or a successful command.",
-    "Do not edit files. Write, terminal, and test tools are unavailable.",
+    "Do not edit files. Write, terminal, test, process, and browser tools are unavailable in Ask and Plan modes.",
+    "Use workspace inspection, file reads, repository search, directory listing, diagnostics, and Git read-only evidence only when they help answer the request.",
     runIsResearch(options)
       ? "This is a research and explanation request. If a research capability is available, call it at most once with input.problem set to the question. Read the relevant workspace files, then answer with the researched approach and what should change in this project. Do not edit anything."
       : "",
-    "To run or open the workspace site, call browser.check with the local URL or a workspace HTML path. That starts the project preview if it is not already running.",
+    "Do not start or interact with the workspace application in Ask or Plan mode.",
     "Inspect once, then write the answer. Do not reread the same files.",
     options.taskClass === "plan" || (options.strategyRecord && options.strategyRecord.taskClass === "plan")
-      ? "Finish with a sequenced list of steps, files, and risks."
-      : "Write the findings after one pass.",
+      ? "Plan mode is plan-only. Finish with a sequenced implementation plan that names the relevant files, ordered steps, verification steps, and risks. Do not perform the plan."
+      : "Ask mode is answer-only. Explain the findings and recommended changes, but do not perform them.",
     hub,
   ].filter(Boolean).join(" ");
 }
@@ -2327,13 +2357,26 @@ function defaultVerify(run, text) {
       evidence: htmlWrite ? ["file.write"] : [],
     };
   }
-  if ((run.mode === "read_only" || run.taskClass === "plan") && trustedObservation(run) && String(text).trim()) {
-    const summary = run.taskClass === "plan"
-      ? (hasSequencedPlan(text) ? "The plan follows recorded observations" : "The answer follows recorded observations")
-      : "The answer follows recorded observations";
+  if (run.mode === "chat_only" && String(text).trim()) {
     return {
       status: "passed",
-      summary,
+      summary: "Chat response completed without workspace tools",
+      evidence: [],
+    };
+  }
+  if ((run.mode === "read_only" || run.taskClass === "plan") && trustedObservation(run) && String(text).trim()) {
+    if (run.taskClass === "plan" && !hasSequencedPlan(text)) {
+      return {
+        status: "failed",
+        summary: "Plan mode requires a sequenced implementation plan with concrete steps",
+        evidence: run.observations.map((item) => item.tool),
+      };
+    }
+    return {
+      status: "passed",
+      summary: run.taskClass === "plan"
+        ? "The sequenced plan follows recorded observations"
+        : "The answer follows recorded observations",
       evidence: run.observations.map((item) => item.tool),
     };
   }
@@ -2693,6 +2736,12 @@ function addChanged(run, file) {
 
 function buildPlan(options) {
   const requirements = options.requirements || [];
+  if (options.mode === "chat_only") {
+    return [
+      { id: "understand", title: "Understand the conversation", status: "pending" },
+      { id: "respond", title: "Answer without workspace actions", status: "pending" },
+    ];
+  }
   if (requirements.length) {
     return [
       { id: "understand", title: "Keep the original goal", status: "pending" },
