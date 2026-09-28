@@ -550,10 +550,18 @@ async function probe(url) {
 }
 
 async function openPreview(vscode, url) {
-  const uri = vscode.Uri.parse(url);
-  await vscode.commands.executeCommand("vscode.open", uri).catch(() => {});
-  if (vscode.env && typeof vscode.env.openExternal === "function") {
-    await vscode.env.openExternal(uri).catch(() => {});
+  // Keep CodeMe previews inside the IDE. The built-in Simple Browser renders
+  // localhost pages in an editor tab and avoids launching the system browser.
+  try {
+    await vscode.commands.executeCommand("simpleBrowser.show", url);
+    return { opened: true, surface: "simpleBrowser" };
+  } catch (error) {
+    return {
+      opened: false,
+      surface: "simpleBrowser",
+      code: "internal_browser_unavailable",
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
