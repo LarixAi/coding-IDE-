@@ -66,7 +66,7 @@ async function runChatContract() {
   const model = new CaptureModel([{ text: "Hello from chat.", toolCalls: [] }]);
 
   const run = await startAgentRun({
-    goal: "Tell me what an IDE is.",
+    goal: "Read server.js and tell me what it does. Do not change anything.",
     model: "fixture",
     providerName: "capture",
     provider: model,
@@ -79,7 +79,8 @@ async function runChatContract() {
   }).done;
 
   assert.strictEqual(run.lifecycle, "completed");
-  assert.strictEqual(run.mode, "chat_only");
+  assert.strictEqual(run.mode, "chat_only", "A no-edit directive must not turn Chat into read-only workspace mode");
+  assert.strictEqual(run.requestedMode, "chat_only");
   assert.strictEqual(run.taskClass, "chat");
   assert.deepStrictEqual(registry.calls, [], "Chat must not auto-inspect or call workspace tools");
   assert.deepStrictEqual(model.calls[0].tools, [], "Chat must expose zero tools");
