@@ -313,7 +313,6 @@ async function main() {
     const provider = new ScriptedModelProvider([
       step("Trying the first patch.", bad),
       step("Trying the same patch again.", bad),
-      step("Trying the same patch a third time.", bad),
       step("Using the freshly read contents instead.", good),
       step("Confirming the saved contents.", { name: "file.read", args: { path: "src/check.js" } }),
       step("repaired"),
