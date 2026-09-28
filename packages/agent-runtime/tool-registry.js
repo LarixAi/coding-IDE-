@@ -87,7 +87,7 @@ const DEFINITIONS = {
     },
   },
   "process.start": {
-    description: "Start a long-running non-browser workspace process when explicitly needed. For website/dev-server previews, use browser.check instead; CodeMe owns preview startup and reuse.",
+    description: "Start or restart a long-running workspace process. After a failed CodeMe-owned process has been diagnosed and repaired, call this to rerun it. For ordinary website preview checks, browser.check can own startup and reuse.",
     parameters: {
       type: "object",
       properties: { command: { type: "string" } },

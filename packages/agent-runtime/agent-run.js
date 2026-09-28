@@ -530,6 +530,26 @@ async function executeRun(run, options) {
         });
       }
 
+      if (
+        (call.name === "file.patch" || call.name === "file.write")
+        && result.ok
+        && hadFailedOwnedProcess(run)
+        && !failedProcessNeedsLogs(run)
+        && !run.processRestartNudged
+      ) {
+        run.processRestartNudged = true;
+        if (run.progress) {
+          run.progress.writeNow = false;
+          run.progress.focus = true;
+          run.progress.semanticStagnation = 0;
+          run.progress.stagnantTurns = 0;
+        }
+        run.messages.push({
+          role: "user",
+          content: "The repair is saved. The CodeMe-owned process is still failed. Restart it with process.start now, then confirm it is running before finishing.",
+        });
+      }
+
       store.save(run);
 
       if (call.name === "browser.check" && result.ok) {
@@ -550,6 +570,12 @@ async function executeRun(run, options) {
 
     const done = maybeFinishVerifiedWork(run, store, text);
     if (done) return done;
+
+    await maybeReadBackRepairedFiles(run, registry, store);
+    if (await maybeRestartRepairedProcess(run, registry, store)) {
+      const verifiedNow = maybeFinishVerifiedWork(run, store, text);
+      if (verifiedNow) return verifiedNow;
+    }
 
     const settled = await settleTurn(run, store, capabilityRegistry, options, signal);
     if (settled && settled.lifecycle) return settled;
@@ -1097,6 +1123,183 @@ function failedProcessNeedsLogs(run) {
   return false;
 }
 
+function hadFailedOwnedProcess(run) {
+  return ((run && run.toolCalls) || []).some((call) => {
+    if (!call || !call.result) return false;
+    if (call.name === "process.start") {
+      if (call.result.ok === false) return true;
+      const data = call.result.data || {};
+      return data.status === "failed" || Boolean(data.requiresLogs);
+    }
+    if ((call.name === "process.status" || call.name === "process.logs") && call.result.ok && call.result.data) {
+      return call.result.data.status === "failed";
+    }
+    return false;
+  });
+}
+
+function processIsRunningResult(call) {
+  if (!call || !call.result || !call.result.ok) return false;
+  const data = call.result.data || {};
+  if (call.name === "process.status") return data.status === "running";
+  if (call.name !== "process.start") return false;
+  if (data.requiresLogs || data.status === "failed") return false;
+  return Boolean(data.started || data.reused || data.status === "running");
+}
+
+function successfulWrites(run) {
+  return ((run && run.toolCalls) || []).filter((call) => (
+    (call.name === "file.write" || call.name === "file.patch")
+    && call.result
+    && call.result.ok
+  ));
+}
+
+function failedProcessRepairNeedsRestart(run) {
+  if (!hadFailedOwnedProcess(run)) return false;
+  const writes = successfulWrites(run);
+  if (!writes.length) return false;
+  return !callsAfter(run, writes[writes.length - 1]).some(processIsRunningResult);
+}
+
+function isWebVisibleWrite(run, writes) {
+  const clientWrite = (writes || []).some((call) => {
+    const file = String(call.args && call.args.path || "");
+    if (isServerRuntimeFile(run, file)) return false;
+    return /\.(html?|css|js|jsx|ts|tsx)$/i.test(file);
+  });
+  if (clientWrite) return true;
+  return Boolean(
+    isBrowserEditTask(run)
+    && (writes || []).some((call) => isServerRuntimeFile(run, String(call.args && call.args.path || ""))),
+  );
+}
+
+async function maybeReadBackRepairedFiles(run, registry, store) {
+  if (!run || run.mode !== "controlled") return false;
+  if (!hadFailedOwnedProcess(run) || failedProcessNeedsLogs(run)) return false;
+  const writes = successfulWrites(run);
+  if (!writes.length) return false;
+  if (!registry || typeof registry.call !== "function") return false;
+  const missing = uniqueWrittenPaths(writes).filter((file) => !wasReadAfterMutation(run, file));
+  if (!missing.length) return false;
+
+  let readAny = false;
+  for (const file of missing) {
+    const call = { name: "file.read", args: { path: file } };
+    touch(run, "executing_tool", call.name);
+    run.inFlight = {
+      kind: "tool",
+      name: call.name,
+      args: call.args,
+      key: actionKey(call),
+      directedBy: "runtime",
+    };
+    store.save(run);
+    let result;
+    try {
+      result = await registry.call(call.name, call.args);
+    } catch (error) {
+      result = {
+        ok: false,
+        tool: call.name,
+        error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+      };
+    }
+    const record = {
+      id: `call_${crypto.randomBytes(4).toString("hex")}`,
+      iteration: run.iteration,
+      name: call.name,
+      args: call.args,
+      result,
+      directedBy: "runtime",
+    };
+    run.toolCalls.push(record);
+    run.observations.push(observe(call, result));
+    pushObservation(run, call, result);
+    run.inFlight = null;
+    store.save(run);
+    if (result.ok) readAny = true;
+  }
+  return readAny;
+}
+
+async function maybeRestartRepairedProcess(run, registry, store) {
+  if (!run || run.mode !== "controlled" || run.processRestartAttempted) return false;
+  if (!failedProcessRepairNeedsRestart(run)) return false;
+  const writes = successfulWrites(run);
+  if (!writes.length) return false;
+  if (!uniqueWrittenPaths(writes).every((file) => wasReadAfterMutation(run, file))) return false;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  if (!registry.definitions().some((tool) => tool.name === "process.start")) return false;
+
+  run.processRestartAttempted = true;
+  const call = { name: "process.start", args: { command: "npm start" } };
+  const ruleDecision = resolveRequestedToolDecision(run, call, registry, []);
+  recordRuleDecision(run, ruleDecision, call);
+  touch(run, "executing_tool", call.name);
+  run.inFlight = { kind: "tool", name: call.name, args: call.args, key: actionKey(call), directedBy: "runtime" };
+  store.save(run);
+
+  let result;
+  try {
+    if (ruleDecision.action === "deny") {
+      result = {
+        ok: false,
+        tool: call.name,
+        error: {
+          code: ruleDecision.code || "policy_denied",
+          message: ruleDecision.reason,
+        },
+        data: {
+          rule: ruleDecision.rule,
+          tier: ruleDecision.tier,
+          priority: ruleDecision.priority,
+        },
+      };
+    } else {
+      const processGuard = ruleDecision.action === "guard"
+        ? await guardProcessStart(run, registry)
+        : null;
+      result = processGuard || await registry.call(call.name, call.args);
+    }
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: call.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    ruleDecision: compactRuleDecision(ruleDecision),
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  run.observations.push(observe(call, result));
+  pushObservation(run, call, result);
+  run.inFlight = null;
+
+  if (!result.ok) {
+    run.messages.push({
+      role: "user",
+      content: "The CodeMe-owned process failed again after the repair. Read process.logs and keep diagnosing the recorded error.",
+    });
+  } else if (processIsRunningResult(record)) {
+    run.messages.push({
+      role: "user",
+      content: "The repaired process is running again. Confirm that result and finish only with that evidence.",
+    });
+  }
+  store.save(run);
+  return true;
+}
+
 async function guardProcessStart(run, registry) {
   let evidence = latestProcessEvidence(run);
   let status = evidence.status;
@@ -1245,7 +1448,9 @@ function toolsForRun(run, localTools, capabilityTools) {
   let local = localTools.slice();
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
-  if (isBrowserEditTask(run)) local = local.filter((tool) => tool.name !== "process.start");
+  if (isBrowserEditTask(run) && !hadFailedOwnedProcess(run)) {
+    local = local.filter((tool) => tool.name !== "process.start");
+  }
 
   const external = isSimpleLocalWorkspaceTask(run) ? [] : capabilityTools;
   return local.concat(external);
@@ -1335,7 +1540,7 @@ function grantRecoveryEvidenceReserve(run, store) {
     : "Fresh process logs arrived after a failed CodeMe-owned process.";
   const instruction = evidence.kind === "research"
     ? "Use the evidence to make or verify the repair now; do not restart the same local investigation."
-    : "Use the recorded process error to repair or verify the implementation now; do not restart the process blindly.";
+    : "Use the recorded process error to repair the implementation, then restart the process with process.start and confirm it is running. Do not restart before the file is repaired.";
 
   run.messages.push({
     role: "user",
@@ -1538,7 +1743,7 @@ function systemPrompt(options) {
             ? "This job lists the workspace. Call dir.list with path \".\" and answer from that list. Do not edit files."
             : runIsBuild(options)
               ? "This job creates or repairs project files. Create only what the request needs. In an empty workspace, a simple static HTML/CSS request must stay dependency-free: use file.write/dir.create, do not invent package.json or a server, and read every created file back before finishing. For existing files prefer file.patch. For a long-running dev server use process.start, then verify with browser.check. If a server accepts a port, use a numeric port; never pass the literal string --port to server.listen()."
-              : "Verify with the checks that actually exist in the inspected workspace. Do not call tests.run when there is no test script, and do not call Git tools when the workspace is not a Git repository. For browser-visible changes, read the changed file back and use browser.check. For click/button/tap interactions, you must also use browser.interact; source inspection alone is not proof.",
+              : "Verify with the checks that actually exist in the inspected workspace. Do not call tests.run when there is no test script, and do not call Git tools when the workspace is not a Git repository. For browser-visible changes, read the changed file back and use browser.check. For click/button/tap interactions, you must also use browser.interact; source inspection alone is not proof. If a CodeMe-owned process failed, read process.logs, repair the file, restart it with process.start, and confirm it is running before finishing.",
       "A claim of success is not evidence.",
       strategyGuidance(options.strategyRecord),
       hub,
@@ -1742,8 +1947,18 @@ function defaultVerify(run, text) {
     const changed = uniqueWrittenPaths(writes);
     const lastWrite = writes[writes.length - 1];
     const after = callsAfter(run, lastWrite);
-    const webWrite = writes.some((call) => /\.(html?|css|js|jsx|ts|tsx)$/i.test(String(call.args && call.args.path || "")));
+    const webWrite = isWebVisibleWrite(run, writes);
     const allReadBack = changed.every((file) => wasReadAfterMutation(run, file));
+
+    if (failedProcessRepairNeedsRestart(run)) {
+      return {
+        status: "failed",
+        summary: allReadBack
+          ? "The repair is saved. Restart the failed process with process.start, then confirm it is running."
+          : "Read the changed file back, then restart the failed process with process.start and confirm it is running.",
+        evidence: allReadBack ? ["file.patch", "file.read"] : ["file.patch"],
+      };
+    }
 
     if (webWrite) {
       const preview = after.find((call) => (

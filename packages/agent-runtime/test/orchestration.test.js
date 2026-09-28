@@ -4,6 +4,7 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, OllamaModelProvider, ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry, ExternalCapabilityProvider, RunStore, createRun, startAgentRun, resumeRun } = require("../index.js");
+const { defaultVerify } = require("../agent-run");
 
 const FIXTURE = path.join(__dirname, "../../qwen-qualify/fixture");
 const MODEL = process.env.CODEME_QWEN_MODEL || "qwen3.5:9b";
@@ -1797,7 +1798,13 @@ async function main() {
           output: "ReferenceError: broken is not defined at server.js:1",
         };
       },
-      async startProcess() { throw new Error("process.start should not be used"); },
+      async startProcess() {
+        const contents = fs.readFileSync(path.join(root, "server.js"), "utf8");
+        if (contents.includes('"broken"')) {
+          return { started: false, status: "failed", command: "npm start", exitCode: 1 };
+        }
+        return { started: true, status: "running", command: "npm start", exitCode: null };
+      },
       async runTests() { throw new Error("no tests"); },
       async gitStatus() { throw new Error("not git"); },
       async gitDiff() { throw new Error("not git"); },
@@ -1864,6 +1871,195 @@ async function main() {
     const allowedIndex = run.toolCalls.indexOf(patchCalls[1]);
     assert.ok(logsIndex > deniedIndex);
     assert.ok(allowedIndex > logsIndex);
+
+    const restart = run.toolCalls.find((call) => (
+      call.name === "process.start"
+      && call.directedBy === "runtime"
+      && call.result
+      && call.result.ok
+    ));
+    assert.ok(restart, quoteRun(run));
+    assert.ok(run.toolCalls.indexOf(restart) > allowedIndex);
+    assert.ok(run.messages.some((message) => String(message.content).includes("Restart it with process.start")));
+  });
+
+  await test("failed process repair cannot finish until the process is restarted", async () => {
+    const run = {
+      mode: "controlled",
+      goal: "Fix the server implementation after the failed process.",
+      workspace: { state: "project", git: false, scripts: { start: "node server.js" } },
+      observations: [{ tool: "process.logs" }],
+      toolCalls: [
+        {
+          name: "process.start",
+          args: { command: "npm start" },
+          result: { ok: false, error: { code: "exit_status", message: "Command exited 1" }, data: { status: "failed", exitCode: 1 } },
+        },
+        {
+          name: "process.logs",
+          args: {},
+          result: { ok: true, data: { status: "failed", output: "ReferenceError: broken is not defined" } },
+        },
+        {
+          name: "file.patch",
+          args: { path: "server.js", oldText: "broken", newText: "fixed" },
+          result: { ok: true, data: { replacements: 1 } },
+        },
+        {
+          name: "file.read",
+          args: { path: "server.js" },
+          result: { ok: true, data: { contents: "fixed" } },
+        },
+      ],
+    };
+
+    const before = defaultVerify(run, "The server is repaired.");
+    assert.strictEqual(before.status, "failed");
+    assert.match(before.summary, /restart the failed process/i);
+
+    run.toolCalls.push({
+      name: "process.start",
+      args: { command: "npm start" },
+      result: { ok: true, data: { started: true, status: "running" } },
+    });
+    const after = defaultVerify(run, "The server is repaired.");
+    assert.strictEqual(after.status, "passed");
+  });
+
+  await test("failed process recovery restarts the process after the repair and completes", async () => {
+    const root = tempDir();
+    fs.writeFileSync(path.join(root, "server.js"), "throw new ReferenceError('broken is not defined');\n", "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      name: "process-restart",
+      scripts: { start: "node server.js" },
+    }, null, 2), "utf8");
+
+    let starts = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 2,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: ["server.js", "package.json"].map((filePath) => ({ path: filePath, type: "file" })),
+        };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        assert.ok(before.includes(oldText));
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile() { throw new Error("file.write should not be needed"); },
+      async createDirectory(dirPath) { return { path: dirPath }; },
+      async search() { return { query: "", matches: [] }; },
+      async runTerminal() { throw new Error("terminal.run should not be used"); },
+      async processStatus() {
+        if (starts === 0) {
+          return { found: false, status: "none", command: "", exitCode: null };
+        }
+        const contents = fs.readFileSync(path.join(root, "server.js"), "utf8");
+        if (contents.includes("broken is not defined")) {
+          return { found: true, status: "failed", command: "npm start", exitCode: 1 };
+        }
+        return { found: true, status: "running", command: "npm start", exitCode: null };
+      },
+      async processLogs() {
+        return {
+          found: true,
+          status: "failed",
+          command: "npm start",
+          exitCode: 1,
+          output: "ReferenceError: broken is not defined at server.js:1",
+        };
+      },
+      async startProcess() {
+        starts += 1;
+        const contents = fs.readFileSync(path.join(root, "server.js"), "utf8");
+        if (contents.includes("broken is not defined")) {
+          return { started: false, status: "failed", command: "npm start", exitCode: 1 };
+        }
+        return { started: true, status: "running", command: "npm start", exitCode: null };
+      },
+      async runTests() { throw new Error("no tests"); },
+      async gitStatus() { throw new Error("not git"); },
+      async gitDiff() { throw new Error("not git"); },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck() { throw new Error("browser not needed"); },
+      async browserInteract() { throw new Error("browser not needed"); },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "process.status", args: {} }] },
+      { toolCalls: [{ name: "process.start", args: { command: "npm start" } }] },
+      { toolCalls: [{ name: "process.logs", args: {} }] },
+      { toolCalls: [{ name: "file.read", args: { path: "server.js" } }] },
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: {
+            path: "server.js",
+            oldText: "throw new ReferenceError('broken is not defined');\n",
+            newText: "const http = require('http');\n",
+          },
+        }],
+      },
+      { text: "The process is running again after the repair." },
+    ]);
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: "The server process failed. Diagnose the actual error, repair server.js, restart the process, and verify it is running.",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 10,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(run.verification.status, "passed", quoteRun(run));
+    assert.ok(starts >= 2, `expected a failed start and a restart, got ${starts}`);
+    assert.ok(!fs.readFileSync(path.join(root, "server.js"), "utf8").includes("broken is not defined"));
+
+    const startCalls = run.toolCalls.filter((call) => call.name === "process.start");
+    const failedStart = startCalls.find((call) => call.result && call.result.ok === false);
+    const logsIndex = run.toolCalls.findIndex((call) => call.name === "process.logs" && call.result && call.result.ok);
+    const patchIndex = run.toolCalls.findIndex((call) => call.name === "file.patch" && call.result && call.result.ok);
+    const readBack = run.toolCalls.find((call) => (
+      call.name === "file.read"
+      && call.args
+      && call.args.path === "server.js"
+      && call.directedBy === "runtime"
+      && call.result
+      && call.result.ok
+    ));
+    const restart = startCalls.find((call) => call.result && call.result.ok);
+    assert.ok(failedStart, quoteRun(run));
+    assert.ok(logsIndex > run.toolCalls.indexOf(failedStart));
+    assert.ok(patchIndex > logsIndex);
+    assert.ok(readBack, quoteRun(run));
+    assert.ok(run.toolCalls.indexOf(readBack) > patchIndex);
+    assert.ok(restart, quoteRun(run));
+    assert.ok(run.toolCalls.indexOf(restart) > run.toolCalls.indexOf(readBack));
+    assert.ok(run.messages.some((message) => String(message.content).includes("Restart it with process.start")));
   });
 
   await test("iteration limit stops a run that never finishes", async () => {
