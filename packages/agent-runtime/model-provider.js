@@ -42,7 +42,7 @@ const CONTRACT_NAMES = Object.fromEntries(Object.entries(PROVIDER_NAMES).map(([c
 class OllamaModelProvider extends ModelProvider {
   constructor(options = {}) {
     super("ollama");
-    this.baseUrl = options.baseUrl || "http://127.0.0.1:11434";
+    this.baseUrl = options.baseUrl || process.env.CODEME_OLLAMA_URL || "http://127.0.0.1:11434";
     this.timeoutMs = options.timeoutMs || 180000;
   }
 
