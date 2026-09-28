@@ -297,6 +297,74 @@ async function main() {
     assert.notStrictEqual(run.outcome && run.outcome.reason, "iteration_limit");
   });
 
+  await test("repeated failed patches force a fresh read and strategy reset instead of blind retry", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-patch-reset-"));
+    fs.mkdirSync(path.join(workspace, "src"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "src/check.js"), "const parity = 'wrong';\n", "utf8");
+
+    const bad = {
+      name: "file.patch",
+      args: { path: "src/check.js", oldText: "const missing = true;", newText: "const parity = 'fixed';" },
+    };
+    const good = {
+      name: "file.patch",
+      args: { path: "src/check.js", oldText: "const parity = 'wrong';", newText: "const parity = 'fixed';" },
+    };
+    const provider = new ScriptedModelProvider([
+      step("Trying the first patch.", bad),
+      step("Trying the same patch again.", bad),
+      step("Trying the same patch a third time.", bad),
+      step("Using the freshly read contents instead.", good),
+      step("Confirming the saved contents.", { name: "file.read", args: { path: "src/check.js" } }),
+      step("repaired"),
+    ]);
+
+    const run = await start({
+      goal: "Fix the local parity condition in src/check.js.",
+      workspace,
+      provider,
+      capabilities: { async listCapabilities() { return []; }, async invoke() { return { status: "error" }; } },
+      maxRetries: 2,
+      maxIdenticalActions: 10,
+      verify(runState, text) {
+        const fixed = (runState.toolCalls || []).some((call) => (
+          call.name === "file.patch"
+          && call.args
+          && call.args.oldText === "const parity = 'wrong';"
+          && call.result
+          && call.result.ok
+        ));
+        const readBack = (runState.toolCalls || []).some((call) => (
+          call.name === "file.read"
+          && call.args
+          && call.args.path === "src/check.js"
+          && call.result
+          && call.result.ok
+          && String(call.result.data && call.result.data.contents || "").includes("'fixed'")
+        ));
+        return fixed && readBack && text.includes("repaired")
+          ? { status: "passed", summary: "the strategy reset produced a verified repair", evidence: ["file.patch", "file.read"] }
+          : { status: "failed", summary: "repair still incomplete", evidence: [] };
+      },
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed");
+    assert.ok(run.events.some((event) => event.type === "strategy_reset" && event.reason === "repeated_failed_patch"));
+    const runtimeRead = run.toolCalls.find((call) => (
+      call.name === "file.read"
+      && call.directedBy === "runtime"
+      && call.args
+      && call.args.path === "src/check.js"
+    ));
+    assert.ok(runtimeRead);
+    assert.strictEqual(run.toolCalls.filter((call) => (
+      call.name === "file.patch"
+      && call.args
+      && call.args.oldText === "const missing = true;"
+    )).length, 2);
+    assert.ok(fs.readFileSync(path.join(workspace, "src/check.js"), "utf8").includes("'fixed'"));
+  });
+
   await test("iteration, retry, and cancel protections still stop the run", async () => {
     const hubState = { invocations: 0 };
     const limited = await start({
