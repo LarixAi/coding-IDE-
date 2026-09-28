@@ -194,12 +194,7 @@ async function main() {
     };
 
     const provider = new ScriptedModelProvider([
-      { toolCalls: [{ name: "dir.list", args: { path: "." } }] },
-      { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
-      { toolCalls: [{ name: "file.read", args: { path: "server.js" } }] },
-      { toolCalls: [{ name: "dir.list", args: { path: "lib" } }] },
-      { toolCalls: [{ name: "file.read", args: { path: "lib/util.js" } }] },
-      { text: "I read README.md, server.js, and lib/util.js." },
+      { text: "I read README.md, server.js, and lib/util.js from the runtime-provided observations." },
     ]);
 
     const run = await start({
@@ -214,8 +209,10 @@ async function main() {
     assert.strictEqual(run.taskClass, "inspect");
     assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
     assert.deepStrictEqual(hub.invocations, []);
-    assert.ok(run.toolCalls.some((call) => call.name === "dir.list" && call.args.path === "lib"));
-    assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "lib/util.js"));
+    assert.ok(run.toolCalls.some((call) => call.name === "dir.list" && call.args.path === "lib" && call.directedBy === "runtime"));
+    assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "lib/util.js" && call.directedBy === "runtime"));
+    assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "README.md" && call.directedBy === "runtime"));
+    assert.strictEqual(provider.calls.length, 1);
     assert.ok(provider.calls.every((call) => !(call.tools || []).some((tool) => ["file.write", "file.patch", "terminal.run", "capability.invoke"].includes(tool.name))));
   });
 
