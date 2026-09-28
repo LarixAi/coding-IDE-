@@ -30,6 +30,16 @@ const READ_ONLY_BLOCKED_TOOLS = new Set([
   "browser.interact",
 ]);
 
+const INSPECTION_ALLOWED_TOOLS = new Set([
+  "workspace.inspect",
+  "file.read",
+  "repo.search",
+  "dir.list",
+  "git.status",
+  "git.diff",
+  "diagnostics.run",
+]);
+
 const WORKSPACE_MUTATION_TOOLS = new Set([
   "file.write",
   "file.patch",
@@ -120,6 +130,17 @@ function resolveRuleDecision(input = {}) {
     ));
   }
   const name = String(originalCall.name);
+
+  if (facts.taskClass === "inspect" && !INSPECTION_ALLOWED_TOOLS.has(name)) {
+    candidates.push(candidate(
+      "safety",
+      "safety.inspect_only",
+      "deny",
+      `Inspection-only runs cannot use ${name}. They may list, read, search, inspect diagnostics, or view Git state only.`,
+      originalCall,
+      { code: "inspect_only_tool_denied" },
+    ));
+  }
   const registered = Array.isArray(facts.registeredToolNames)
     ? new Set(facts.registeredToolNames)
     : null;
@@ -375,6 +396,7 @@ module.exports = {
   resolveRuleDecision,
   isStaticScaffoldTool,
   READ_ONLY_BLOCKED_TOOLS,
+  INSPECTION_ALLOWED_TOOLS,
   WORKSPACE_MUTATION_TOOLS,
   isPreviewStartCommand,
   forbiddenStaticPath,
