@@ -85,7 +85,7 @@ function start(options) {
     providerName: "scripted",
     mode: "controlled",
     provider: options.provider,
-    registry: new ToolRegistry(new ControlledToolProvider(createWorkspaceHost(options.workspace || FIXTURE))),
+    registry: new ToolRegistry(new ControlledToolProvider(options.host || createWorkspaceHost(options.workspace || FIXTURE))),
     store,
     capabilities: options.capabilities,
     maxIterations: options.maxIterations ?? 20,
@@ -302,6 +302,20 @@ async function main() {
     fs.mkdirSync(path.join(workspace, "src"), { recursive: true });
     fs.writeFileSync(path.join(workspace, "src/check.js"), "const parity = 'wrong';\n", "utf8");
 
+    const baseHost = createWorkspaceHost(workspace);
+    const host = {
+      ...baseHost,
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(workspace, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        const count = before.split(oldText).length - 1;
+        if (count === 0) throw Object.assign(new Error("Patch text was not found"), { code: "patch_not_found" });
+        if (count > 1) throw Object.assign(new Error("Patch text is ambiguous"), { code: "patch_ambiguous" });
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+    };
+
     const bad = {
       name: "file.patch",
       args: { path: "src/check.js", oldText: "const missing = true;", newText: "const parity = 'fixed';" },
@@ -321,6 +335,7 @@ async function main() {
     const run = await start({
       goal: "Fix the local parity condition in src/check.js.",
       workspace,
+      host,
       provider,
       capabilities: { async listCapabilities() { return []; }, async invoke() { return { status: "error" }; } },
       maxRetries: 2,
