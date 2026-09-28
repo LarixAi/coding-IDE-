@@ -277,6 +277,47 @@ function resolveRuleDecision(input = {}) {
     ));
   }
 
+  if (facts.requireExternalEvidenceBeforeEdit && name === "process.start") {
+    candidates.push(candidate(
+      "recovery",
+      "recovery.native_verification_required",
+      "deny",
+      "This published-rule repair must be verified with tests, diagnostics, and git diff. Starting a preview process does not prove the algorithm.",
+      originalCall,
+    ));
+  }
+
+  if (
+    facts.requireExternalEvidenceBeforeEdit
+    && WORKSPACE_MUTATION_TOOLS.has(name)
+  ) {
+    if (facts.workspaceHasTests && !facts.testFailureObserved) {
+      candidates.push(candidate(
+        "recovery",
+        "recovery.test_failure_required",
+        "deny",
+        "Run the project tests and keep the failing result before changing files. The unpublished rule must be reproduced first.",
+        originalCall,
+      ));
+    } else if (facts.externalEvidenceUnavailable) {
+      candidates.push(candidate(
+        "recovery",
+        "recovery.evidence_unavailable",
+        "deny",
+        "The required evidence capability is unavailable. Reconnect the intelligence hub. Do not guess the unpublished rule from model knowledge.",
+        originalCall,
+      ));
+    } else if (!facts.externalEvidenceObserved) {
+      candidates.push(candidate(
+        "recovery",
+        "recovery.external_evidence_required",
+        "deny",
+        "The repository does not document the published rule. Obtain untrusted external evidence before changing files.",
+        originalCall,
+      ));
+    }
+  }
+
   if (name === "process.start") {
     candidates.push(candidate(
       "recovery",

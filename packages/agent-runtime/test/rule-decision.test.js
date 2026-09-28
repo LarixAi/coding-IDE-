@@ -96,6 +96,36 @@ async function main() {
 
   {
     const decision = resolve(
+      { name: "file.patch", args: { path: "src/check.js", oldText: "broken", newText: "fixed" } },
+      {
+        mode: "controlled",
+        requireExternalEvidenceBeforeEdit: true,
+        workspaceHasTests: true,
+        testFailureObserved: true,
+        externalEvidenceObserved: false,
+        registeredToolNames: ["file.patch", "tests.run", "capability.invoke"],
+      },
+    );
+    assert.strictEqual(decision.rule, "recovery.external_evidence_required");
+    assert.strictEqual(decision.priority, RULE_PRIORITY.recovery);
+    assert.strictEqual(decision.action, "deny");
+  }
+
+  {
+    const decision = resolve(
+      { name: "process.start", args: { command: "npm start" } },
+      {
+        mode: "controlled",
+        requireExternalEvidenceBeforeEdit: true,
+        registeredToolNames: ["process.start", "tests.run"],
+      },
+    );
+    assert.strictEqual(decision.rule, "recovery.native_verification_required");
+    assert.strictEqual(decision.action, "deny");
+  }
+
+  {
+    const decision = resolve(
       { name: "capability.invoke", args: { capability: "research" } },
       {
         mode: "controlled",

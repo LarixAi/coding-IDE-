@@ -1,0 +1,13 @@
+---
+description: Only work in the coding-IDE- GitHub repo
+alwaysApply: true
+---
+
+# Canonical repository
+
+This project lives only at [https://github.com/LarixAi/coding-IDE-.git](https://github.com/LarixAi/coding-IDE-.git).
+
+- Local folder: `/Users/laingfamily/Desktop/Code Me IDE`
+- Remote: `origin` → `https://github.com/LarixAi/coding-IDE-.git`
+
+Do not edit, commit, or push `/Users/laingfamily/Code-me-IDE-C.` or `https://github.com/LarixAi/Code-me-IDE-C..git`. Those are a separate leftover copy.

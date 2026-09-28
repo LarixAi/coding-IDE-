@@ -215,6 +215,7 @@ function applyIteration(state, input) {
       const listed = String((call.args && call.args.path) || ".");
       if (rememberKey(state, `list:${listed}`)) categories.push("new_relevant_file");
     } else if (call.name === "file.write" || call.name === "file.patch") {
+      if (!call.result || call.result.ok !== true) continue;
       const file = call.args && call.args.path;
       const body = call.name === "file.patch" ? `${(call.args && call.args.oldText) || ""}=>${(call.args && call.args.newText) || ""}` : ((call.args && call.args.contents) || "");
       const key = `write:${file}:${digest(body)}`;

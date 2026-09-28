@@ -69,11 +69,14 @@ function activate(context) {
     welcome.render();
     console.log(`CodeMe connection: ${state.grade}`);
   });
-  probeHub().then((hub) => {
+  const refreshHub = () => probeHub().then((hub) => {
     state.hub = hub;
     applyHub(hubItem, state);
     composer.sync();
   });
+  refreshHub();
+  const hubTimer = setInterval(refreshHub, 15000);
+  context.subscriptions.push({ dispose: () => clearInterval(hubTimer) });
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codeme.showConnection", () => {

@@ -550,6 +550,19 @@ async function executeRun(run, options) {
         });
       }
 
+      if (
+        call.name === "capability.invoke"
+        && !result.ok
+        && requiresExternalEvidenceBeforeEdit(run.goal)
+      ) {
+        return finishFailed(
+          run,
+          store,
+          "evidence_unavailable",
+          "The intelligence hub did not return the required evidence. Reconnect the hub. CodeMe will not guess the unpublished rule from model knowledge.",
+        );
+      }
+
       store.save(run);
 
       if (call.name === "browser.check" && result.ok) {
@@ -1226,6 +1239,7 @@ async function maybeReadBackRepairedFiles(run, registry, store) {
 
 async function maybeRestartRepairedProcess(run, registry, store) {
   if (!run || run.mode !== "controlled" || run.processRestartAttempted) return false;
+  if (requiresExternalEvidenceBeforeEdit(run.goal) || workspaceHasTests(run)) return false;
   if (!failedProcessRepairNeedsRestart(run)) return false;
   const writes = successfulWrites(run);
   if (!writes.length) return false;
@@ -1409,6 +1423,10 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
       requireFailureBeforeEdit: requiresFailureBeforeEdit(run && run.goal),
       browserFailureObserved: browserFailureObserved(run),
       failedProcessNeedsLogs: failedProcessNeedsLogs(run),
+      requireExternalEvidenceBeforeEdit: requiresExternalEvidenceBeforeEdit(run && run.goal),
+      testFailureObserved: testFailureObserved(run),
+      externalEvidenceObserved: externalEvidenceObserved(run),
+      externalEvidenceUnavailable: externalEvidenceUnavailable(run),
       registeredToolNames,
     },
   });
@@ -1468,6 +1486,50 @@ function workspaceHasGit(run) {
 function needsOutsideEvidence(goal) {
   const text = String(goal || "").toLowerCase();
   return /\b(research|documentation|docs|latest|current api|best practice|external|look up|lookup|search the web|web research)\b/.test(text);
+}
+
+function requiresExternalEvidenceBeforeEdit(goal) {
+  const text = String(goal || "").toLowerCase();
+  if (/\bpublished\b.{0,48}\b(rule|standard|algorithm|spec)\b/.test(text)) return true;
+  return /\b(not (fully )?documented|does not (fully )?document|undocumented)\b/.test(text)
+    && /\b(rule|behaviour|behavior|algorithm)\b/.test(text);
+}
+
+function testFailureObserved(run) {
+  return ((run && run.toolCalls) || []).some((call) => (
+    call
+    && (call.name === "tests.run" || (call.name === "terminal.run" && /\btest\b/i.test(String((call.args && call.args.command) || ""))))
+    && call.result
+    && call.result.ok === false
+    && call.result.error
+    && call.result.error.code === "exit_status"
+  ));
+}
+
+function externalEvidenceObserved(run) {
+  return ((run && run.toolCalls) || []).some((call) => (
+    call
+    && call.name === "capability.invoke"
+    && call.result
+    && call.result.ok
+    && call.result.trusted === false
+  ));
+}
+
+function externalEvidenceUnavailable(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (!call || call.name !== "capability.invoke" || !call.result) continue;
+    if (call.result.ok) return false;
+    return true;
+  }
+  return false;
+}
+
+function goalRequiresNativeVerification(goal) {
+  const text = String(goal || "").toLowerCase();
+  return /\b(tests?|diagnostics|git diff)\b/.test(text);
 }
 
 function isLocalRepairWithoutOutsideEvidence(run) {
@@ -1947,10 +2009,22 @@ function defaultVerify(run, text) {
     const changed = uniqueWrittenPaths(writes);
     const lastWrite = writes[writes.length - 1];
     const after = callsAfter(run, lastWrite);
-    const webWrite = isWebVisibleWrite(run, writes);
+    const evidenceTask = requiresExternalEvidenceBeforeEdit(run.goal);
+    const nativeChecks = goalRequiresNativeVerification(run.goal) || workspaceHasTests(run) || workspaceHasGit(run);
+    const webWrite = isWebVisibleWrite(run, writes) && !evidenceTask && !workspaceHasTests(run) && !goalRequiresNativeVerification(run.goal);
     const allReadBack = changed.every((file) => wasReadAfterMutation(run, file));
 
-    if (failedProcessRepairNeedsRestart(run)) {
+    if (evidenceTask && !externalEvidenceObserved(run)) {
+      return {
+        status: "failed",
+        summary: externalEvidenceUnavailable(run)
+          ? "The required evidence capability is unavailable. Reconnect the intelligence hub. Do not guess the unpublished rule from model knowledge."
+          : "Obtain untrusted external evidence before finishing this published-rule repair.",
+        evidence: writes.length ? ["file.patch"] : [],
+      };
+    }
+
+    if (failedProcessRepairNeedsRestart(run) && !evidenceTask && !nativeChecks) {
       return {
         status: "failed",
         summary: allReadBack
@@ -2035,6 +2109,19 @@ function defaultVerify(run, text) {
         };
       }
       evidence.push("tests.run");
+    }
+
+    if (/\bdiagnostics\b/i.test(String(run.goal || ""))) {
+      const diagnostics = after.find((call) => call.name === "diagnostics.run" && call.result && call.result.ok);
+      const items = diagnostics && diagnostics.result && diagnostics.result.data && diagnostics.result.data.items;
+      if (!diagnostics || (Array.isArray(items) && items.length)) {
+        return {
+          status: "failed",
+          summary: "Run diagnostics after the repair and keep a clean result.",
+          evidence,
+        };
+      }
+      evidence.push("diagnostics.run");
     }
 
     if (workspaceHasGit(run)) {
@@ -2277,10 +2364,21 @@ function pushObservation(run, call, result) {
 }
 
 async function settleTurn(run, store, registry, options, signal) {
+  if (
+    requiresExternalEvidenceBeforeEdit(run.goal)
+    && testFailureObserved(run)
+    && !externalEvidenceObserved(run)
+  ) {
+    if (await maybeEscalateStagnantLocalRepair(run, options, signal, store)) {
+      if (STOPPED.has(run.lifecycle)) return run;
+      return { researched: true };
+    }
+  }
   const outcome = closeIteration(run, registry);
   store.save(run);
   if (outcome.action === "stop") {
     if (await maybeEscalateStagnantLocalRepair(run, options, signal, store)) {
+      if (STOPPED.has(run.lifecycle)) return run;
       return { researched: true };
     }
     return finishFailed(run, store, "stagnation", outcome.stopSummary);
@@ -2292,6 +2390,7 @@ async function settleTurn(run, store, registry, options, signal) {
     && run.taskClass !== "layout"
   ) {
     await directResearch(run, registry, options, signal, store);
+    if (STOPPED.has(run.lifecycle)) return run;
     return { researched: true };
   }
   if (outcome.action === "replan" || (run.progress.writeNow && run.mode === "controlled")) {
@@ -2323,25 +2422,39 @@ async function maybeEscalateStagnantLocalRepair(run, options, signal, store) {
   if (!run || !run.progress || run.progress.runtimeDirectedEscalation) return false;
   if (isDependencyFreeStatic(run.projectDecision)) return false;
   if (run.taskClass === "layout" || isSiteLayoutGoal(run.goal)) return false;
-  if (!options || !options.capabilities) return false;
+
+  const failEvidenceUnavailable = () => {
+    if (!requiresExternalEvidenceBeforeEdit(run.goal)) return false;
+    finishFailed(
+      run,
+      store,
+      "evidence_unavailable",
+      "The intelligence hub did not return the required evidence. Reconnect the hub. CodeMe will not guess the unpublished rule from model knowledge.",
+    );
+    return true;
+  };
+
+  if (!options || !options.capabilities) return failEvidenceUnavailable();
 
   let registry;
   try {
     registry = await loadCapabilityRegistry(options.capabilities);
   } catch {
-    return false;
+    return failEvidenceUnavailable();
   }
 
   const listed = registry && typeof registry.list === "function" ? registry.list() : [];
   const research = recommendCapability(listed);
-  if (!research || !research.name) return false;
+  if (!research || !research.name) return failEvidenceUnavailable();
 
   run.progress.recommendedName = research.name;
   run.progress.recommendedDescription = research.description || "";
   run.progress.recommendedFields = (research.inputSchema && research.inputSchema.required) || [];
   run.messages.push({
     role: "user",
-    content: "Local repair attempts have genuinely stagnated. CodeMe is escalating once to the read-only evidence hub before deciding to stop.",
+    content: requiresExternalEvidenceBeforeEdit(run.goal)
+      ? "The repository does not document the published rule. CodeMe is requesting read-only hub evidence once before any workspace edit."
+      : "Local repair attempts have genuinely stagnated. CodeMe is escalating once to the read-only evidence hub before deciding to stop.",
   });
   store.save(run);
   await directResearch(run, registry, options, signal, store, false);
@@ -2547,6 +2660,14 @@ async function directResearch(run, registry, options, signal, store, opening) {
     content: opening ? openingResearchBrief(run.goal, result) : postResearchBrief(progress, result),
   });
   store.save(run);
+  if (requiresExternalEvidenceBeforeEdit(run.goal) && !result.ok) {
+    finishFailed(
+      run,
+      store,
+      "evidence_unavailable",
+      "The intelligence hub did not return the required evidence. Reconnect the hub. CodeMe will not guess the unpublished rule from model knowledge.",
+    );
+  }
 }
 
 function closeIteration(run, registry) {

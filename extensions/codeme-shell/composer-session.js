@@ -417,6 +417,8 @@ class ComposerSession {
           size: item.size,
         })),
         timeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
+        maxIterations: this.composerMode === "code" ? 40 : 12,
+        maxIdenticalActions: this.composerMode === "code" ? 12 : 4,
       });
     } catch (error) {
       this.failRequest(requestId, error instanceof Error ? error.message : String(error));
