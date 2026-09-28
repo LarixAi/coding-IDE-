@@ -128,6 +128,7 @@ async function main() {
 
   const observation = run.observations.find((item) => item.type === "capability");
   const event = run.events.find((item) => item.type === "capability");
+  const capabilityCall = run.toolCalls.find((call) => call.name === "capability.invoke" && call.args && call.args.capability === "research.problem");
   assert.strictEqual(run.lifecycle, "completed", JSON.stringify({
     error: run.error,
     outcome: run.outcome,
@@ -145,7 +146,9 @@ async function main() {
   assert.strictEqual(run.verification.status, "passed");
   assert.ok(run.requirements.every((item) => item.status === "satisfied"));
   assert.ok(observation);
-  assert.ok(observation.iteration > 0, "fallback research must be runtime-directed after local stagnation");
+  assert.ok(capabilityCall);
+  assert.ok(capabilityCall.iteration > 0, "fallback research must be runtime-directed after local stagnation");
+  assert.strictEqual(capabilityCall.directedBy, "runtime");
   assert.strictEqual(observation.trusted, false);
   assert.strictEqual(observation.ok, false);
   assert.strictEqual(observation.capability, "research.problem");
