@@ -2394,6 +2394,14 @@ function defaultVerify(run, text) {
     };
   }
 
+  if ((run.mode === "read_only" || run.taskClass === "plan") && String(text || "").trim() && (trustedObservation(run) || run.workspaceInspected)) {
+    const evidence = run.observations.length ? run.observations.map((item) => item.tool).filter(Boolean) : ["workspace.inspect"];
+    if (run.taskClass === "plan" && !hasSequencedPlan(text)) {
+      return { status: "failed", summary: "Plan mode requires a sequenced implementation plan with concrete steps", evidence };
+    }
+    return { status: "passed", summary: run.taskClass === "plan" ? "The sequenced plan follows recorded observations" : "The answer follows recorded observations", evidence };
+  }
+
   if (!run.observations.length) {
     return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
   }
@@ -2443,22 +2451,6 @@ function defaultVerify(run, text) {
         ? "The layout write is not complete until browser.check succeeds"
         : "Apply the layout with file.write on the HTML or CSS, then call browser.check",
       evidence: htmlWrite ? ["file.write"] : [],
-    };
-  }
-  if ((run.mode === "read_only" || run.taskClass === "plan") && trustedObservation(run) && String(text).trim()) {
-    if (run.taskClass === "plan" && !hasSequencedPlan(text)) {
-      return {
-        status: "failed",
-        summary: "Plan mode requires a sequenced implementation plan with concrete steps",
-        evidence: run.observations.map((item) => item.tool),
-      };
-    }
-    return {
-      status: "passed",
-      summary: run.taskClass === "plan"
-        ? "The sequenced plan follows recorded observations"
-        : "The answer follows recorded observations",
-      evidence: run.observations.map((item) => item.tool),
     };
   }
   if (run.mode === "controlled" && writes.length) {
