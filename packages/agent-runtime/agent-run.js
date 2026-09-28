@@ -68,6 +68,7 @@ function createRun(options) {
     verificationHistory: [],
     projectDecision: null,
     workspaceInspected: false,
+    explicitExistingFiles: [],
     outcome: null,
     iteration: 0,
     maxIterations: options.maxIterations ?? 8,
@@ -225,6 +226,9 @@ async function executeRun(run, options) {
           error.code || "workspace_inspection_failed",
           error.message || "CodeMe could not inspect the active workspace",
         );
+      }
+      if (workspace && workspace.ok !== false) {
+        await preloadExplicitGoalFiles(run, registry, store);
       }
     }
 
@@ -1745,6 +1749,9 @@ function toolsForRun(run, localTools, capabilityTools) {
     local = local.filter((tool) => READ_ONLY_COMPOSER_TOOLS.has(tool.name));
   }
   if (run && run.noEdit) local = local.filter((tool) => !READ_ONLY_BLOCKED_TOOLS.has(tool.name));
+  if (preferPatchForExplicitExistingEdit(run)) {
+    local = local.filter((tool) => tool.name !== "file.write");
+  }
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
   if (isBrowserEditTask(run) && !requiresOwnedProcess(run) && !hadFailedOwnedProcess(run)) {
@@ -3208,6 +3215,51 @@ async function preloadReadAllWorkspace(run, registry, store, rootEntries) {
     role: "user",
     content: `CodeMe completed the deterministic read-all workspace pass: listed ${seenDirs.size} director${seenDirs.size === 1 ? "y" : "ies"} and attempted ${readCount} project file reads. The file observations are already above. Answer from them now; do not repeat the same listings or reads unless one failed.`,
   });
+  store.save(run);
+}
+
+function explicitWorkspacePaths(goal) {
+  const text = String(goal || "");
+  const matches = text.match(/(?:^|[\s"'\`(])((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:html?|css|js|mjs|cjs|jsx|ts|tsx|json|md|py|rb|go|rs|java|kt|php|vue|svelte|ya?ml|toml|txt))\b/gi) || [];
+  const paths = [];
+  for (const raw of matches) {
+    const filePath = String(raw || "").trim().replace(/^["'\`(]+/, "");
+    if (filePath && !paths.includes(filePath)) paths.push(filePath);
+    if (paths.length >= 6) break;
+  }
+  return paths;
+}
+
+function preferPatchForExplicitExistingEdit(run) {
+  if (!run || run.mode !== "controlled") return false;
+  if (!Array.isArray(run.explicitExistingFiles) || run.explicitExistingFiles.length === 0) return false;
+  const text = String(run.goal || "").toLowerCase();
+  if (/\b(create|new file|replace (?:the )?entire|rewrite (?:the )?entire|overwrite|full replacement)\b/.test(text)) return false;
+  return /\b(change|edit|update|set|make|fix|repair|add|remove|rename|heading|title|text|style|colour|color)\b/.test(text);
+}
+
+async function preloadExplicitGoalFiles(run, registry, store) {
+  if (!run || run.mode === "chat_only" || isReadAllFilesGoal(run.goal)) return;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return;
+  const names = new Set(registry.definitions().map((tool) => tool && tool.name).filter(Boolean));
+  if (!names.has("file.read")) return;
+
+  const targets = explicitWorkspacePaths(run.goal);
+  if (!targets.length) return;
+
+  if (!Array.isArray(run.explicitExistingFiles)) run.explicitExistingFiles = [];
+  for (const filePath of targets) {
+    if (run.explicitExistingFiles.includes(filePath)) continue;
+    const result = await runtimeInspectionCall(run, registry, store, "file.read", { path: filePath });
+    if (result && result.ok) run.explicitExistingFiles.push(filePath);
+  }
+
+  if (preferPatchForExplicitExistingEdit(run)) {
+    run.messages.push({
+      role: "user",
+      content: `CodeMe already read the existing target file${run.explicitExistingFiles.length === 1 ? "" : "s"}: ${run.explicitExistingFiles.join(", ")}. This is a small existing-file edit. Use file.patch with the smallest exact oldText/newText replacement. file.write is intentionally unavailable for this turn; do not emit a full-file replacement.`,
+    });
+  }
   store.save(run);
 }
 
