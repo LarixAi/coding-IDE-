@@ -2346,6 +2346,7 @@ function defaultVerify(run, text) {
 
   if (run.taskClass === "inspect") {
     const listed = (run.toolCalls || []).some((call) => call.name === "dir.list" && call.result && call.result.ok);
+    const readAny = (run.toolCalls || []).some((call) => call.name === "file.read" && call.result && call.result.ok);
 
     if (isReadAllFilesGoal(run.goal)) {
       if (!listed) {
@@ -2370,19 +2371,35 @@ function defaultVerify(run, text) {
           evidence: ["dir.list", "file.read"],
         };
       }
+      if (String(text || "").trim()) {
+        return {
+          status: "passed",
+          summary: "The answer follows the inspected workspace files",
+          evidence: ["dir.list", "file.read"],
+        };
+      }
+      return {
+        status: "failed",
+        summary: "Answer from the files that were read.",
+        evidence: ["dir.list", "file.read"],
+      };
     }
 
-    if (String(text || "").trim() && (listed || run.workspaceInspected)) {
-      const readAny = (run.toolCalls || []).some((call) => call.name === "file.read" && call.result && call.result.ok);
+    if (String(text || "").trim() && (trustedObservation(run) || run.workspaceInspected)) {
       const evidence = [];
       if (listed) evidence.push("dir.list");
       if (readAny) evidence.push("file.read");
       if (!evidence.length && run.workspaceInspected) evidence.push("workspace.inspect");
+      if (!evidence.length) {
+        for (const item of run.observations || []) {
+          if (item && item.tool && !evidence.includes(item.tool)) evidence.push(item.tool);
+        }
+      }
       return {
         status: "passed",
         summary: readAny
           ? "The answer follows the inspected workspace files"
-          : "The answer follows the recorded workspace inspection",
+          : "The answer follows the recorded workspace observations",
         evidence,
       };
     }
