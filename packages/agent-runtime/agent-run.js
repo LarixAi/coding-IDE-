@@ -1588,6 +1588,7 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
       browserFailureObserved: browserFailureObserved(run),
       failedProcessNeedsLogs: failedProcessNeedsLogs(run),
       requireExternalEvidenceBeforeEdit: requiresExternalEvidenceForRun(run),
+      endToEndRuntimeTask: requiresEndToEndVerification(run),
       testFailureObserved: testFailureObserved(run),
       externalEvidenceObserved: externalEvidenceObserved(run),
       externalEvidenceUnavailable: externalEvidenceUnavailable(run),
@@ -2664,7 +2665,8 @@ async function settleTurn(run, store, registry, options, signal) {
 }
 
 async function maybeEscalateStagnantLocalRepair(run, options, signal, store) {
-  if (!isLocalRepairWithoutOutsideEvidence(run)) return false;
+  const evidenceRequired = requiresExternalEvidenceForRun(run);
+  if (!evidenceRequired && !isLocalRepairWithoutOutsideEvidence(run)) return false;
   if (!run || !run.progress || run.progress.runtimeDirectedEscalation) return false;
   if (isDependencyFreeStatic(run.projectDecision)) return false;
   if (run.taskClass === "layout" || isSiteLayoutGoal(run.goal)) return false;
