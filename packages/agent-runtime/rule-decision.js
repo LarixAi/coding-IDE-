@@ -108,6 +108,17 @@ function resolveRuleDecision(input = {}) {
 
   const facts = input.facts || {};
   const candidates = [];
+
+  if (facts.mode === "chat_only") {
+    candidates.push(candidate(
+      "safety",
+      "safety.chat_only",
+      "deny",
+      "Chat mode does not permit tool calls.",
+      originalCall,
+      { code: "chat_mode_tool_denied" },
+    ));
+  }
   const name = String(originalCall.name);
   const registered = Array.isArray(facts.registeredToolNames)
     ? new Set(facts.registeredToolNames)
