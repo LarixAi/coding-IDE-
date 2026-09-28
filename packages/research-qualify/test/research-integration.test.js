@@ -4,7 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, startAgentRun, ControlledToolProvider, ToolRegistry } = require("../../agent-runtime");
-const { createWorkspaceHost } = require("../../coding-qualify/host");
+const { createResearchWorkspaceHost } = require("../host");
 const { REQUIREMENTS } = require("../acceptance");
 const { GOAL } = require("../goal");
 const { localComplete } = require("../verify");
@@ -92,7 +92,7 @@ async function main() {
     mode: "controlled",
     requirements: REQUIREMENTS.map((item) => ({ ...item })),
     provider,
-    registry: new ToolRegistry(new ControlledToolProvider(createWorkspaceHost(workspace))),
+    registry: new ToolRegistry(new ControlledToolProvider(createResearchWorkspaceHost(workspace))),
     store: new RunStore(fs.mkdtempSync(path.join(os.tmpdir(), "codeme-research-integration-runs-"))),
     capabilities: {
       async listCapabilities() {
