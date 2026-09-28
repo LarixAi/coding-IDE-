@@ -9,14 +9,15 @@ const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const INBOX = ".codeme/inbox";
 
-async function listOllamaModels(baseUrl = "http://127.0.0.1:11434") {
+async function listOllamaModels(baseUrl = "http://127.0.0.1:11434", provider = "ollama", sourceLabel = "") {
   const { OllamaModelProvider } = require("../../packages/agent-runtime/model-provider");
   const listed = await new OllamaModelProvider({ baseUrl }).listModels();
-  return listed.map((model) => modelRecord(model.provider || "ollama", model.id));
+  return listed.map((model) => modelRecord(provider || model.provider || "ollama", model.id, sourceLabel));
 }
 
-function modelRecord(provider, id) {
-  return { provider, id, label: modelLabel(id) };
+function modelRecord(provider, id, sourceLabel = "") {
+  const label = modelLabel(id);
+  return { provider, id, label: sourceLabel ? `${sourceLabel} · ${label}` : label };
 }
 
 function modelLabel(id) {
@@ -401,7 +402,7 @@ class ComposerSession {
       handle = startAgentRun({
         goal,
         model: this.selected.id,
-        providerName: this.selected.provider,
+        providerName: provider.name || "ollama",
         provider,
         registry,
         store: publishing,
