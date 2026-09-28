@@ -1680,6 +1680,7 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
     call: requestedCall,
     facts: {
       mode: run && run.mode,
+      taskClass: run && run.taskClass,
       noEdit: Boolean(run && run.noEdit),
       capabilityAnswered: requestedCall && requestedCall.name === "capability.invoke" && requestedCall.args
         ? capabilityAnswered(run, requestedCall.args.capability)
