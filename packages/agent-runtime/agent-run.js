@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
 const { createProgressState, recommendCapability, selectCapability, capabilityIntent, isSiteLayoutGoal, htmlCssRead, capabilityGuidance, writeFindingsNotice, applyEditNotice, alreadySearched, applyIteration, noteResearch, researchQuestion, postResearchBrief, openingResearchBrief, markQuestionSeen, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
 const { lockModel } = require("./model-lock");
-const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isLocalFollowUp } = require("./strategy");
+const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isReadAllFilesGoal, isLocalFollowUp } = require("./strategy");
 const { decideProject, isDependencyFreeStatic, projectDecisionContext } = require("./project-decision");
 const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
@@ -244,6 +244,7 @@ async function executeRun(run, options) {
     taskClass: run.taskClass,
   });
   const capabilitiesDisabled = run.mode === "chat_only"
+    || run.taskClass === "inspect"
     || isDependencyFreeStatic(run.projectDecision)
     || (isLocalRepairWithoutOutsideEvidence(run) && !openingIntent);
   const capabilityRegistry = await loadCapabilityRegistry(capabilitiesDisabled ? null : options.capabilities);
@@ -1738,7 +1739,7 @@ function toolsForRun(run, localTools, capabilityTools) {
   }
 
   let local = localTools.slice();
-  if (run && run.mode === "read_only") {
+  if (run && (run.mode === "read_only" || run.taskClass === "inspect")) {
     local = local.filter((tool) => READ_ONLY_COMPOSER_TOOLS.has(tool.name));
   }
   if (run && run.noEdit) local = local.filter((tool) => !READ_ONLY_BLOCKED_TOOLS.has(tool.name));
@@ -2163,7 +2164,7 @@ function systemPrompt(options) {
         : runIsFolder(options)
           ? "This job only creates the named folder with dir.create. Do not use the terminal."
           : runIsInspect(options)
-            ? "This job lists the workspace. Call dir.list with path \".\" and answer from that list. Do not edit files."
+            ? "This is an inspection-only job. Do not edit files, run commands, browse, or use external capabilities. Start with dir.list. If the user asks to read or review files, use file.read. If the user asks for all files, recursively list project folders and read every discovered project file before answering; skip dependency, generated, hidden metadata, and cache directories."
             : runIsBuild(options)
               ? "This job creates or repairs project files. Create only what the request needs. In an empty workspace, a simple static HTML/CSS request must stay dependency-free: use file.write/dir.create, do not invent package.json or a server, and read every created file back before finishing. For existing files prefer file.patch. For a long-running dev server use process.start, then verify with browser.check. If a server accepts a port, use a numeric port; never pass the literal string --port to server.listen()."
               : "Verify with the checks that actually exist in the inspected workspace. Do not call tests.run when there is no test script, and do not call Git tools when the workspace is not a Git repository. For browser-visible changes, read the changed file back and use browser.check. For click/button/tap interactions, you must also use browser.interact; source inspection alone is not proof. For a form or booking flow, use one browser.interact sequence to fill the fields, click submit, and assert the resulting confirmation text. If a CodeMe-owned process failed, read process.logs, repair the file, restart it with process.start, and confirm it is running before finishing.",
@@ -2294,6 +2295,38 @@ function verifyAlreadySatisfiedWebRepair(run) {
   };
 }
 
+function inspectionReadCoverage(run) {
+  const ignoredSegments = new Set([".git", ".tools", ".codeme", "node_modules", "dist", "build", "coverage", ".cache"]);
+  const normalizePath = (value) => String(value || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "") || ".";
+  const ignored = (value) => normalizePath(value).split("/").some((segment) => ignoredSegments.has(segment));
+
+  const listCalls = (run.toolCalls || []).filter((call) => call.name === "dir.list" && call.result && call.result.ok);
+  const readCalls = (run.toolCalls || []).filter((call) => call.name === "file.read" && call.result && call.result.ok);
+
+  const listedDirs = new Set(listCalls.map((call) => normalizePath(call.args && call.args.path)));
+  const readFiles = new Set(readCalls.map((call) => normalizePath(call.args && call.args.path)));
+  const discoveredDirs = new Set();
+  const discoveredFiles = new Set();
+
+  for (const call of listCalls) {
+    const entries = call.result && call.result.data && Array.isArray(call.result.data.entries)
+      ? call.result.data.entries
+      : [];
+    for (const entry of entries) {
+      const entryPath = normalizePath(entry && entry.path);
+      if (!entryPath || ignored(entryPath)) continue;
+      const type = String(entry && (entry.type || entry.kind) || "").toLowerCase();
+      if (type === "directory" || type === "dir" || type === "folder") discoveredDirs.add(entryPath);
+      else if (type === "file" || type === "") discoveredFiles.add(entryPath);
+    }
+  }
+
+  return {
+    pendingDirs: [...discoveredDirs].filter((dir) => !listedDirs.has(dir)),
+    pendingFiles: [...discoveredFiles].filter((file) => !readFiles.has(file)),
+  };
+}
+
 function defaultVerify(run, text) {
   if (!run.observations.length) {
     return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
@@ -2302,17 +2335,44 @@ function defaultVerify(run, text) {
   if (isResearchRun(run)) return verifyResearch(run, text, writes);
   if (run.taskClass === "inspect" && run.mode === "controlled") {
     const listed = (run.toolCalls || []).some((call) => call.name === "dir.list" && call.result && call.result.ok);
-    if (listed && String(text).trim()) {
+    if (!listed) {
+      return {
+        status: "failed",
+        summary: "Call dir.list with path \".\" before answering from the workspace.",
+        evidence: [],
+      };
+    }
+
+    if (isReadAllFilesGoal(run.goal)) {
+      const coverage = inspectionReadCoverage(run);
+      if (coverage.pendingDirs.length) {
+        return {
+          status: "failed",
+          summary: `Continue listing project folders before finishing: ${coverage.pendingDirs.slice(0, 8).join(", ")}.`,
+          evidence: ["dir.list"],
+        };
+      }
+      if (coverage.pendingFiles.length) {
+        return {
+          status: "failed",
+          summary: `Read every discovered project file before finishing. Still unread: ${coverage.pendingFiles.slice(0, 8).join(", ")}.`,
+          evidence: ["dir.list", "file.read"],
+        };
+      }
+    }
+
+    if (String(text).trim()) {
+      const readAny = (run.toolCalls || []).some((call) => call.name === "file.read" && call.result && call.result.ok);
       return {
         status: "passed",
-        summary: "The file list follows the workspace listing",
-        evidence: ["dir.list"],
+        summary: readAny ? "The answer follows the inspected workspace files" : "The file list follows the workspace listing",
+        evidence: readAny ? ["dir.list", "file.read"] : ["dir.list"],
       };
     }
     return {
       status: "failed",
-      summary: "Call dir.list with path \".\" and answer from that list",
-      evidence: [],
+      summary: "Answer from the recorded workspace observations.",
+      evidence: ["dir.list"],
     };
   }
   if (run.taskClass === "build" && run.mode === "controlled") {
