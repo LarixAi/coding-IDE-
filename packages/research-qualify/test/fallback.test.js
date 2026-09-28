@@ -128,7 +128,19 @@ async function main() {
 
   const observation = run.observations.find((item) => item.type === "capability");
   const event = run.events.find((item) => item.type === "capability");
-  assert.strictEqual(run.lifecycle, "completed");
+  assert.strictEqual(run.lifecycle, "completed", JSON.stringify({
+    error: run.error,
+    outcome: run.outcome,
+    verification: run.verification,
+    tools: (run.toolCalls || []).map((call) => ({
+      iteration: call.iteration,
+      name: call.name,
+      ok: call.result && call.result.ok,
+      status: call.result && call.result.status,
+      code: call.result && call.result.error && call.result.error.code,
+    })),
+    messages: (run.messages || []).slice(-6).map((message) => String(message.content || "").slice(0, 260)),
+  }, null, 2));
   assert.strictEqual(run.error, null);
   assert.strictEqual(run.verification.status, "passed");
   assert.ok(run.requirements.every((item) => item.status === "satisfied"));
