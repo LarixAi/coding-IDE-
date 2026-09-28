@@ -523,10 +523,12 @@ class ComposerViewProvider {
       listModels: async () => {
         const localUrl = process.env.CODEME_LOCAL_OLLAMA_URL || process.env.CODEME_OLLAMA_URL || "http://127.0.0.1:11434";
         const serverUrl = process.env.CODEME_SERVER_OLLAMA_URL || "";
-        const [localModels, serverModels] = await Promise.all([
+        const [localResult, serverResult] = await Promise.allSettled([
           listOllamaModels(localUrl, "ollama-local", "Local"),
           serverUrl ? listOllamaModels(serverUrl, "ollama-server", "Server") : Promise.resolve([]),
         ]);
+        const localModels = localResult.status === "fulfilled" ? localResult.value : [];
+        const serverModels = serverResult.status === "fulfilled" ? serverResult.value : [];
         return localModels.concat(serverModels);
       },
       createProvider: (selection) => {
