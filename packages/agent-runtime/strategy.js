@@ -1,6 +1,12 @@
 const { hasNoEditDirective, stripNegatedEditing, isResearchOnlyRequest } = require("./intent");
 
 const STRATEGIES = {
+  chat: {
+    id: "chat",
+    version: 1,
+    taskClass: "chat",
+    guidance: "Conversation only. Do not inspect the workspace, call tools, use external capabilities, run commands, browse the preview, or modify files. Answer from the conversation and the model's general knowledge only.",
+  },
   research: {
     id: "research",
     version: 1,
