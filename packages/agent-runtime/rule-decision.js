@@ -131,7 +131,7 @@ function resolveRuleDecision(input = {}) {
   }
   const name = String(originalCall.name);
 
-  if (facts.taskClass === "inspect" && !INSPECTION_ALLOWED_TOOLS.has(name)) {
+  if (facts.workspaceInspectionOnly && !INSPECTION_ALLOWED_TOOLS.has(name)) {
     candidates.push(candidate(
       "safety",
       "safety.inspect_only",
