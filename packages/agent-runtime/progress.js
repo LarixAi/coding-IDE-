@@ -58,27 +58,21 @@ function recommendCapability(records) {
   return listed[0] || null;
 }
 
-function selectCapability(goal, listed, options = {}) {
-  const records = (listed || []).filter((item) => item && item.name);
-  const match = (category) => records.find((item) => item.category === category) || null;
+function capabilityIntent(goal, options = {}) {
   const text = String(goal || "").toLowerCase();
   const composerMode = options.composerMode || "";
   const taskClass = options.taskClass || "";
   if (isSiteLayoutGoal(goal) || taskClass === "layout") return null;
-
-  if (isKnowledgeLookup(text)) {
-    const found = match("knowledge");
-    if (found) return found;
-  }
-  if (isLargeMultiPart(text, { composerMode, taskClass })) {
-    const found = match("task");
-    if (found) return found;
-  }
-  if (isUnknownTechnicalProblem(text)) {
-    const found = match("research");
-    if (found) return found;
-  }
+  if (isKnowledgeLookup(text)) return "knowledge";
+  if (isLargeMultiPart(text, { composerMode, taskClass })) return "task";
+  if (isUnknownTechnicalProblem(text)) return "research";
   return null;
+}
+
+function selectCapability(goal, listed, options = {}) {
+  const records = (listed || []).filter((item) => item && item.name);
+  const intent = capabilityIntent(goal, options);
+  return intent ? records.find((item) => item.category === intent) || null : null;
 }
 
 function isUnknownTechnicalProblem(text) {
@@ -625,6 +619,7 @@ module.exports = {
   createProgressState,
   recommendCapability,
   selectCapability,
+  capabilityIntent,
   isSiteLayoutGoal,
   htmlCssRead,
   capabilityGuidance,
