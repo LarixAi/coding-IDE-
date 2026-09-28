@@ -277,7 +277,7 @@ function resolveRuleDecision(input = {}) {
     ));
   }
 
-  if (facts.requireExternalEvidenceBeforeEdit && name === "process.start") {
+  if (facts.requireExternalEvidenceBeforeEdit && name === "process.start" && !facts.endToEndRuntimeTask) {
     candidates.push(candidate(
       "recovery",
       "recovery.native_verification_required",
