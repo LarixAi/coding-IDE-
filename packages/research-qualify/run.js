@@ -9,7 +9,7 @@ const { CAPABILITY_CATALOG } = require("../agent-runtime/capability-registry");
 const { createWorkspaceHost } = require("../coding-qualify/host");
 const { N8nCapabilityProvider } = require("../n8n-capability");
 const { REQUIREMENTS } = require("./acceptance");
-const { localComplete, workspaceChanges } = require("./verify");
+const { localComplete, researchComplete, workspaceChanges } = require("./verify");
 const { GOAL } = require("./goal");
 
 const FIXTURE = path.join(__dirname, "fixture");
@@ -183,7 +183,7 @@ async function main() {
   console.error("baseline");
   const baseline = await execute("baseline", new ExternalCapabilityProvider(), localComplete);
   console.error("assisted");
-  const assisted = await execute("assisted", hub, localComplete);
+  const assisted = await execute("assisted", hub, researchComplete);
 
   const assistedRun = assisted.run || { toolCalls: [], observations: [], events: [], decisions: [], requirements: [], verificationHistory: [] };
   const researchCall = (assistedRun.toolCalls || []).find((call) => (
@@ -208,8 +208,10 @@ async function main() {
   const researchTurn = assisted.provider.calls.findIndex((call) => sawResearchObservation(call.messages));
   const consumed = researchTurn >= 0 && assisted.provider.calls.length > researchTurn + 1
     && sawResearchObservation(assisted.provider.calls[researchTurn + 1].messages);
-  const offered = assisted.provider.calls[0] && assisted.provider.calls[0].tools.find((tool) => tool.name === "capability.invoke");
+  const firstAssistedTools = assisted.provider.calls[0] ? assisted.provider.calls[0].tools.map((tool) => tool.name) : [];
   const baselineTools = baseline.provider.calls[0] ? baseline.provider.calls[0].tools.map((tool) => tool.name) : [];
+  const researchIndex = researchCall ? assistedRun.toolCalls.indexOf(researchCall) : -1;
+  const callsBeforeResearch = researchIndex >= 0 ? assistedRun.toolCalls.slice(0, researchIndex) : [];
   const evidenceText = researchCall && researchCall.result && researchCall.result.data ? JSON.stringify(researchCall.result.data.evidence || []) : "";
   const summary = {
     discovered: discoveredNames,
@@ -272,33 +274,47 @@ async function main() {
   assert.ok(assistedRun.verificationHistory.some((item) => item.status === "failed"));
   assert.strictEqual(assistedRun.verificationHistory.at(-1).status, "passed");
   assert.ok(assistedRun.requirements.every((item) => item.status === "satisfied"));
-  assert.ok(offered);
-  assert.ok(offered.description.includes("research.problem"));
-  assert.ok(!offered.description.includes("image.generate"));
-  assert.ok(!offered.description.includes("webhook"));
+  assert.ok(!firstAssistedTools.includes("capability.invoke"), "ordinary repair must start local-first");
+  assert.ok(!firstAssistedTools.includes("capability.list"), "ordinary repair must not discover the hub on turn one");
   assert.ok(!baselineTools.includes("capability.invoke"));
+  assert.ok(!baselineTools.includes("capability.list"));
   assert.strictEqual(baseline.run.goal, GOAL);
   assert.strictEqual(assistedRun.goal, GOAL);
   assert.strictEqual(baseline.run.lifecycle, "completed");
   assert.strictEqual(baseline.run.verification.status, "passed");
   assert.ok(hub.invocations.every((item) => !item.contextKeys.some((key) => ["files", "repository", "workspace", "command", "shell"].includes(key))));
-  if (researchCall) {
-    assert.ok(!JSON.stringify(researchCall.args).includes("webhook"));
-    assert.strictEqual(researchCall.result.data.recommended_fix, null);
-    assert.strictEqual(researchCall.result.data.likely_cause, null);
-    assert.strictEqual(researchObservation.trusted, false);
-    assert.strictEqual(researchObservation.runId, assistedRun.id);
-    assert.ok(researchObservation.requestId);
-    assert.strictEqual(typeof researchObservation.duration, "number");
-    assert.ok(researchEvent);
-    assert.strictEqual(consumed, true);
-    assert.ok(laterWrite);
-    assert.ok(laterWrite.directedBy !== "runtime");
-    assert.ok(laterWrite.args && typeof laterWrite.args.contents === "string" && laterWrite.args.contents.includes("function"));
-    assert.ok(!evidenceText.includes(laterWrite.args.contents));
-    assert.ok(hub.invocations.some((item) => item.capability === "research.problem"));
-    assert.ok((assistedRun.progress.researchEscalations || 0) <= 1);
-  }
+  assert.ok(researchCall, "Gate 10 assisted run must obtain research evidence");
+  assert.ok(researchCall.iteration > 0, "Gate 10 research must follow local inspection rather than run at turn zero");
+  assert.strictEqual(researchCall.directedBy, "runtime");
+  assert.strictEqual(
+    (assistedRun.toolCalls || []).filter((call) => call.name === "capability.invoke" && call.args && call.args.capability === "research.problem").length,
+    1,
+    "Gate 10 permits one research escalation",
+  );
+  assert.ok(callsBeforeResearch.some((call) => call.name === "repo.search"));
+  assert.ok(callsBeforeResearch.some((call) => call.name === "file.read" && call.args && String(call.args.path || "").startsWith("src/")));
+  assert.ok(callsBeforeResearch.some((call) => call.name === "file.read" && call.args && String(call.args.path || "").startsWith("test/")));
+  assert.ok(callsBeforeResearch.some((call) => call.name === "tests.run" && call.result && call.result.ok === false));
+  assert.ok(!callsBeforeResearch.some((call) => (
+    (call.name === "file.write" || call.name === "file.patch")
+    && call.result
+    && call.result.ok
+  )), "the assisted lane must not edit before the research escalation");
+  assert.ok(!JSON.stringify(researchCall.args).includes("webhook"));
+  assert.strictEqual(researchCall.result.data.recommended_fix, null);
+  assert.strictEqual(researchCall.result.data.likely_cause, null);
+  assert.strictEqual(researchObservation.trusted, false);
+  assert.strictEqual(researchObservation.runId, assistedRun.id);
+  assert.ok(researchObservation.requestId);
+  assert.strictEqual(typeof researchObservation.duration, "number");
+  assert.ok(researchEvent);
+  assert.strictEqual(consumed, true);
+  assert.ok(laterWrite);
+  assert.ok(laterWrite.directedBy !== "runtime");
+  assert.ok(laterWrite.args && typeof laterWrite.args.contents === "string" && laterWrite.args.contents.includes("function"));
+  assert.ok(!evidenceText.includes(laterWrite.args.contents));
+  assert.ok(hub.invocations.some((item) => item.capability === "research.problem"));
+  assert.strictEqual(assistedRun.progress.researchEscalations, 1);
   assert.deepStrictEqual([...assistedRun.filesChanged].sort(), workspaceChanges(assisted.workspace));
   assert.ok(assistedRun.filesChanged.includes("src/check.js"));
   assert.strictEqual(fs.readFileSync(assisted.sentinel, "utf8"), "untouched");
