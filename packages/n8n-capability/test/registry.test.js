@@ -277,6 +277,20 @@ async function main() {
           store: new RunStore(path.join(directory, label)),
           capabilities: hub,
           mode: "controlled",
+          verify(runState, text) {
+            const failedCapability = (runState.toolCalls || []).find((call) => (
+              call.name === "capability.invoke"
+              && call.result
+              && call.result.ok === false
+              && call.result.trusted === false
+              && call.result.error
+              && call.result.error.code === code
+            ));
+            if (failedCapability && String(text || "").includes(`continued after ${label}`)) {
+              return { status: "passed", summary: "the capability failure stayed contained and the run continued", evidence: ["capability.invoke"] };
+            }
+            return { status: "failed", summary: "waiting for the contained capability failure to be acknowledged", evidence: [] };
+          },
         }).done;
         assert.strictEqual(run.lifecycle, "completed", label);
         assert.strictEqual(run.error, null, label);
