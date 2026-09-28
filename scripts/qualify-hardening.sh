@@ -8,6 +8,7 @@ export PATH="$node_bin:$PATH"
 
 node "$root/packages/agent-runtime/test/hardening.test.js"
 node "$root/packages/agent-runtime/test/mode-contract.test.js"
+node "$root/packages/agent-runtime/test/model-provider.test.js"
 node "$root/packages/agent-runtime/test/stagnation.test.js"
 node "$root/packages/coding-qualify/test/policy.test.js"
 node "$root/packages/feature-qualify/test/requirements.test.js"
