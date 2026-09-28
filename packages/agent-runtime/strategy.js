@@ -1,4 +1,18 @@
+const { hasNoEditDirective, stripNegatedEditing, isResearchOnlyRequest } = require("./intent");
+
 const STRATEGIES = {
+  chat: {
+    id: "chat",
+    version: 1,
+    taskClass: "chat",
+    guidance: "Conversation only. Do not inspect the workspace, call tools, use external capabilities, run commands, browse the preview, or modify files. Answer from the conversation and the model's general knowledge only.",
+  },
+  research: {
+    id: "research",
+    version: 1,
+    taskClass: "research",
+    guidance: "This is a research and explanation request, not a repair job. Gather outside evidence with the research capability at most once, read the relevant workspace files, then answer with the researched approach and a project-specific analysis. Do not edit files.",
+  },
   inspect: {
     id: "inspect",
     version: 1,
@@ -63,7 +77,9 @@ function folderNameFromGoal(goal) {
 
 function classifyTask(goal, options = {}) {
   if (options.taskClass && STRATEGIES[options.taskClass]) return options.taskClass;
-  const text = String(goal || "").toLowerCase();
+  const noEdit = hasNoEditDirective(goal);
+  if (noEdit) return isWorkspaceInventory(stripNegatedEditing(goal)) ? "inspect" : "research";
+  const text = stripNegatedEditing(goal).toLowerCase();
   if (folderNameFromGoal(goal)) return options.mode === "read_only" ? "inspect" : "folder";
   if (isWorkspaceInventory(goal)) return "inspect";
   if ((options.requirements || []).length >= 3) return "feature";
@@ -74,6 +90,7 @@ function classifyTask(goal, options = {}) {
   if (isBuildGoal(goal)) return options.mode === "read_only" ? "inspect" : "build";
   if (/\b(fix|repair|bug|failing|broken|does not|regression)\b/.test(text)) return "bug-fix";
   if (options.mode === "read_only") return "inspect";
+  if (isResearchOnlyRequest(goal)) return "research";
   if (options.mode === "controlled") return "bug-fix";
   return "general";
 }
@@ -94,10 +111,25 @@ function isLocalFollowUp(goal) {
   return /\b(go ahead|please proceed|fix the issue|fix this|fix it|run the|start the|continue working|missing files?)\b/.test(text);
 }
 
+function isReadAllFilesGoal(goal) {
+  const text = String(goal || "").toLowerCase();
+  return /\b(read|review|inspect|look through|go through)\b/.test(text)
+    && /\b(all|every)\b[\s\S]{0,40}\bfiles?\b/.test(text);
+}
+
 function isWorkspaceInventory(goal) {
   const text = String(goal || "").toLowerCase();
   if (/\b(create|make|build|add|write|implement|fix|repair|continue|working|run|start|serve)\b/.test(text)) return false;
-  return /\b(what|which|list|missing|exist|inside)\b/.test(text) && /\b(files?|folders?|directory|workspace)\b/.test(text);
+
+  const explicitRead = /\b(read|review|inspect|look through|go through|open)\b/.test(text)
+    && (
+      /\b(files?|folders?|directory|workspace|repo|repository|codebase|project)\b/.test(text)
+      || /(?:^|\s)[\w./-]+\.[a-z0-9]{1,10}\b/i.test(text)
+    );
+  if (explicitRead) return true;
+
+  return /\b(what|which|list|missing|exist|inside)\b/.test(text)
+    && /\b(files?|folders?|directory|workspace)\b/.test(text);
 }
 
 function isBuildGoal(goal) {
@@ -122,4 +154,4 @@ function strategyGuidance(strategy) {
   return (strategy && strategy.guidance) || STRATEGIES.general.guidance;
 }
 
-module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite };
+module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isReadAllFilesGoal, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite };

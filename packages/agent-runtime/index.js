@@ -8,6 +8,7 @@ const { classifyTask, selectStrategy } = require("./strategy");
 const { diagnose } = require("./diagnosis");
 const { selectCapability, recommendCapability, isSiteLayoutGoal } = require("./progress");
 const { decideProject, isDependencyFreeStatic } = require("./project-decision");
+const { hasNoEditDirective, stripNegatedEditing, hasEditIntent, isResearchOnlyRequest } = require("./intent");
 
 module.exports = {
   ModelProvider,
@@ -32,4 +33,8 @@ module.exports = {
   isSiteLayoutGoal,
   decideProject,
   isDependencyFreeStatic,
+  hasNoEditDirective,
+  stripNegatedEditing,
+  hasEditIntent,
+  isResearchOnlyRequest,
 };

@@ -1,21 +1,39 @@
 const crypto = require("crypto");
 const { loadCapabilityRegistry, capabilityToolDefinitions, dispatchCapability } = require("./capability");
-const { createProgressState, recommendCapability, selectCapability, isSiteLayoutGoal, htmlCssRead, capabilityGuidance, writeFindingsNotice, applyEditNotice, alreadySearched, applyIteration, noteResearch, researchQuestion, postResearchBrief, openingResearchBrief, markQuestionSeen, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
+const { createProgressState, recommendCapability, selectCapability, capabilityIntent, isSiteLayoutGoal, htmlCssRead, capabilityGuidance, writeFindingsNotice, applyEditNotice, alreadySearched, applyIteration, noteResearch, researchQuestion, postResearchBrief, openingResearchBrief, markQuestionSeen, observationKey, compactObservation, focusTools, focusNotice } = require("./progress");
 const { lockModel } = require("./model-lock");
-const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isLocalFollowUp } = require("./strategy");
+const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, isNewWebsite, isWorkspaceInventory, isReadAllFilesGoal, isLocalFollowUp } = require("./strategy");
 const { decideProject, isDependencyFreeStatic, projectDecisionContext } = require("./project-decision");
 const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
-const { RULE_PRIORITY, resolveRuleDecision, isStaticScaffoldTool } = require("./rule-decision");
+const { RULE_PRIORITY, resolveRuleDecision, isStaticScaffoldTool, READ_ONLY_BLOCKED_TOOLS } = require("./rule-decision");
+const { hasNoEditDirective, stripNegatedEditing } = require("./intent");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 const STOPPED = new Set(["completed", "cancelled", "failed", "awaiting_user"]);
+const READ_ONLY_COMPOSER_TOOLS = new Set([
+  "workspace.inspect",
+  "file.read",
+  "repo.search",
+  "dir.list",
+  "git.status",
+  "git.diff",
+  "diagnostics.run",
+]);
 
 function createRun(options) {
   const lock = options.modelLock || lockModel(options);
+  const requestedMode = options.mode || "read_only";
+  const noEdit = options.noEdit === true || hasNoEditDirective(options.goal);
+  // A no-edit directive can downgrade Code to read-only, but it must never
+  // upgrade Chat into a workspace-capable mode.
+  const effectiveMode = requestedMode === "chat_only"
+    ? "chat_only"
+    : (noEdit ? "read_only" : requestedMode);
+  options = { ...options, mode: effectiveMode };
   const strategy = options.strategyRecord || selectStrategy(options.goal, options);
-  const requirements = inferRequirements(options.goal, options);
-  return {
+  const requirements = effectiveMode === "chat_only" ? [] : inferRequirements(options.goal, options);
+  const run = {
     schemaVersion: 1,
     id: `run_${crypto.randomBytes(8).toString("hex")}`,
     goal: options.goal,
@@ -25,7 +43,9 @@ function createRun(options) {
     persistentSelection: lock.persistentSelection || options.model,
     modelLock: lock,
     provider: options.providerName,
-    mode: options.mode || "read_only",
+    mode: effectiveMode,
+    requestedMode,
+    noEdit,
     composerMode: options.composerMode || "",
     taskClass: strategy.taskClass,
     strategyRecord: strategy,
@@ -55,10 +75,14 @@ function createRun(options) {
     repairReserveUsed: 0,
     recoveryReserve: options.recoveryReserve ?? 2,
     recoveryReserveUsed: 0,
+    recoveryEditPending: false,
+    recoveryEditAttempted: false,
+    recoveryEditResearchIteration: null,
     maxRetries: options.maxRetries ?? 2,
     maxIdenticalActions: options.maxIdenticalActions ?? 4,
     actionCounts: {},
     failureCounts: {},
+    strategyResets: {},
     cancelRequested: false,
     timeoutMs: options.timeoutMs ?? (strategy.taskClass === "layout" ? 300000 : 180000),
     inFlight: null,
@@ -68,6 +92,16 @@ function createRun(options) {
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+  if (noEdit && requestedMode !== effectiveMode) {
+    run.events.push({
+      type: "intent_override",
+      runId: run.id,
+      from: requestedMode,
+      to: effectiveMode,
+      reason: "The request says not to edit. This run is read-only regardless of the Composer mode.",
+    });
+  }
+  return run;
 }
 
 function normalizeConversationHistory(list) {
@@ -164,7 +198,7 @@ async function executeRun(run, options) {
   touch(run, "running");
   setPlan(run, "understand", "completed");
   if (run.messages.length === 0) {
-    run.messages.push({ role: "system", content: systemPrompt({ ...options, strategyRecord: run.strategyRecord }) });
+    run.messages.push({ role: "system", content: systemPrompt({ ...options, mode: run.mode, noEdit: run.noEdit, strategyRecord: run.strategyRecord }) });
     for (const message of run.conversationHistory || []) {
       run.messages.push({ role: message.role, content: message.content });
     }
@@ -178,31 +212,41 @@ async function executeRun(run, options) {
   }
   store.save(run);
 
-  const folder = await createRequestedFolder(run, registry, store);
-  if (folder) return folder;
-  if (!cancelled(run, signal)) {
-    const workspace = await showWorkspace(run, registry, store);
-    if (workspace && workspace.ok === false) {
-      const error = workspace.error || {};
-      return finishFailed(
-        run,
-        store,
-        error.code || "workspace_inspection_failed",
-        error.message || "CodeMe could not inspect the active workspace",
-      );
+  if (run.mode !== "chat_only") {
+    const folder = await createRequestedFolder(run, registry, store);
+    if (folder) return folder;
+    if (!cancelled(run, signal)) {
+      const workspace = await showWorkspace(run, registry, store);
+      if (workspace && workspace.ok === false) {
+        const error = workspace.error || {};
+        return finishFailed(
+          run,
+          store,
+          error.code || "workspace_inspection_failed",
+          error.message || "CodeMe could not inspect the active workspace",
+        );
+      }
+    }
+
+    applyProjectDecision(run, store);
+    const verificationPolicy = verificationPolicyText(run);
+    if (verificationPolicy) {
+      run.messages.push({ role: "user", content: verificationPolicy });
+      store.save(run);
     }
   }
 
-  applyProjectDecision(run, store);
-  const verificationPolicy = verificationPolicyText(run);
-  if (verificationPolicy) {
-    run.messages.push({ role: "user", content: verificationPolicy });
-    store.save(run);
-  }
-
-  // Simple local repairs stay fully local until they actually stagnate.
-  // If that happens, settleTurn lazily discovers a read-only research capability.
-  const capabilitiesDisabled = isDependencyFreeStatic(run.projectDecision) || isLocalRepairWithoutOutsideEvidence(run);
+  // Dependency-free static scaffolds never need the hub. Simple local edits also
+  // skip registry discovery entirely, while explicit task/knowledge/research intent
+  // may still discover a capability before the coding loop begins.
+  const openingIntent = capabilityIntent(run.goal, {
+    composerMode: options.composerMode || run.composerMode,
+    taskClass: run.taskClass,
+  });
+  const capabilitiesDisabled = run.mode === "chat_only"
+    || (isWorkspaceInventory(run.goal) && !openingIntent)
+    || isDependencyFreeStatic(run.projectDecision)
+    || (isLocalRepairWithoutOutsideEvidence(run) && !openingIntent);
   const capabilityRegistry = await loadCapabilityRegistry(capabilitiesDisabled ? null : options.capabilities);
   const capabilityRecords = capabilityRegistry.list();
   const capabilityTools = capabilityRecords.length ? capabilityToolDefinitions(capabilityRecords) : [];
@@ -229,7 +273,9 @@ async function executeRun(run, options) {
     }
   }
 
-  if (!cancelled(run, signal)) await prepareResearch(run, capabilityRegistry, options, signal, store);
+  if (run.mode !== "chat_only" && !cancelled(run, signal)) {
+    await prepareResearch(run, capabilityRegistry, options, signal, store);
+  }
 
   while (!STOPPED.has(run.lifecycle)) {
     if (cancelled(run, signal)) return finishCancelled(run, store);
@@ -249,12 +295,21 @@ async function executeRun(run, options) {
     run.inFlight = { kind: "model", iteration: run.iteration };
     store.save(run);
 
+    const recoveryEditTurn = Boolean(run.recoveryEditPending && !run.recoveryEditAttempted);
+    const offeredTools = toolsForRun(run, registry.definitions(), capabilityTools);
+    const modelTools = recoveryEditTurn
+      ? recoveryEditTools(offeredTools)
+      : focusTools(run.progress, offeredTools);
+    const modelMessages = recoveryEditTurn
+      ? recoveryEditMessages(run)
+      : run.messages.map((message) => ({ ...message }));
+
     let decision;
     try {
       decision = await provider.complete({
         model: run.effectiveModel,
-        messages: run.messages.map((message) => ({ ...message })),
-        tools: focusTools(run.progress, toolsForRun(run, registry.definitions(), capabilityTools)),
+        messages: modelMessages,
+        tools: modelTools,
         signal,
         timeoutMs: run.timeoutMs,
       });
@@ -277,6 +332,32 @@ async function executeRun(run, options) {
       at: new Date().toISOString(),
     });
     run.messages.push({ role: "assistant", content: text, toolCalls: calls });
+
+    if (recoveryEditTurn) {
+      run.recoveryEditAttempted = true;
+      const validRecoveryEdit = calls.length > 0 && calls.every((call) => (
+        call && (call.name === "file.patch" || call.name === "file.write")
+      ));
+      if (!validRecoveryEdit) {
+        store.save(run);
+        return finishFailed(
+          run,
+          store,
+          "recovery_edit_required",
+          "Research evidence was available, but the bounded recovery turn did not return a structured file.patch or file.write request.",
+        );
+      }
+      run.recoveryEditPending = false;
+      if (!Array.isArray(run.events)) run.events = [];
+      run.events.push({
+        type: "recovery_edit",
+        status: "structured_edit_received",
+        iteration: run.iteration,
+        researchIteration: run.recoveryEditResearchIteration,
+        at: new Date().toISOString(),
+      });
+    }
+
     store.save(run);
 
     if (calls.length === 0) {
@@ -321,6 +402,7 @@ async function executeRun(run, options) {
       if (cancelled(run, signal)) return finishCancelled(run, store);
       const key = actionKey(call);
       if ((run.failureCounts[key] || 0) >= run.maxRetries) {
+        if (await maybeResetRepeatedMutationStrategy(run, call, registry, store)) continue;
         return finishFailed(run, store, "repeated_action", `Repeated failing action ${call.name}`);
       }
       if ((run.actionCounts[key] || 0) >= run.maxIdenticalActions) {
@@ -364,7 +446,18 @@ async function executeRun(run, options) {
 
       let result;
       try {
-        if (ruleDecision.action === "deny") {
+        if (ruleDecision.action === "deny" && ruleDecision.soft) {
+          result = {
+            ok: true,
+            tool: call.name,
+            data: {
+              withheld: true,
+              repeated: true,
+              message: ruleDecision.reason,
+              rule: ruleDecision.rule,
+            },
+          };
+        } else if (ruleDecision.action === "deny") {
           result = {
             ok: false,
             tool: call.name,
@@ -479,6 +572,10 @@ async function executeRun(run, options) {
       run.inFlight = null;
       pushObservation(run, call, result);
 
+      if (!result.ok && (run.failureCounts[key] || 0) >= run.maxRetries) {
+        await maybeResetRepeatedMutationStrategy(run, call, registry, store);
+      }
+
       if (!result.ok && call.name === "process.start") {
         if (run.progress) {
           run.progress.writeNow = false;
@@ -553,7 +650,7 @@ async function executeRun(run, options) {
       if (
         call.name === "capability.invoke"
         && !result.ok
-        && requiresExternalEvidenceBeforeEdit(run.goal)
+        && requiresExternalEvidenceForRun(run)
       ) {
         return finishFailed(
           run,
@@ -585,7 +682,9 @@ async function executeRun(run, options) {
     if (done) return done;
 
     await maybeReadBackRepairedFiles(run, registry, store);
-    if (await maybeRestartRepairedProcess(run, registry, store)) {
+    const processChanged = await maybeRestartRepairedProcess(run, registry, store)
+      || await maybeStartOwnedProcessForVerification(run, registry, store);
+    if (processChanged) {
       const verifiedNow = maybeFinishVerifiedWork(run, store, text);
       if (verifiedNow) return verifiedNow;
     }
@@ -600,6 +699,10 @@ async function executeRun(run, options) {
 
 function runIsFolder(options) {
   return options.taskClass === "folder" || (options.strategyRecord && options.strategyRecord.taskClass === "folder");
+}
+
+function runIsResearch(options) {
+  return options.taskClass === "research" || (options.strategyRecord && options.strategyRecord.taskClass === "research");
 }
 
 function runIsInspect(options) {
@@ -1168,6 +1271,80 @@ function successfulWrites(run) {
   ));
 }
 
+async function maybeResetRepeatedMutationStrategy(run, call, registry, store) {
+  if (!run || !call || call.name !== "file.patch" || !call.args || !call.args.path) return false;
+  const key = actionKey(call);
+  const prior = ((run && run.toolCalls) || []).filter((item) => (
+    item && item.name === call.name && actionKey(item) === key && item.result && item.result.ok === false
+  ));
+  const latest = prior[prior.length - 1];
+  const code = latest && latest.result && latest.result.error && latest.result.error.code;
+  if (code !== "patch_not_found" && code !== "patch_ambiguous") return false;
+  if (!run.strategyResets || typeof run.strategyResets !== "object") run.strategyResets = {};
+  if (run.strategyResets[key]) return false;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  if (!registry.definitions().some((tool) => tool.name === "file.read")) return false;
+
+  run.strategyResets[key] = true;
+  const read = { name: "file.read", args: { path: call.args.path } };
+  touch(run, "executing_tool", read.name);
+  run.inFlight = {
+    kind: "tool",
+    name: read.name,
+    args: read.args,
+    key: actionKey(read),
+    directedBy: "runtime",
+  };
+  store.save(run);
+
+  let result;
+  try {
+    result = await registry.call(read.name, read.args);
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: read.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: read.name,
+    args: read.args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  run.observations.push(observe(read, result));
+  pushObservation(run, read, result);
+  run.inFlight = null;
+
+  if (run.progress) {
+    run.progress.writeNow = false;
+    run.progress.focus = false;
+    run.progress.semanticStagnation = 0;
+    run.progress.stagnantTurns = 0;
+  }
+  if (!Array.isArray(run.events)) run.events = [];
+  run.events.push({
+    type: "strategy_reset",
+    reason: "repeated_failed_patch",
+    path: String(call.args.path),
+    iteration: run.iteration,
+    at: new Date().toISOString(),
+  });
+  run.messages.push({
+    role: "user",
+    content: result && result.ok
+      ? "This exact patch has failed repeatedly and is now blocked. The current file was re-read above. Do not retry the same patch text. Recalculate the edit from the fresh contents; use a different precise patch or a safe full-file write, then rerun the failing check."
+      : "This exact patch has failed repeatedly and is now blocked. Do not retry it. Re-inspect the target with another available local tool and change strategy before editing again.",
+  });
+  store.save(run);
+  return true;
+}
+
 function failedProcessRepairNeedsRestart(run) {
   if (!hadFailedOwnedProcess(run)) return false;
   const writes = successfulWrites(run);
@@ -1239,7 +1416,7 @@ async function maybeReadBackRepairedFiles(run, registry, store) {
 
 async function maybeRestartRepairedProcess(run, registry, store) {
   if (!run || run.mode !== "controlled" || run.processRestartAttempted) return false;
-  if (requiresExternalEvidenceBeforeEdit(run.goal) || workspaceHasTests(run)) return false;
+  if (requiresExternalEvidenceForRun(run) || workspaceHasTests(run)) return false;
   if (!failedProcessRepairNeedsRestart(run)) return false;
   const writes = successfulWrites(run);
   if (!writes.length) return false;
@@ -1314,6 +1491,97 @@ async function maybeRestartRepairedProcess(run, registry, store) {
   return true;
 }
 
+async function maybeStartOwnedProcessForVerification(run, registry, store) {
+  if (!run || run.mode !== "controlled" || run.ownedProcessStartAttempted) return false;
+  if (!requiresOwnedProcess(run) || hadFailedOwnedProcess(run)) return false;
+  if (requiresExternalEvidenceForRun(run) && !externalEvidenceObserved(run)) return false;
+
+  const writes = successfulWrites(run);
+  if (!writes.length) return false;
+  const lastWrite = writes[writes.length - 1];
+  if (!uniqueWrittenPaths(writes).every((file) => wasReadAfterMutation(run, file))) return false;
+  const after = callsAfter(run, lastWrite);
+  if (after.some(processIsRunningResult)) return false;
+
+  if (workspaceHasTests(run)) {
+    const passedTests = after.some((call) => (
+      (call.name === "tests.run" || (call.name === "terminal.run" && /\btest\b/i.test(String((call.args && call.args.command) || ""))))
+      && call.result
+      && call.result.ok
+    ));
+    if (!passedTests) return false;
+  }
+
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  if (!registry.definitions().some((tool) => tool.name === "process.start")) return false;
+
+  run.ownedProcessStartAttempted = true;
+  const call = { name: "process.start", args: { command: "npm start" } };
+  const ruleDecision = resolveRequestedToolDecision(run, call, registry, []);
+  recordRuleDecision(run, ruleDecision, call);
+  touch(run, "executing_tool", call.name);
+  run.inFlight = { kind: "tool", name: call.name, args: call.args, key: actionKey(call), directedBy: "runtime" };
+  store.save(run);
+
+  let result;
+  try {
+    if (ruleDecision.action === "deny") {
+      result = {
+        ok: false,
+        tool: call.name,
+        error: {
+          code: ruleDecision.code || "policy_denied",
+          message: ruleDecision.reason,
+        },
+        data: {
+          rule: ruleDecision.rule,
+          tier: ruleDecision.tier,
+          priority: ruleDecision.priority,
+        },
+      };
+    } else {
+      const processGuard = ruleDecision.action === "guard"
+        ? await guardProcessStart(run, registry)
+        : null;
+      result = processGuard || await registry.call(call.name, call.args);
+    }
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: call.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    ruleDecision: compactRuleDecision(ruleDecision),
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  run.observations.push(observe(call, result));
+  pushObservation(run, call, result);
+  run.inFlight = null;
+
+  if (!result.ok) {
+    run.messages.push({
+      role: "user",
+      content: "The CodeMe-owned application process failed during final verification. Read process.logs, repair from the recorded error, rerun tests, then start it again.",
+    });
+  } else if (processIsRunningResult(record)) {
+    run.messages.push({
+      role: "user",
+      content: "The CodeMe-owned application process is running. Continue with browser verification, diagnostics, and the final diff before finishing.",
+    });
+  }
+  store.save(run);
+  return true;
+}
+
 async function guardProcessStart(run, registry) {
   let evidence = latestProcessEvidence(run);
   let status = evidence.status;
@@ -1372,7 +1640,7 @@ async function guardProcessStart(run, registry) {
     };
   }
 
-  if (isBrowserEditTask(run)) {
+  if (isBrowserEditTask(run) && !requiresOwnedProcess(run)) {
     return {
       ok: true,
       tool: "process.start",
@@ -1412,6 +1680,12 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
     call: requestedCall,
     facts: {
       mode: run && run.mode,
+      taskClass: run && run.taskClass,
+      workspaceInspectionOnly: Boolean(run && isWorkspaceInventory(run.goal)),
+      noEdit: Boolean(run && run.noEdit),
+      capabilityAnswered: requestedCall && requestedCall.name === "capability.invoke" && requestedCall.args
+        ? capabilityAnswered(run, requestedCall.args.capability)
+        : false,
       dependencyFreeStatic: isDependencyFreeStatic(run && run.projectDecision),
       workspaceHasTests: workspaceHasTests(run),
       workspaceHasGit: workspaceHasGit(run),
@@ -1423,7 +1697,8 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
       requireFailureBeforeEdit: requiresFailureBeforeEdit(run && run.goal),
       browserFailureObserved: browserFailureObserved(run),
       failedProcessNeedsLogs: failedProcessNeedsLogs(run),
-      requireExternalEvidenceBeforeEdit: requiresExternalEvidenceBeforeEdit(run && run.goal),
+      requireExternalEvidenceBeforeEdit: requiresExternalEvidenceForRun(run),
+      endToEndRuntimeTask: requiresEndToEndVerification(run),
       testFailureObserved: testFailureObserved(run),
       externalEvidenceObserved: externalEvidenceObserved(run),
       externalEvidenceUnavailable: externalEvidenceUnavailable(run),
@@ -1459,18 +1734,25 @@ function recordRuleDecision(run, decision, requestedCall) {
 }
 
 function toolsForRun(run, localTools, capabilityTools) {
+  if (run && run.mode === "chat_only") return [];
+
   if (isDependencyFreeStatic(run && run.projectDecision)) {
     return localTools.filter((tool) => isStaticScaffoldTool(tool.name));
   }
 
   let local = localTools.slice();
+  if (run && (run.mode === "read_only" || isWorkspaceInventory(run.goal))) {
+    local = local.filter((tool) => READ_ONLY_COMPOSER_TOOLS.has(tool.name));
+  }
+  if (run && run.noEdit) local = local.filter((tool) => !READ_ONLY_BLOCKED_TOOLS.has(tool.name));
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
-  if (isBrowserEditTask(run) && !hadFailedOwnedProcess(run)) {
+  if (isBrowserEditTask(run) && !requiresOwnedProcess(run) && !hadFailedOwnedProcess(run)) {
     local = local.filter((tool) => tool.name !== "process.start");
   }
 
-  const external = isSimpleLocalWorkspaceTask(run) ? [] : capabilityTools;
+  let external = isSimpleLocalWorkspaceTask(run) ? [] : capabilityTools;
+  if (external.length && isResearchRun(run) && anyCapabilitySucceeded(run)) external = [];
   return local.concat(external);
 }
 
@@ -1483,6 +1765,50 @@ function workspaceHasGit(run) {
   return Boolean(run && run.workspace && run.workspace.git === true);
 }
 
+function isResearchRun(run) {
+  return Boolean(run && run.taskClass === "research");
+}
+
+function capabilityCalls(run) {
+  return ((run && run.toolCalls) || []).filter((call) => call && call.name === "capability.invoke");
+}
+function anyCapabilitySucceeded(run) {
+  return capabilityCalls(run).some((call) => call.result && call.result.ok);
+}
+function capabilityAnswered(run, name) {
+  const calls = (run && run.toolCalls) || [];
+  let answeredAt = -1;
+  calls.forEach((call, index) => {
+    if (call && call.name === "capability.invoke" && call.result && call.result.ok && call.args && call.args.capability === name) answeredAt = index;
+  });
+  if (answeredAt < 0) return false;
+  if (isResearchRun(run)) return true;
+  return !calls.slice(answeredAt + 1).some((call) => call && !String(call.name).startsWith("capability."));
+}
+
+function workspaceHasStartScript(run) {
+  const scripts = run && run.workspace && run.workspace.scripts;
+  return Boolean(scripts && typeof scripts === "object" && typeof scripts.start === "string" && scripts.start.trim());
+}
+
+function isFullStackRuntimeGoal(run) {
+  const text = String(run && run.goal || "").toLowerCase();
+  const explicit = /\b(full[- ]?stack|end[- ]?to[- ]?end)\b/.test(text);
+  const server = /\b(api|backend|back-end|server|database|persistent|persistence)\b/.test(text);
+  const surface = /\b(website|web app|page|frontend|front-end|form|booking|checkout|browser)\b/.test(text);
+  return explicit || (server && surface);
+}
+
+function requiresOwnedProcess(run) {
+  if (!workspaceHasStartScript(run)) return false;
+  const text = String(run && run.goal || "").toLowerCase();
+  return isFullStackRuntimeGoal(run) || /\b(api|backend|back-end|server)\b/.test(text);
+}
+
+function requiresEndToEndVerification(run) {
+  return requiresOwnedProcess(run) && isFullStackRuntimeGoal(run);
+}
+
 function needsOutsideEvidence(goal) {
   const text = String(goal || "").toLowerCase();
   return /\b(research|documentation|docs|latest|current api|best practice|external|look up|lookup|search the web|web research)\b/.test(text);
@@ -1493,6 +1819,25 @@ function requiresExternalEvidenceBeforeEdit(goal) {
   if (/\bpublished\b.{0,48}\b(rule|standard|algorithm|spec)\b/.test(text)) return true;
   return /\b(not (fully )?documented|does not (fully )?document|undocumented)\b/.test(text)
     && /\b(rule|behaviour|behavior|algorithm)\b/.test(text);
+}
+
+function observedExternalRuleSignal(run) {
+  const calls = (run && run.toolCalls) || [];
+  return calls.some((call) => {
+    if (!call || !call.result) return false;
+    const isFailedTest = (
+      (call.name === "tests.run" || (call.name === "terminal.run" && /\btest\b/i.test(String((call.args && call.args.command) || ""))))
+      && call.result.ok === false
+    );
+    const isTestRead = call.name === "file.read" && /(^|\/)(test|tests|spec)(\/|\.|$)/i.test(String((call.args && call.args.path) || ""));
+    if (!isFailedTest && !isTestRead) return false;
+    const body = JSON.stringify(call.result).toLowerCase();
+    return /\b(unpublished|undocumented|not documented|not in (?:the )?repo(?:sitory)?|external (?:rule|specification)|published (?:rule|standard|algorithm|specification))\b/.test(body);
+  });
+}
+
+function requiresExternalEvidenceForRun(run) {
+  return requiresExternalEvidenceBeforeEdit(run && run.goal) || observedExternalRuleSignal(run);
 }
 
 function testFailureObserved(run) {
@@ -1535,13 +1880,15 @@ function goalRequiresNativeVerification(goal) {
 function isLocalRepairWithoutOutsideEvidence(run) {
   if (!run || !run.workspace || run.workspace.state === "empty") return false;
   if (!requiresWorkspaceRepair(run)) return false;
+  if (requiresExternalEvidenceForRun(run)) return false;
   return !needsOutsideEvidence(run.goal);
 }
 
 function isSimpleLocalWorkspaceTask(run) {
   if (!run || !run.workspace || run.workspace.state === "empty") return false;
   if (needsOutsideEvidence(run.goal)) return false;
-  const text = String(run.goal || "").toLowerCase();
+  if (isResearchRun(run)) return false;
+  const text = stripNegatedEditing(run.goal).toLowerCase();
   if (/\b(create|scaffold|new project|new app|new website|database|backend|api integration)\b/.test(text)) return false;
   return /\b(change|edit|update|set|make|fix|repair|heading|title|button|text|colour|color|centre|center|style|css|html|spacing|font|background)\b/.test(text);
 }
@@ -1667,8 +2014,9 @@ function grantRepairReserve(run, store) {
 
 function requiresWorkspaceRepair(run) {
   if (!run || run.mode !== "controlled") return false;
+  if (run.noEdit || run.taskClass === "research") return false;
   if (["bug-fix", "layout", "build", "feature"].includes(run.taskClass)) return true;
-  const text = String(run.goal || "").toLowerCase();
+  const text = stripNegatedEditing(run.goal).toLowerCase();
   return /\b(fix|repair|change|update|edit|make|add|remove|button|click|broken)\b/.test(text)
     || text.includes("doesn't work")
     || text.includes("does not work");
@@ -1715,7 +2063,8 @@ function unresolvedBrowserFailure(run) {
 
 function isBrowserEditTask(run) {
   if (!run || !run.workspace || run.workspace.state === "empty") return false;
-  const text = String(run.goal || "").toLowerCase();
+  if (isResearchRun(run)) return false;
+  const text = stripNegatedEditing(run.goal).toLowerCase();
   const visible = /\b(page|website|site|html|css|style|heading|button|click|browser|frontend|front-end)\b/.test(text);
   if (!visible) return false;
   const explicitRunOnly = /\b(start|run|launch|serve)\b/.test(text)
@@ -1731,6 +2080,9 @@ function verificationPolicyText(run) {
       : "Verification policy: read back every created file and verify the page with browser.check. Do not run tests or Git.";
   }
   const parts = [];
+  if (requiresEndToEndVerification(run)) {
+    parts.push("this is an end-to-end runtime task: after final edits CodeMe must own a running process, pass diagnostics, and verify the browser flow");
+  }
   if (workspaceHasTests(run)) parts.push("tests are available");
   else parts.push("there is no test script, so do not call tests.run");
   if (workspaceHasGit(run)) parts.push("Git verification is available");
@@ -1783,6 +2135,17 @@ async function createRequestedFolder(run, registry, store) {
 function systemPrompt(options) {
   const capabilities = options.capabilities;
   const hub = capabilities && typeof capabilities.listCapabilities === "function" ? "external capabilities are separate from tools" : "no external capability hub is configured";
+  if (options.mode === "chat_only") {
+    return [
+      "You are in CodeMe Chat mode.",
+      "This mode is conversation only.",
+      "Do not inspect or make claims about the workspace unless the user has pasted that information into the conversation.",
+      "Do not call tools, capabilities, terminal commands, tests, browser checks, or file operations.",
+      "Do not promise that you changed, checked, ran, created, fixed, or verified anything in the workspace.",
+      "Answer conversationally from the visible conversation and general model knowledge.",
+      "If the user asks you to inspect, read, search, test, or change workspace files, explain that Chat mode has no workspace access and tell them to use Ask for read-only inspection, Plan for planning, or Code for edits.",
+    ].join(" ");
+  }
   if (options.mode === "controlled") {
     return [
       "You are a CodeMe agent run with workspace-scoped tools.",
@@ -1796,16 +2159,18 @@ function systemPrompt(options) {
       "Describing a file change or a capability call does not perform it. Use the matching tool.",
       "Use file.patch for a precise edit to an existing file and file.write for a new file or full replacement. Create folders with dir.create. Use process.start for a long-running preview server; do not use terminal.run for servers, mkdir, ls, or node -e.",
       "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
-      "For local website previews, do not start the server with terminal.run or background shell commands. Call browser.check on the HTML page; CodeMe owns preview startup and reuse. For user-visible interactions such as click/button/tap behaviour, browser.check is not enough: browser.interact must verify the real resulting text/state before finishing.",
-      isLayoutJob(options)
+      "For local website previews, do not start the server with terminal.run or background shell commands. Call browser.check on the HTML page; CodeMe owns preview startup and reuse. For user-visible interactions such as click/button/tap behaviour, browser.check is not enough: browser.interact must verify the real resulting text/state before finishing. For booking/form journeys, use one browser.interact action=sequence with fill steps, a submit click, and assertText for the confirmation; dependent form steps must stay in one sequence because each browser.interact call starts a fresh browser session.",
+      runIsResearch(options)
+        ? "This job is research and explanation. Do not edit files. Call the research capability at most once with input.problem, read the relevant workspace files, then answer."
+        : isLayoutJob(options)
         ? "This is a layout job. After the HTML and CSS are read, use file.patch for a precise existing-file edit or file.write for a full replacement, then browser.check. Do not wait for tests or git."
         : runIsFolder(options)
           ? "This job only creates the named folder with dir.create. Do not use the terminal."
           : runIsInspect(options)
-            ? "This job lists the workspace. Call dir.list with path \".\" and answer from that list. Do not edit files."
+            ? "This is an inspection-only job. Do not edit files, run commands, browse, or use external capabilities. Start with dir.list. If the user asks to read or review files, use file.read. If the user asks for all files, recursively list project folders and read every discovered project file before answering; skip dependency, generated, hidden metadata, and cache directories."
             : runIsBuild(options)
               ? "This job creates or repairs project files. Create only what the request needs. In an empty workspace, a simple static HTML/CSS request must stay dependency-free: use file.write/dir.create, do not invent package.json or a server, and read every created file back before finishing. For existing files prefer file.patch. For a long-running dev server use process.start, then verify with browser.check. If a server accepts a port, use a numeric port; never pass the literal string --port to server.listen()."
-              : "Verify with the checks that actually exist in the inspected workspace. Do not call tests.run when there is no test script, and do not call Git tools when the workspace is not a Git repository. For browser-visible changes, read the changed file back and use browser.check. For click/button/tap interactions, you must also use browser.interact; source inspection alone is not proof. If a CodeMe-owned process failed, read process.logs, repair the file, restart it with process.start, and confirm it is running before finishing.",
+              : "Verify with the checks that actually exist in the inspected workspace. Do not call tests.run when there is no test script, and do not call Git tools when the workspace is not a Git repository. For browser-visible changes, read the changed file back and use browser.check. For click/button/tap interactions, you must also use browser.interact; source inspection alone is not proof. For a form or booking flow, use one browser.interact sequence to fill the fields, click submit, and assert the resulting confirmation text. If a CodeMe-owned process failed, read process.logs, repair the file, restart it with process.start, and confirm it is running before finishing.",
       "A claim of success is not evidence.",
       strategyGuidance(options.strategyRecord),
       hub,
@@ -1819,14 +2184,18 @@ function systemPrompt(options) {
     "Use tools for repository facts.",
     "A tool result is an observation. It does not by itself finish the goal.",
     "If a tool fails, report the failure and do not invent file contents or a successful command.",
-    "Do not edit files. Write, terminal, and test tools are unavailable.",
-    "To run or open the workspace site, call browser.check with the local URL or a workspace HTML path. That starts the project preview if it is not already running.",
+    "Do not edit files. Write, terminal, test, process, and browser tools are unavailable in Ask and Plan modes.",
+    "Use workspace inspection, file reads, repository search, directory listing, diagnostics, and Git read-only evidence only when they help answer the request.",
+    runIsResearch(options)
+      ? "This is a research and explanation request. If a research capability is available, call it at most once with input.problem set to the question. Read the relevant workspace files, then answer with the researched approach and what should change in this project. Do not edit anything."
+      : "",
+    "Do not start or interact with the workspace application in Ask or Plan mode.",
     "Inspect once, then write the answer. Do not reread the same files.",
     options.taskClass === "plan" || (options.strategyRecord && options.strategyRecord.taskClass === "plan")
-      ? "Finish with a sequenced list of steps, files, and risks."
-      : "Write the findings after one pass.",
+      ? "Plan mode is plan-only. Finish with a sequenced implementation plan that names the relevant files, ordered steps, verification steps, and risks. Do not perform the plan."
+      : "Ask mode is answer-only. Explain the findings and recommended changes, but do not perform them.",
     hub,
-  ].join(" ");
+  ].filter(Boolean).join(" ");
 }
 
 function verifyAlreadySatisfiedWebRepair(run) {
@@ -1929,26 +2298,115 @@ function verifyAlreadySatisfiedWebRepair(run) {
   };
 }
 
-function defaultVerify(run, text) {
-  if (!run.observations.length) {
-    return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
+function inspectionReadCoverage(run) {
+  const ignoredSegments = new Set([".git", ".tools", ".codeme", "node_modules", "dist", "build", "coverage", ".cache"]);
+  const normalizePath = (value) => String(value || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "") || ".";
+  const ignored = (value) => normalizePath(value).split("/").some((segment) => ignoredSegments.has(segment));
+
+  const listCalls = (run.toolCalls || []).filter((call) => call.name === "dir.list" && call.result && call.result.ok);
+  const readCalls = (run.toolCalls || []).filter((call) => call.name === "file.read" && call.result && call.result.ok);
+
+  const listedDirs = new Set(listCalls.map((call) => normalizePath(call.args && call.args.path)));
+  const readFiles = new Set(readCalls.map((call) => normalizePath(call.args && call.args.path)));
+  const discoveredDirs = new Set();
+  const discoveredFiles = new Set();
+
+  for (const call of listCalls) {
+    const entries = call.result && call.result.data && Array.isArray(call.result.data.entries)
+      ? call.result.data.entries
+      : [];
+    for (const entry of entries) {
+      const entryPath = normalizePath(entry && entry.path);
+      if (!entryPath || ignored(entryPath)) continue;
+      const type = String(entry && (entry.type || entry.kind) || "").toLowerCase();
+      if (type === "directory" || type === "dir" || type === "folder") discoveredDirs.add(entryPath);
+      else if (type === "file" || type === "") discoveredFiles.add(entryPath);
+    }
   }
-  const writes = (run.toolCalls || []).filter((call) => (call.name === "file.write" || call.name === "file.patch") && call.result && call.result.ok);
-  if (run.taskClass === "inspect" && run.mode === "controlled") {
-    const listed = (run.toolCalls || []).some((call) => call.name === "dir.list" && call.result && call.result.ok);
-    if (listed && String(text).trim()) {
+
+  return {
+    pendingDirs: [...discoveredDirs].filter((dir) => !listedDirs.has(dir)),
+    pendingFiles: [...discoveredFiles].filter((file) => !readFiles.has(file)),
+  };
+}
+
+function defaultVerify(run, text) {
+  if (run.mode === "chat_only") {
+    if (String(text || "").trim()) {
       return {
         status: "passed",
-        summary: "The file list follows the workspace listing",
-        evidence: ["dir.list"],
+        summary: "Chat response completed without workspace tools",
+        evidence: [],
       };
     }
+    return { status: "failed", summary: "Chat response was empty", evidence: [] };
+  }
+
+  const writes = (run.toolCalls || []).filter((call) => (call.name === "file.write" || call.name === "file.patch") && call.result && call.result.ok);
+
+  if (run.taskClass === "inspect") {
+    const listed = (run.toolCalls || []).some((call) => call.name === "dir.list" && call.result && call.result.ok);
+
+    if (isReadAllFilesGoal(run.goal)) {
+      if (!listed) {
+        return {
+          status: "failed",
+          summary: "List the workspace with dir.list before trying to read every project file.",
+          evidence: [],
+        };
+      }
+      const coverage = inspectionReadCoverage(run);
+      if (coverage.pendingDirs.length) {
+        return {
+          status: "failed",
+          summary: `Continue listing project folders before finishing: ${coverage.pendingDirs.slice(0, 8).join(", ")}.`,
+          evidence: ["dir.list"],
+        };
+      }
+      if (coverage.pendingFiles.length) {
+        return {
+          status: "failed",
+          summary: `Read every discovered project file before finishing. Still unread: ${coverage.pendingFiles.slice(0, 8).join(", ")}.`,
+          evidence: ["dir.list", "file.read"],
+        };
+      }
+    }
+
+    if (String(text || "").trim() && (listed || run.workspaceInspected)) {
+      const readAny = (run.toolCalls || []).some((call) => call.name === "file.read" && call.result && call.result.ok);
+      const evidence = [];
+      if (listed) evidence.push("dir.list");
+      if (readAny) evidence.push("file.read");
+      if (!evidence.length && run.workspaceInspected) evidence.push("workspace.inspect");
+      return {
+        status: "passed",
+        summary: readAny
+          ? "The answer follows the inspected workspace files"
+          : "The answer follows the recorded workspace inspection",
+        evidence,
+      };
+    }
+
     return {
       status: "failed",
-      summary: "Call dir.list with path \".\" and answer from that list",
+      summary: "Inspect the workspace and answer from the recorded observations.",
       evidence: [],
     };
   }
+
+  if ((run.mode === "read_only" || run.taskClass === "plan") && String(text || "").trim() && (trustedObservation(run) || run.workspaceInspected)) {
+    const evidence = run.observations.length ? run.observations.map((item) => item.tool).filter(Boolean) : ["workspace.inspect"];
+    if (run.taskClass === "plan" && !hasSequencedPlan(text)) {
+      return { status: "failed", summary: "Plan mode requires a sequenced implementation plan with concrete steps", evidence };
+    }
+    return { status: "passed", summary: run.taskClass === "plan" ? "The sequenced plan follows recorded observations" : "The answer follows recorded observations", evidence };
+  }
+
+  if (!run.observations.length) {
+    return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
+  }
+
+  if (isResearchRun(run)) return verifyResearch(run, text, writes);
   if (run.taskClass === "build" && run.mode === "controlled") {
     return verifyBuild(run);
   }
@@ -1995,21 +2453,11 @@ function defaultVerify(run, text) {
       evidence: htmlWrite ? ["file.write"] : [],
     };
   }
-  if ((run.mode === "read_only" || run.taskClass === "plan") && trustedObservation(run) && String(text).trim()) {
-    const summary = run.taskClass === "plan"
-      ? (hasSequencedPlan(text) ? "The plan follows recorded observations" : "The answer follows recorded observations")
-      : "The answer follows recorded observations";
-    return {
-      status: "passed",
-      summary,
-      evidence: run.observations.map((item) => item.tool),
-    };
-  }
   if (run.mode === "controlled" && writes.length) {
     const changed = uniqueWrittenPaths(writes);
     const lastWrite = writes[writes.length - 1];
     const after = callsAfter(run, lastWrite);
-    const evidenceTask = requiresExternalEvidenceBeforeEdit(run.goal);
+    const evidenceTask = requiresExternalEvidenceForRun(run);
     const nativeChecks = goalRequiresNativeVerification(run.goal) || workspaceHasTests(run) || workspaceHasGit(run);
     const webWrite = isWebVisibleWrite(run, writes) && !evidenceTask && !workspaceHasTests(run) && !goalRequiresNativeVerification(run.goal);
     const allReadBack = changed.every((file) => wasReadAfterMutation(run, file));
@@ -2111,7 +2559,66 @@ function defaultVerify(run, text) {
       evidence.push("tests.run");
     }
 
-    if (/\bdiagnostics\b/i.test(String(run.goal || ""))) {
+    if (requiresEndToEndVerification(run)) {
+      const running = after.find(processIsRunningResult);
+      if (!running) {
+        return {
+          status: "failed",
+          summary: "This end-to-end task needs a CodeMe-owned application process running after the final edit. Start it with process.start or confirm it with process.status.",
+          evidence,
+        };
+      }
+      evidence.push("process.start");
+
+      const browser = after.find((call) => call.name === "browser.check" && call.result && call.result.ok);
+      if (!browser) {
+        return {
+          status: "failed",
+          summary: "The application process is running, but the final browser flow has not passed browser.check after the last edit.",
+          evidence,
+        };
+      }
+      evidence.push("browser.check");
+
+      const goalText = String(run.goal || "");
+      const formFlowRequired = /\b(form|booking|checkout)\b/i.test(goalText);
+      const interactionRequired = isInteractiveBrowserGoal(run.goal) || formFlowRequired;
+      if (interactionRequired) {
+        const interactions = after.filter((call) => call.name === "browser.interact" && call.result && call.result.ok);
+        if (!interactions.length) {
+          return {
+            status: "failed",
+            summary: "The page loads, but the end-to-end form or interaction has not been exercised successfully in the real browser.",
+            evidence,
+          };
+        }
+
+        if (formFlowRequired) {
+          const confirmationRequired = /\b(confirm|confirmation|success|receipt)\b/i.test(goalText);
+          const sequence = interactions.find((call) => {
+            const action = String(call.args && call.args.action || "").toLowerCase();
+            const steps = Array.isArray(call.args && call.args.steps) ? call.args.steps : [];
+            if (action !== "sequence") return false;
+            const actions = steps.map((step) => String(step && step.action || "").toLowerCase());
+            if (!actions.includes("fill") || !actions.includes("click")) return false;
+            if (confirmationRequired && !actions.includes("asserttext")) return false;
+            return true;
+          });
+          if (!sequence) {
+            return {
+              status: "failed",
+              summary: confirmationRequired
+                ? "The booking/form flow must be verified in one browser.interact sequence that fills fields, submits the form, and asserts confirmation text."
+                : "The booking/form flow must be verified in one browser.interact sequence that fills fields and submits the form.",
+              evidence,
+            };
+          }
+        }
+        evidence.push("browser.interact");
+      }
+    }
+
+    if (requiresEndToEndVerification(run) || /\bdiagnostics\b/i.test(String(run.goal || ""))) {
       const diagnostics = after.find((call) => call.name === "diagnostics.run" && call.result && call.result.ok);
       const items = diagnostics && diagnostics.result && diagnostics.result.data && diagnostics.result.data.items;
       if (!diagnostics || (Array.isArray(items) && items.length)) {
@@ -2181,6 +2688,17 @@ function defaultVerify(run, text) {
     summary: "The answer follows recorded observations",
     evidence: run.observations.map((item) => item.tool),
   };
+}
+
+function verifyResearch(run, text, writes) {
+  if (writes.length) return { status: "failed", summary: "A research-only run must not change the workspace, but a file was written.", evidence: ["file.write"] };
+  if (!String(text || "").trim()) return { status: "failed", summary: "Write the research findings and what should change in this project.", evidence: [] };
+  const readsProject = (run.toolCalls || []).some((call) => (
+    ["file.read", "repo.search", "dir.list"].includes(call.name) && call.result && call.result.ok
+  ));
+  const aboutProject = /\b(this|the|our) (project|repo|repository|codebase|workspace|app|code)\b/i.test(String(run.goal || ""));
+  if (aboutProject && !readsProject) return { status: "failed", summary: "Read the relevant workspace files before explaining what should change in this project.", evidence: [] };
+  return { status: "passed", summary: "The answer follows the research and workspace observations", evidence: run.observations.map((item) => item.tool).filter(Boolean) };
 }
 
 function finishCompleted(run, store, text) {
@@ -2291,6 +2809,12 @@ function addChanged(run, file) {
 
 function buildPlan(options) {
   const requirements = options.requirements || [];
+  if (options.mode === "chat_only") {
+    return [
+      { id: "understand", title: "Understand the conversation", status: "pending" },
+      { id: "respond", title: "Answer without workspace actions", status: "pending" },
+    ];
+  }
   if (requirements.length) {
     return [
       { id: "understand", title: "Keep the original goal", status: "pending" },
@@ -2346,6 +2870,81 @@ function pathsFromDiff(diff) {
   return paths;
 }
 
+function recoveryEditTools(definitions) {
+  const edits = (definitions || []).filter((tool) => tool && (tool.name === "file.patch" || tool.name === "file.write"));
+  return edits;
+}
+
+function recoveryEditMessages(run) {
+  const system = (run.messages || []).find((message) => message && message.role === "system");
+  const reads = [];
+  const seen = new Set();
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0 && reads.length < 3; index -= 1) {
+    const call = calls[index];
+    if (!call || call.name !== "file.read" || !call.result || !call.result.ok) continue;
+    const file = String(call.args && call.args.path || "");
+    const contents = call.result.data && call.result.data.contents;
+    if (!file || typeof contents !== "string" || seen.has(file)) continue;
+    seen.add(file);
+    reads.push({ file, contents: clipText(contents, 2600) });
+  }
+  reads.reverse();
+
+  let failedCheck = null;
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    const testLike = call && (
+      call.name === "tests.run"
+      || (call.name === "terminal.run" && /\btest\b/i.test(String((call.args && call.args.command) || "")))
+    );
+    if (testLike && call.result && call.result.ok === false) {
+      failedCheck = call;
+      break;
+    }
+  }
+
+  let research = null;
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (
+      call
+      && call.name === "capability.invoke"
+      && call.directedBy === "runtime"
+      && call.result
+      && call.result.ok
+    ) {
+      research = call;
+      break;
+    }
+  }
+
+  const evidence = research && research.result && research.result.data && Array.isArray(research.result.data.evidence)
+    ? research.result.data.evidence.slice(0, 4).map((item, index) => (
+      `E${index + 1} ${clipText(item && item.title, 100)}: ${clipText(item && item.excerpt, 360)}`
+    ))
+    : [];
+
+  const body = [
+    "BOUNDED RECOVERY EDIT TURN.",
+    `Original goal: ${clipText(run && run.goal, 1200)}`,
+    run && run.verification && run.verification.summary
+      ? `Current verification failure: ${clipText(run.verification.summary, 700)}`
+      : "",
+    failedCheck ? `Latest failing check: ${clipText(JSON.stringify(failedCheck.result), 1800)}` : "",
+    evidence.length ? `Research observation. Evidence obtained (all retained sources): ${evidence.join(" | ")}` : "",
+    reads.length
+      ? `Current relevant files:\n${reads.map((item) => `--- ${item.file} ---\n${item.contents}`).join("\n")}`
+      : "No readable source snapshot was available.",
+    "Return a structured file.patch or file.write tool call now. Do not return prose instead of an edit. Do not repeat prior reasoning. The runtime will execute the edit and then restore the normal test/diagnostics/browser/git verification loop.",
+  ].filter(Boolean).join("\n\n");
+
+  return [
+    ...(system ? [{ role: "system", content: system.content }] : []),
+    { role: "user", content: body },
+  ];
+}
+
 function pushObservation(run, call, result) {
   const key = observationKey(call, result);
   run.messages.push({
@@ -2365,7 +2964,7 @@ function pushObservation(run, call, result) {
 
 async function settleTurn(run, store, registry, options, signal) {
   if (
-    requiresExternalEvidenceBeforeEdit(run.goal)
+    requiresExternalEvidenceForRun(run)
     && testFailureObserved(run)
     && !externalEvidenceObserved(run)
   ) {
@@ -2389,6 +2988,16 @@ async function settleTurn(run, store, registry, options, signal) {
     && !isSiteLayoutGoal(run.goal)
     && run.taskClass !== "layout"
   ) {
+    if (run.progress && run.progress.runtimeDirectedEscalation) {
+      run.progress.focus = true;
+      run.progress.semanticStagnation = 0;
+      run.messages.push({
+        role: "user",
+        content: "Read-only research evidence has already been obtained for this run. Do not request the same research again. Consume the recorded evidence, change the repair strategy, and continue with local tools.",
+      });
+      store.save(run);
+      return { focused: true };
+    }
     await directResearch(run, registry, options, signal, store);
     if (STOPPED.has(run.lifecycle)) return run;
     return { researched: true };
@@ -2410,7 +3019,10 @@ async function settleTurn(run, store, registry, options, signal) {
     return { focused: true };
   }
   if (run.progress.focus) {
-    run.messages.push({ role: "user", content: focusNotice(run.progress) });
+    const notice = isReadAllFilesGoal(run.goal)
+      ? "Continue the read-all inspection with tools. Use dir.list on any unlisted project folders and file.read on unread project files. Do not edit, test, research externally, or merely list the remaining filenames in prose."
+      : focusNotice(run.progress);
+    run.messages.push({ role: "user", content: notice });
     store.save(run);
     return { focused: true };
   }
@@ -2418,13 +3030,14 @@ async function settleTurn(run, store, registry, options, signal) {
 }
 
 async function maybeEscalateStagnantLocalRepair(run, options, signal, store) {
-  if (!isLocalRepairWithoutOutsideEvidence(run)) return false;
+  const evidenceRequired = requiresExternalEvidenceForRun(run);
+  if (!evidenceRequired && !isLocalRepairWithoutOutsideEvidence(run)) return false;
   if (!run || !run.progress || run.progress.runtimeDirectedEscalation) return false;
   if (isDependencyFreeStatic(run.projectDecision)) return false;
   if (run.taskClass === "layout" || isSiteLayoutGoal(run.goal)) return false;
 
   const failEvidenceUnavailable = () => {
-    if (!requiresExternalEvidenceBeforeEdit(run.goal)) return false;
+    if (!requiresExternalEvidenceForRun(run)) return false;
     finishFailed(
       run,
       store,
@@ -2452,8 +3065,8 @@ async function maybeEscalateStagnantLocalRepair(run, options, signal, store) {
   run.progress.recommendedFields = (research.inputSchema && research.inputSchema.required) || [];
   run.messages.push({
     role: "user",
-    content: requiresExternalEvidenceBeforeEdit(run.goal)
-      ? "The repository does not document the published rule. CodeMe is requesting read-only hub evidence once before any workspace edit."
+    content: requiresExternalEvidenceForRun(run)
+      ? "The observed failure depends on a rule that is not documented locally. CodeMe is requesting read-only hub evidence once before another workspace edit."
       : "Local repair attempts have genuinely stagnated. CodeMe is escalating once to the read-only evidence hub before deciding to stop.",
   });
   store.save(run);
@@ -2526,6 +3139,19 @@ async function showWorkspace(run, registry, store) {
 
     const data = inspected.data && typeof inspected.data === "object" ? inspected.data : {};
     run.workspace = data;
+    const inspectCall = { name: "workspace.inspect", args: {} };
+    const inspectRecord = {
+      id: `call_${crypto.randomBytes(4).toString("hex")}`,
+      iteration: run.iteration,
+      name: inspectCall.name,
+      args: inspectCall.args,
+      result: inspected,
+      directedBy: "runtime",
+    };
+    run.toolCalls.push(inspectRecord);
+    const inspectObservation = observe(inspectCall, inspected);
+    inspectObservation.directedBy = "runtime";
+    run.observations.push(inspectObservation);
     if (!Array.isArray(run.events)) run.events = [];
     run.events.push({
       type: "workspace",
@@ -2551,6 +3177,20 @@ async function showWorkspace(run, registry, store) {
     return null;
   }
   if (!result || !result.ok) return null;
+  const listCall = { name: "dir.list", args: { path: "." } };
+  const listRecord = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: listCall.name,
+    args: listCall.args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(listRecord);
+  const listObservation = observe(listCall, result);
+  listObservation.directedBy = "runtime";
+  run.observations.push(listObservation);
+  pushObservation(run, listCall, result);
   const entries = result.data && Array.isArray(result.data.entries) ? result.data.entries : [];
   const files = entries.slice(0, 80).map((entry) => entry.path).filter(Boolean);
   run.messages.push({
@@ -2567,7 +3207,6 @@ function promisesFile(text) {
 
 async function prepareResearch(run, capabilityRegistry, options, signal, store) {
   if (isDependencyFreeStatic(run && run.projectDecision)) return;
-  if (isLocalRepairWithoutOutsideEvidence(run)) return;
   if (run.taskClass === "layout" || run.taskClass === "folder" || isSiteLayoutGoal(run.goal) || isWorkspaceInventory(run.goal) || isLocalFollowUp(run.goal)) return;
   if (run.progress && run.progress.runtimeDirectedEscalation) return;
 
@@ -2576,35 +3215,121 @@ async function prepareResearch(run, capabilityRegistry, options, signal, store) 
     composerMode: options.composerMode || run.composerMode,
     taskClass: run.taskClass,
   });
+
+  // Explicit knowledge and decomposition intents should go straight to the matching
+  // capability even when the workspace already exists and the implementation itself
+  // can remain local. Do not burn a generic research call first.
+  if (selected && selected.name && selected.category && selected.category !== "research") {
+    run.progress.recommendedName = selected.name;
+    run.progress.recommendedDescription = selected.description || "";
+    run.progress.recommendedFields = (selected.inputSchema && selected.inputSchema.required) || [];
+    await directResearch(run, capabilityRegistry, options, signal, store, true, selected);
+    if (run.progress) run.progress.focus = false;
+    return;
+  }
+
+  // Ordinary local repairs stay local until a real failure or stagnation creates
+  // a reason to ask for outside evidence.
+  if (isLocalRepairWithoutOutsideEvidence(run)) return;
+
   const needsOpeningEvidence = (
     needsOutsideEvidence(run && run.goal)
     || run.taskClass === "build"
-    || Boolean(selected && selected.category === "task")
+    || Boolean(selected && selected.category === "research")
   );
   if (!needsOpeningEvidence) return;
 
-  const research = recommendCapability(listed);
+  const research = selected && selected.category === "research" ? selected : recommendCapability(listed);
   if (!research || !research.name) return;
   run.progress.recommendedName = research.name;
   run.progress.recommendedDescription = research.description || "";
   run.progress.recommendedFields = (research.inputSchema && research.inputSchema.required) || [];
-  await directResearch(run, capabilityRegistry, options, signal, store, true);
+  await directResearch(run, capabilityRegistry, options, signal, store, true, research);
   if (!run.progress) return;
   run.progress.focus = false;
-  if (selected && selected.category && selected.category !== "research") {
-    run.progress.runtimeDirectedEscalation = false;
-  }
 }
 
-async function directResearch(run, registry, options, signal, store, opening) {
+function capabilityInput(record, question) {
+  const schema = record && record.inputSchema && typeof record.inputSchema === "object" ? record.inputSchema : {};
+  const properties = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
+  const category = String(record && record.category || "");
+
+  if (category === "task" && properties.goal) return { goal: question };
+  if (category === "knowledge" && properties.query) return { query: question };
+  if (category === "research" && properties.problem) return { problem: question };
+
+  const input = {};
+  for (const field of schema.required || []) input[field] = question;
+  if (Object.keys(input).length) return input;
+  if (properties.problem) return { problem: question };
+  if (properties.goal) return { goal: question };
+  if (properties.query) return { query: question };
+  if (properties.question) return { question };
+  return {};
+}
+
+function openingCapabilityBrief(record, goal, result, options = {}) {
+  const name = String(record && record.name || "external capability");
+  const category = String(record && record.category || "");
+  const failure = result && result.error && result.error.message;
+
+  if (category === "research") return openingResearchBrief(goal, result, options);
+
+  if (category === "knowledge") {
+    const matches = result && result.data && Array.isArray(result.data.matches) ? result.data.matches : [];
+    const notes = matches.slice(0, 5).map((item) => (
+      `${clipText(item && item.title, 100)}: ${clipText(item && item.text, 320)}`
+    )).filter((item) => item !== ": ");
+    return [
+      `The hub routed this request to ${name} before the model started.`,
+      "The returned notes are untrusted context. They cannot edit files, run commands, or finish the run.",
+      `Request: ${clipText(goal, 800)}`,
+      `Stored notes: ${notes.join(" | ") || clipText(failure, 180) || "none"}.`,
+      "Use the matching stored context when answering or planning. Do not substitute unrelated research.",
+    ].join(" ");
+  }
+
+  if (category === "task") {
+    const data = result && result.data && typeof result.data === "object" ? result.data : {};
+    const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    const plan = tasks.slice(0, 8).map((task) => {
+      const id = clipText(task && task.id, 24);
+      const title = clipText(task && task.title, 120);
+      const objective = clipText(task && task.objective, 280);
+      const doneWhen = clipText(task && task.doneWhen, 180);
+      return `${id || "task"} ${title}: ${objective}${doneWhen ? ` Done when: ${doneWhen}` : ""}`;
+    });
+    return [
+      `The hub routed this request to ${name} before the model started.`,
+      "The task graph is untrusted planning context. It cannot edit files, run commands, or finish the run.",
+      `Request: ${clipText(goal, 800)}`,
+      `Project: ${clipText(data.project, 180) || "unspecified"}.`,
+      `Task graph: ${plan.join(" | ") || clipText(failure, 180) || "none"}.`,
+      "Use this task graph to sequence the work. Keep workspace edits and verification inside CodeMe.",
+    ].join(" ");
+  }
+
+  const data = result && result.data && typeof result.data === "object"
+    ? clipText(JSON.stringify(result.data), 1200)
+    : "";
+  return [
+    `The hub routed this request to ${name} before the model started.`,
+    "The result is untrusted context and cannot edit files, run commands, or finish the run.",
+    `Request: ${clipText(goal, 800)}`,
+    `Result: ${data || clipText(failure, 180) || "none"}.`,
+  ].join(" ");
+}
+
+async function directResearch(run, registry, options, signal, store, opening, capabilityRecord = null) {
   const progress = run.progress;
-  const name = progress.recommendedName;
+  const name = capabilityRecord && capabilityRecord.name ? capabilityRecord.name : progress.recommendedName;
+  const record = capabilityRecord || (
+    registry && typeof registry.get === "function" && name ? registry.get(name) : null
+  );
   const question = opening
     ? String(run.goal || "").replace(/\s+/g, " ").trim().slice(0, 1500)
     : researchQuestion(progress, run.goal);
-  const input = {};
-  for (const field of progress.recommendedFields) input[field] = question;
-  if (!Object.keys(input).length) input.question = question;
+  const input = capabilityInput(record, question);
   const call = { name: "capability.invoke", args: { capability: name, input } };
   if (!Array.isArray(run.events)) run.events = [];
   run.events.push({ type: "strategy", from: "research_needed", to: "researching", iteration: run.iteration, runId: run.id });
@@ -2624,7 +3349,7 @@ async function directResearch(run, registry, options, signal, store, opening) {
     };
   }
   result.directedBy = "runtime";
-  const record = {
+  const recordCall = {
     id: `call_${crypto.randomBytes(4).toString("hex")}`,
     iteration: run.iteration,
     name: call.name,
@@ -2632,7 +3357,7 @@ async function directResearch(run, registry, options, signal, store, opening) {
     directedBy: "runtime",
     result,
   };
-  run.toolCalls.push(record);
+  run.toolCalls.push(recordCall);
   const observation = observe(call, result);
   observation.directedBy = "runtime";
   run.observations.push(observation);
@@ -2647,7 +3372,7 @@ async function directResearch(run, registry, options, signal, store, opening) {
     directedBy: "runtime",
     evidence: observation.evidence,
     reason: opening
-      ? "CodeMe sent the prompt to the hub before the model started. The hub returned untrusted research."
+      ? `CodeMe routed the prompt to ${name} before the model started. The hub returned untrusted context.`
       : "CodeMe requested this read-only capability because the run was stagnant. The model did not select it.",
   });
   if (opening) markQuestionSeen(progress, run.goal);
@@ -2657,10 +3382,25 @@ async function directResearch(run, registry, options, signal, store, opening) {
   run.strategy = progress.strategy;
   run.messages.push({
     role: "user",
-    content: opening ? openingResearchBrief(run.goal, result) : postResearchBrief(progress, result),
+    content: opening ? openingCapabilityBrief(record, run.goal, result, { readOnly: isResearchRun(run) }) : postResearchBrief(progress, result, { readOnly: isResearchRun(run) }),
   });
+  if (!opening && result && result.ok && run.mode === "controlled") {
+    run.recoveryEditPending = true;
+    run.recoveryEditAttempted = false;
+    run.recoveryEditResearchIteration = run.iteration;
+    if (run.progress) {
+      run.progress.focus = true;
+      run.progress.writeNow = true;
+      run.progress.semanticStagnation = 0;
+      run.progress.stagnantTurns = 0;
+    }
+    run.messages.push({
+      role: "user",
+      content: "Recovery contract: the next model turn is bounded and must return a structured file.patch or file.write tool call. Prose-only recovery is not accepted. Use the source, failing verification, and research evidence already recorded.",
+    });
+  }
   store.save(run);
-  if (requiresExternalEvidenceBeforeEdit(run.goal) && !result.ok) {
+  if (requiresExternalEvidenceForRun(run) && !result.ok) {
     finishFailed(
       run,
       store,

@@ -68,12 +68,42 @@ class ExternalCapabilityProvider {
   }
 }
 
+const INPUT_ALIASES = ["problem", "goal", "topic", "question", "query", "prompt", "task", "issue", "subject", "description", "text"];
+
+function normalizeCapabilityInput(schema, input) {
+  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const required = Array.isArray(schema && schema.required) ? schema.required : [];
+  const missing = required.filter((key) => source[key] == null || source[key] === "");
+  if (missing.length !== 1) return { input: source, remapped: null };
+  const target = missing[0];
+  const property = schema.properties && schema.properties[target];
+  if (property && property.type && property.type !== "string") return { input: source, remapped: null };
+  const carriers = INPUT_ALIASES.filter((key) => key !== target && typeof source[key] === "string" && source[key].trim());
+  if (carriers.length !== 1) return { input: source, remapped: null };
+  const from = carriers[0];
+  const next = { ...source, [target]: source[from] };
+  delete next[from];
+  return { input: next, remapped: { from, to: target } };
+}
+
+function inputHint(record) {
+  const schema = record && record.inputSchema;
+  const required = Array.isArray(schema && schema.required) ? schema.required : [];
+  return required.length ? `input: {${required.map((key) => `"${key}": string`).join(", ")}}` : "";
+}
+
 function capabilityToolDefinitions(names) {
   const records = (Array.isArray(names) ? names : []).map((item) => (
-    typeof item === "string" ? { name: item, description: "" } : { name: item && item.name, description: item && item.description || "" }
+    typeof item === "string"
+      ? { name: item, description: "", hint: "" }
+      : { name: item && item.name, description: item && item.description || "", hint: inputHint(item) }
   )).filter((item) => item.name);
+  const label = (item) => {
+    const detail = [item.description, item.hint].filter(Boolean).join("; ");
+    return detail ? `${item.name} (${detail})` : item.name;
+  };
   const available = records.length
-    ? ` Available now: ${records.map((item) => item.description ? `${item.name} (${item.description})` : item.name).join("; ")}.`
+    ? ` Available now: ${records.map(label).join("; ")}. Put the text in the exact input field named for the capability.`
     : "";
   return [
     {
@@ -327,7 +357,9 @@ async function dispatchCapability(provider, run, call, signal, registry) {
         },
       };
     }
-    const escalated = escalationKey(args.input);
+    const normalized = normalizeCapabilityInput(record.inputSchema, args.input);
+    const input = normalized.input;
+    const escalated = escalationKey(input);
     if (escalated) {
       return {
         ...base,
@@ -335,12 +367,12 @@ async function dispatchCapability(provider, run, call, signal, registry) {
         error: { code: "capability_escalation", message: `input key ${escalated} is not allowed` },
       };
     }
-    const inputCheck = matchSchema(record.inputSchema, args.input);
+    const inputCheck = matchSchema(record.inputSchema, input);
     if (!inputCheck.ok) return { ...base, status: "error", error: inputCheck.error };
     const built = buildRequest({
       runId: run.id,
       capability: record.name,
-      input: args.input,
+      input,
       context: args.context,
       timeout: record.timeout,
     });
@@ -403,4 +435,5 @@ module.exports = {
   buildRequest,
   acceptResponse,
   dispatchCapability,
+  normalizeCapabilityInput,
 };

@@ -520,12 +520,33 @@ class ComposerViewProvider {
         getMode: () => context.globalState.get("codeme.mode") || "read_only",
         setMode: (value) => context.globalState.update("codeme.mode", value),
       },
-      listModels: () => listOllamaModels(),
+      listModels: async () => {
+        const localUrl = process.env.CODEME_LOCAL_OLLAMA_URL || process.env.CODEME_OLLAMA_URL || "http://127.0.0.1:11434";
+        const serverUrl = process.env.CODEME_SERVER_OLLAMA_URL || "";
+        const [localResult, serverResult] = await Promise.allSettled([
+          listOllamaModels(localUrl, "ollama-local", "Local"),
+          serverUrl ? listOllamaModels(serverUrl, "ollama-server", "Server") : Promise.resolve([]),
+        ]);
+        const localModels = localResult.status === "fulfilled" ? localResult.value : [];
+        const serverModels = serverResult.status === "fulfilled" ? serverResult.value : [];
+        return localModels.concat(serverModels);
+      },
       createProvider: (selection) => {
-        if (!OllamaModelProvider || selection.provider !== "ollama") {
-          throw Object.assign(new Error(`Provider ${selection.provider} is not connected`), { code: "unknown_provider" });
+        if (!OllamaModelProvider) {
+          throw Object.assign(new Error("Ollama provider is not connected"), { code: "unknown_provider" });
         }
-        return new OllamaModelProvider();
+        if (selection.provider === "ollama-local" || selection.provider === "ollama") {
+          const baseUrl = process.env.CODEME_LOCAL_OLLAMA_URL || process.env.CODEME_OLLAMA_URL || "http://127.0.0.1:11434";
+          return new OllamaModelProvider({ baseUrl });
+        }
+        if (selection.provider === "ollama-server") {
+          const baseUrl = process.env.CODEME_SERVER_OLLAMA_URL;
+          if (!baseUrl) {
+            throw Object.assign(new Error("Remote Ollama server is not configured"), { code: "unknown_provider" });
+          }
+          return new OllamaModelProvider({ baseUrl });
+        }
+        throw Object.assign(new Error(`Provider ${selection.provider} is not connected`), { code: "unknown_provider" });
       },
       createRegistry: (mode) => new ToolRegistry(
         mode === "controlled" ? new ControlledToolProvider(host) : new ReadOnlyToolProvider(host),

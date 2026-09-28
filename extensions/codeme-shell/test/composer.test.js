@@ -226,6 +226,7 @@ async function main() {
   assert.ok(html.includes("id=\\\"mic\\\"") || html.includes('id="mic"'));
   assert.ok(html.includes("split(/\\r?\\n/)"));
   assert.ok(html.includes("select-mode"));
+  assert.ok(html.includes(">Chat<"));
   assert.ok(html.includes(">Ask<"));
   assert.ok(html.includes(">Plan<"));
   assert.ok(html.includes(">Code<"));
@@ -285,6 +286,9 @@ async function main() {
   assert.strictEqual(first.session.selectModel("ollama", "llama3.2:3b").ok, true);
   assert.strictEqual(first.selection.value.id, "llama3.2:3b");
   assert.strictEqual(normalizeComposerMode("read_only"), "ask");
+  assert.strictEqual(normalizeComposerMode("chat"), "chat");
+  assert.strictEqual(agentModeFor("chat"), "chat_only");
+  assert.strictEqual(agentModeFor("ask"), "read_only");
   assert.strictEqual(agentModeFor("plan"), "read_only");
   assert.strictEqual(agentModeFor("code"), "controlled");
   assert.strictEqual(first.session.selectMode("plan").ok, true);

@@ -224,7 +224,7 @@ async function main() {
     const invoked = run.toolCalls.find((call) => call.name === "capability.invoke" && call.args && call.args.capability === "task.decompose");
     assert.ok(invoked);
     assert.strictEqual(invoked.directedBy, "runtime");
-    assert.deepStrictEqual(state.invocations, ["research.problem", "task.decompose"]);
+    assert.deepStrictEqual(state.invocations, ["task.decompose"]);
   });
 
   await test("empty discovery offers no capability tools and never invokes", async () => {

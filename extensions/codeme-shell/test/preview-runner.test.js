@@ -8,13 +8,21 @@ const { createPreviewRunner, portFromText, previewPlan, resolvePreviewUrl, recov
 
 function mockVscode(commands) {
   const sent = [];
+  const external = [];
   return {
     sent,
+    external,
     vscode: {
       Uri: { parse: (value) => ({ toString: () => value, fsPath: value }) },
       commands: {
-        executeCommand: async (name, uri) => {
-          commands.push({ name, uri: uri && uri.toString() });
+        executeCommand: async (name, value) => {
+          commands.push({ name, value: value && value.toString ? value.toString() : value });
+        },
+      },
+      env: {
+        async openExternal(uri) {
+          external.push(uri && uri.toString ? uri.toString() : String(uri));
+          return true;
         },
       },
       window: {
@@ -210,7 +218,8 @@ async function main() {
   assert.strictEqual(page.statusCode, 200);
   assert.strictEqual(page.title, "Live Preview");
   assert.deepStrictEqual(mock.sent, []);
-  assert.ok(commands.some((item) => item.name === "vscode.open"));
+  assert.ok(commands.some((item) => item.name === "simpleBrowser.show" && item.value === live.url));
+  assert.deepStrictEqual(mock.external, [], "Preview must not launch the system browser");
   live.server.close();
 
   const down = await runner.check(root, "http://127.0.0.1:9");

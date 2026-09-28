@@ -31,3 +31,44 @@ This repository intentionally starts clean. Do **not** copy the old CodeMe IDE w
 Donor, pin, and what is allowed in this tree are recorded in `docs/SOURCE_TARGET.md`. Work continues on `migration/code-oss`. `main` stays free of migration experiments.
 
 Current gate: **Gate 11 autonomous hardening is recorded** in `docs/GATE_11_AUTONOMOUS_HARDENING.md`. AgentRun locks the effective model, selects a versioned strategy, diagnoses failures, accepts mid-run follow-ups, and completes only with evidence. Run `sh scripts/qualify-hardening.sh`. The Code - OSS pin remains `1.139.1`. `research.web`, `code.lookup`, `code.debug`, `code.review`, `browser.inspect`, `image.generate`, and `deploy.verify` are reserved and not implemented. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
+
+## Local and remote AI models over Tailscale
+
+The launcher automatically loads machine-specific endpoint settings from a repository-root `.env` file. Create it once with:
+
+```bash
+cp .env.example .env
+```
+
+The `.env.example` file is only a template; the running IDE does not receive those values until they are copied to `.env` (or exported in the shell).
+
+
+CodeMe keeps the local Ollama instance on the Mac and can also discover models from the `codeme-ai` server over Tailscale. n8n stays local.
+
+Current endpoints:
+
+```bash
+CODEME_N8N_URL=http://127.0.0.1:5678
+CODEME_LOCAL_OLLAMA_URL=http://127.0.0.1:11434
+CODEME_SERVER_OLLAMA_URL=http://100.81.117.90:11434
+```
+
+The Composer model selector discovers both endpoints. Models from the Mac are labelled `Local · ...`; models from `codeme-ai` are labelled `Server · ...`. The selected source is persisted with the model selection, so identical model names can exist on both machines without colliding.
+
+The Mac and `codeme-ai` must both be connected to the same Tailscale tailnet. Ollama on the server must listen on an address reachable through Tailscale.
+
+Quick checks from the Mac:
+
+```bash
+curl http://127.0.0.1:11434/api/tags
+curl http://100.81.117.90:11434/api/tags
+curl http://127.0.0.1:5678/healthz
+```
+
+Do not commit API keys, n8n tokens, or other secrets.
+
+## In-IDE browser preview
+
+CodeMe browser verification stays inside the IDE. When the agent uses `browser.check` or `browser.interact`, the preview runner opens the verified localhost URL in Code - OSS's built-in Simple Browser editor using `simpleBrowser.show`. It does not call the operating system's external browser.
+
+This keeps the working loop in one place: Composer, files, terminal, diagnostics, and the live browser preview remain inside CodeMe.

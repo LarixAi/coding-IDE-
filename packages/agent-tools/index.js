@@ -45,13 +45,45 @@ function validate(tool, args) {
     if (pathError) return failure(tool, pathError.code, pathError.message);
   }
   if (tool === "browser.interact") {
-    if (String(input.action || "").toLowerCase() !== "click") {
-      return failure(tool, "invalid_args", "browser.interact currently supports action=click");
+    const action = String(input.action || "").trim().toLowerCase();
+    const allowed = new Set(["click", "fill", "asserttext", "sequence"]);
+    if (!allowed.has(action)) {
+      return failure(tool, "invalid_args", "browser.interact supports click, fill, assertText, or sequence");
     }
-    const selector = typeof input.selector === "string" ? input.selector.trim() : "";
-    const targetText = typeof input.targetText === "string" ? input.targetText.trim() : "";
-    if (!selector && !targetText) {
-      return failure(tool, "invalid_args", "browser.interact click requires selector or targetText");
+
+    const validateStep = (step, indexLabel = "") => {
+      const value = step && typeof step === "object" ? step : {};
+      const stepAction = String(value.action || "").trim().toLowerCase();
+      if (!["click", "fill", "asserttext"].includes(stepAction)) {
+        return failure(tool, "invalid_args", `browser.interact ${indexLabel}has an unsupported action`);
+      }
+      const selector = typeof value.selector === "string" ? value.selector.trim() : "";
+      const targetText = typeof value.targetText === "string" ? value.targetText.trim() : "";
+      const expectedText = typeof value.expectedText === "string" ? value.expectedText.trim() : "";
+      if (stepAction === "click" && !selector && !targetText) {
+        return failure(tool, "invalid_args", `browser.interact ${indexLabel}click requires selector or targetText`);
+      }
+      if (stepAction === "fill") {
+        if (!selector) return failure(tool, "invalid_args", `browser.interact ${indexLabel}fill requires selector`);
+        if (typeof value.value !== "string") return failure(tool, "invalid_args", `browser.interact ${indexLabel}fill requires string value`);
+      }
+      if (stepAction === "asserttext" && !expectedText) {
+        return failure(tool, "invalid_args", `browser.interact ${indexLabel}assertText requires expectedText`);
+      }
+      return null;
+    };
+
+    if (action === "sequence") {
+      if (!Array.isArray(input.steps) || input.steps.length === 0 || input.steps.length > 12) {
+        return failure(tool, "invalid_args", "browser.interact sequence requires 1-12 steps");
+      }
+      for (let index = 0; index < input.steps.length; index += 1) {
+        const invalidStep = validateStep(input.steps[index], `sequence step ${index + 1} `);
+        if (invalidStep) return invalidStep;
+      }
+    } else {
+      const invalidStep = validateStep(input);
+      if (invalidStep) return invalidStep;
     }
   }
   return null;

@@ -30,15 +30,32 @@ const DEFINITIONS = {
     parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
   },
   "browser.interact": {
-    description: "Drive a real installed Chromium browser against the local preview. For click tasks, click selector or targetText and verify expectedText on that same element. The tool also fails on browser runtime/console errors. Use this for real interaction verification; source inspection alone is not enough.",
+    description: "Drive a real installed Chromium browser against the local preview. Supports click, fill, assertText, and sequence. Use sequence for a form journey so field values, submit click, navigation, and confirmation assertion happen in one browser session. The tool fails on unmet expectations or browser runtime/console errors.",
     parameters: {
       type: "object",
       properties: {
         url: { type: "string" },
-        action: { type: "string", enum: ["click"] },
+        action: { type: "string", enum: ["click", "fill", "assertText", "sequence"] },
         selector: { type: "string" },
         targetText: { type: "string" },
         expectedText: { type: "string" },
+        value: { type: "string" },
+        steps: {
+          type: "array",
+          minItems: 1,
+          maxItems: 12,
+          items: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["click", "fill", "assertText"] },
+              selector: { type: "string" },
+              targetText: { type: "string" },
+              expectedText: { type: "string" },
+              value: { type: "string" },
+            },
+            required: ["action"],
+          },
+        },
       },
       required: ["url", "action"],
     },

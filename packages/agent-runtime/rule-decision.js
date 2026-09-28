@@ -30,6 +30,16 @@ const READ_ONLY_BLOCKED_TOOLS = new Set([
   "browser.interact",
 ]);
 
+const INSPECTION_ALLOWED_TOOLS = new Set([
+  "workspace.inspect",
+  "file.read",
+  "repo.search",
+  "dir.list",
+  "git.status",
+  "git.diff",
+  "diagnostics.run",
+]);
+
 const WORKSPACE_MUTATION_TOOLS = new Set([
   "file.write",
   "file.patch",
@@ -108,7 +118,29 @@ function resolveRuleDecision(input = {}) {
 
   const facts = input.facts || {};
   const candidates = [];
+
+  if (facts.mode === "chat_only") {
+    candidates.push(candidate(
+      "safety",
+      "safety.chat_only",
+      "deny",
+      "Chat mode does not permit tool calls.",
+      originalCall,
+      { code: "chat_mode_tool_denied" },
+    ));
+  }
   const name = String(originalCall.name);
+
+  if (facts.workspaceInspectionOnly && !INSPECTION_ALLOWED_TOOLS.has(name)) {
+    candidates.push(candidate(
+      "safety",
+      "safety.inspect_only",
+      "deny",
+      `Inspection-only runs cannot use ${name}. They may list, read, search, inspect diagnostics, or view Git state only.`,
+      originalCall,
+      { code: "inspect_only_tool_denied" },
+    ));
+  }
   const registered = Array.isArray(facts.registeredToolNames)
     ? new Set(facts.registeredToolNames)
     : null;
@@ -120,6 +152,28 @@ function resolveRuleDecision(input = {}) {
       "deny",
       `The run is read-only, so ${name} is not permitted.`,
       originalCall,
+    ));
+  }
+
+  if (facts.noEdit && READ_ONLY_BLOCKED_TOOLS.has(name)) {
+    candidates.push(candidate(
+      "user",
+      "user.no_edit",
+      "deny",
+      `The user said not to edit anything, so ${name} is not permitted in this run. Answer from research and workspace reads only.`,
+      originalCall,
+      { code: "no_edit_requested" },
+    ));
+  }
+
+  if (name === "capability.invoke" && facts.capabilityAnswered) {
+    candidates.push(candidate(
+      "strategy",
+      "strategy.capability_already_answered",
+      "deny",
+      "This capability already returned evidence for the run. Use that evidence and the workspace files to answer. Do not call it again.",
+      originalCall,
+      { code: "capability_already_answered", soft: true },
     ));
   }
 
@@ -277,7 +331,7 @@ function resolveRuleDecision(input = {}) {
     ));
   }
 
-  if (facts.requireExternalEvidenceBeforeEdit && name === "process.start") {
+  if (facts.requireExternalEvidenceBeforeEdit && name === "process.start" && !facts.endToEndRuntimeTask) {
     candidates.push(candidate(
       "recovery",
       "recovery.native_verification_required",
@@ -341,6 +395,9 @@ module.exports = {
   RULE_PRIORITY,
   resolveRuleDecision,
   isStaticScaffoldTool,
+  READ_ONLY_BLOCKED_TOOLS,
+  INSPECTION_ALLOWED_TOOLS,
+  WORKSPACE_MUTATION_TOOLS,
   isPreviewStartCommand,
   forbiddenStaticPath,
 };
