@@ -2578,7 +2578,7 @@ async function prepareResearch(run, capabilityRegistry, options, signal, store) 
   });
 
   // Explicit knowledge and decomposition intents should go straight to the matching
-  // capability. Do not burn a research.problem call first and do not ask the coding
+  // capability. Do not burn a generic research call first and do not ask the coding
   // model to translate between capability input contracts.
   if (selected && selected.name && selected.category && selected.category !== "research") {
     run.progress.recommendedName = selected.name;
