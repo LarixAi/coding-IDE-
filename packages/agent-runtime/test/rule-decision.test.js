@@ -27,6 +27,7 @@ async function main() {
       {
         mode: "controlled",
         taskClass: "inspect",
+        workspaceInspectionOnly: true,
         registeredToolNames: ["file.patch", "file.read", "dir.list"],
       },
     );
@@ -42,6 +43,7 @@ async function main() {
       {
         mode: "controlled",
         taskClass: "inspect",
+        workspaceInspectionOnly: true,
         registeredToolNames: ["capability.invoke", "file.read", "dir.list"],
       },
     );
@@ -55,6 +57,7 @@ async function main() {
       {
         mode: "controlled",
         taskClass: "inspect",
+        workspaceInspectionOnly: true,
         registeredToolNames: ["file.read", "dir.list"],
       },
     );
