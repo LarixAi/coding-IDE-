@@ -1173,6 +1173,74 @@ function successfulWrites(run) {
   ));
 }
 
+async function maybeResetRepeatedMutationStrategy(run, call, registry, store) {
+  if (!run || !call || call.name !== "file.patch" || !call.args || !call.args.path) return false;
+  const key = actionKey(call);
+  if (!run.strategyResets || typeof run.strategyResets !== "object") run.strategyResets = {};
+  if (run.strategyResets[key]) return false;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  if (!registry.definitions().some((tool) => tool.name === "file.read")) return false;
+
+  run.strategyResets[key] = true;
+  const read = { name: "file.read", args: { path: call.args.path } };
+  touch(run, "executing_tool", read.name);
+  run.inFlight = {
+    kind: "tool",
+    name: read.name,
+    args: read.args,
+    key: actionKey(read),
+    directedBy: "runtime",
+  };
+  store.save(run);
+
+  let result;
+  try {
+    result = await registry.call(read.name, read.args);
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: read.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: read.name,
+    args: read.args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  run.observations.push(observe(read, result));
+  pushObservation(run, read, result);
+  run.inFlight = null;
+
+  if (run.progress) {
+    run.progress.writeNow = false;
+    run.progress.focus = false;
+    run.progress.semanticStagnation = 0;
+    run.progress.stagnantTurns = 0;
+  }
+  if (!Array.isArray(run.events)) run.events = [];
+  run.events.push({
+    type: "strategy_reset",
+    reason: "repeated_failed_patch",
+    path: String(call.args.path),
+    iteration: run.iteration,
+    at: new Date().toISOString(),
+  });
+  run.messages.push({
+    role: "user",
+    content: result && result.ok
+      ? "This exact patch has failed repeatedly and is now blocked. The current file was re-read above. Do not retry the same patch text. Recalculate the edit from the fresh contents; use a different precise patch or a safe full-file write, then rerun the failing check."
+      : "This exact patch has failed repeatedly and is now blocked. Do not retry it. Re-inspect the target with another available local tool and change strategy before editing again.",
+  });
+  store.save(run);
+  return true;
+}
+
 function failedProcessRepairNeedsRestart(run) {
   if (!hadFailedOwnedProcess(run)) return false;
   const writes = successfulWrites(run);
