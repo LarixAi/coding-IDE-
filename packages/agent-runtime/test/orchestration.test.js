@@ -699,6 +699,79 @@ async function main() {
     assert.ok(context.includes("this is not a Git repository"));
   });
 
+  await test("explicit existing-file edit is pre-read and only offers patch for the edit", async () => {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, "public"), { recursive: true });
+    fs.writeFileSync(path.join(root, "public/index.html"), "<h1>Old Heading</h1>\n", "utf8");
+
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 1,
+          git: false,
+          projectMarkers: [],
+          languages: ["html"],
+          frameworks: [],
+          packageManager: null,
+          scripts: {},
+        };
+      },
+      async listDirectory(dirPath = ".") {
+        if (dirPath === ".") return { path: ".", entries: [{ path: "public", type: "directory" }] };
+        return { path: dirPath, entries: [{ path: "public/index.html", type: "file" }] };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile() { throw new Error("file.write must not be offered for this edit"); },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) { return { available: true, statusCode: 200, title: "CodeMe Test Heading", url }; },
+    };
+
+    const provider = new ScriptedModelProvider([
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: {
+            path: "public/index.html",
+            oldText: "Old Heading",
+            newText: "CodeMe Test Heading",
+          },
+        }],
+      },
+      { toolCalls: [{ name: "browser.check", args: { url: "public/index.html" } }] },
+      { text: "Changed the heading and verified it in the browser." },
+    ]);
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'In public/index.html, change the main page heading to "CodeMe Test Heading". Make the change and verify it in the browser.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 6,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "public/index.html" && call.directedBy === "runtime"));
+    assert.ok(provider.calls[0].messages.some((message) => String(message.content || "").includes("file.write is intentionally unavailable")));
+    assert.strictEqual(provider.calls[0].tools.some((tool) => tool.name === "file.write"), false);
+    assert.strictEqual(provider.calls[0].tools.some((tool) => tool.name === "file.patch"), true);
+    assert.ok(fs.readFileSync(path.join(root, "public/index.html"), "utf8").includes("CodeMe Test Heading"));
+  });
+
   await test("already-satisfied button repair reroutes preview shell commands and completes without a new write", async () => {
     const root = tempDir();
     fs.writeFileSync(path.join(root, "index.html"), [
