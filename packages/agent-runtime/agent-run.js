@@ -3092,6 +3092,108 @@ async function maybeDirectSelected(run, selected, registry, options, signal, sto
   return true;
 }
 
+async function runtimeInspectionCall(run, registry, store, name, args) {
+  touch(run, "executing_tool", name);
+  run.inFlight = {
+    kind: "tool",
+    name,
+    args,
+    key: actionKey({ name, args }),
+    directedBy: "runtime",
+  };
+  store.save(run);
+
+  let result;
+  try {
+    result = await registry.call(name, args);
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: name,
+      error: {
+        code: error && error.code ? String(error.code) : "tool_failed",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+
+  const call = { name, args };
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name,
+    args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  const observation = observe(call, result);
+  observation.directedBy = "runtime";
+  run.observations.push(observation);
+  pushObservation(run, call, result);
+  run.inFlight = null;
+  store.save(run);
+  return result;
+}
+
+async function preloadReadAllWorkspace(run, registry, store, rootEntries) {
+  if (!isReadAllFilesGoal(run.goal)) return;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return;
+
+  const names = new Set(registry.definitions().map((tool) => tool && tool.name).filter(Boolean));
+  if (!names.has("dir.list") || !names.has("file.read")) return;
+
+  const ignoredSegments = new Set([".git", ".tools", ".codeme", "node_modules", "dist", "build", "coverage", ".cache"]);
+  const normalizePath = (value) => String(value || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+  const ignored = (value) => normalizePath(value).split("/").some((segment) => ignoredSegments.has(segment));
+
+  const queuedDirs = [];
+  const seenDirs = new Set(["."]);
+  const files = [];
+  const seenFiles = new Set();
+
+  const collect = (entries) => {
+    for (const entry of entries || []) {
+      const entryPath = normalizePath(entry && entry.path);
+      if (!entryPath || ignored(entryPath)) continue;
+      const type = String(entry && (entry.type || entry.kind) || "").toLowerCase();
+      if (type === "directory" || type === "dir" || type === "folder") {
+        if (!seenDirs.has(entryPath) && !queuedDirs.includes(entryPath)) queuedDirs.push(entryPath);
+      } else if (!seenFiles.has(entryPath)) {
+        seenFiles.add(entryPath);
+        files.push(entryPath);
+      }
+    }
+  };
+
+  collect(rootEntries);
+
+  let listedCount = 0;
+  while (queuedDirs.length && listedCount < 100) {
+    const dirPath = queuedDirs.shift();
+    if (!dirPath || seenDirs.has(dirPath)) continue;
+    seenDirs.add(dirPath);
+    listedCount += 1;
+    const result = await runtimeInspectionCall(run, registry, store, "dir.list", { path: dirPath });
+    if (result && result.ok && result.data && Array.isArray(result.data.entries)) {
+      collect(result.data.entries);
+    }
+  }
+
+  let readCount = 0;
+  for (const filePath of files) {
+    if (readCount >= 200) break;
+    readCount += 1;
+    await runtimeInspectionCall(run, registry, store, "file.read", { path: filePath });
+  }
+
+  run.messages.push({
+    role: "user",
+    content: `CodeMe completed the deterministic read-all workspace pass: listed ${seenDirs.size} director${seenDirs.size === 1 ? "y" : "ies"} and attempted ${readCount} project file reads. The file observations are already above. Answer from them now; do not repeat the same listings or reads unless one failed.`,
+  });
+  store.save(run);
+}
+
 async function showWorkspace(run, registry, store) {
   if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return null;
   if (run.taskClass === "folder") return null;
@@ -3198,6 +3300,11 @@ async function showWorkspace(run, registry, store) {
     content: `Workspace files: ${files.join(", ") || "none"}. This is the open folder. Use these paths. Do not invent a different project.`,
   });
   store.save(run);
+
+  if (isReadAllFilesGoal(run.goal)) {
+    await preloadReadAllWorkspace(run, registry, store, entries);
+  }
+
   return result;
 }
 
