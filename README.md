@@ -32,33 +32,28 @@ Donor, pin, and what is allowed in this tree are recorded in `docs/SOURCE_TARGET
 
 Current gate: **Gate 11 autonomous hardening is recorded** in `docs/GATE_11_AUTONOMOUS_HARDENING.md`. AgentRun locks the effective model, selects a versioned strategy, diagnoses failures, accepts mid-run follow-ups, and completes only with evidence. Run `sh scripts/qualify-hardening.sh`. The Code - OSS pin remains `1.139.1`. `research.web`, `code.lookup`, `code.debug`, `code.review`, `browser.inspect`, `image.generate`, and `deploy.verify` are reserved and not implemented. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
 
-## Remote AI server over Tailscale
+## Local and remote AI models over Tailscale
 
-CodeMe can use the `codeme-ai` server over Tailscale instead of requiring Ollama and n8n to run on the same machine as the IDE.
+CodeMe keeps the local Ollama instance on the Mac and can also discover models from the `codeme-ai` server over Tailscale. n8n stays local.
 
-Current server address:
-
-```text
-codeme-ai = 100.81.117.90
-```
-
-Create a local `.env` from `.env.example` and keep secrets out of Git. The relevant settings are:
+Current endpoints:
 
 ```bash
-CODEME_N8N_URL=http://100.81.117.90:5678
-CODEME_OLLAMA_URL=http://100.81.117.90:11434
-CODEME_QWEN_MODEL=qwen3.5:9b
+CODEME_N8N_URL=http://127.0.0.1:5678
+CODEME_LOCAL_OLLAMA_URL=http://127.0.0.1:11434
+CODEME_SERVER_OLLAMA_URL=http://100.81.117.90:11434
 ```
 
-The Mac running CodeMe and `codeme-ai` must both be connected to the same Tailscale tailnet. On the server, n8n and Ollama must listen on an address reachable through Tailscale rather than only `127.0.0.1`.
+The Composer model selector discovers both endpoints. Models from the Mac are labelled `Local · ...`; models from `codeme-ai` are labelled `Server · ...`. The selected source is persisted with the model selection, so identical model names can exist on both machines without colliding.
+
+The Mac and `codeme-ai` must both be connected to the same Tailscale tailnet. Ollama on the server must listen on an address reachable through Tailscale.
 
 Quick checks from the Mac:
 
 ```bash
-ping 100.81.117.90
+curl http://127.0.0.1:11434/api/tags
 curl http://100.81.117.90:11434/api/tags
-curl http://100.81.117.90:5678/healthz
+curl http://127.0.0.1:5678/healthz
 ```
 
 Do not commit API keys, n8n tokens, or other secrets.
-
