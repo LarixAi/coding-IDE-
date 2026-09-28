@@ -244,7 +244,7 @@ async function executeRun(run, options) {
     taskClass: run.taskClass,
   });
   const capabilitiesDisabled = run.mode === "chat_only"
-    || run.taskClass === "inspect"
+    || (isWorkspaceInventory(run.goal) && !openingIntent)
     || isDependencyFreeStatic(run.projectDecision)
     || (isLocalRepairWithoutOutsideEvidence(run) && !openingIntent);
   const capabilityRegistry = await loadCapabilityRegistry(capabilitiesDisabled ? null : options.capabilities);
