@@ -103,6 +103,34 @@ async function runJsonContentFallback() {
   });
 }
 
+async function runFencedJsonContentFallback() {
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: `\`\`\`json
+{
+  "name": "file_read",
+  "arguments": { "path": "server.js" }
+}
+\`\`\``,
+      },
+    },
+  ], async (baseUrl) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "fixture",
+      messages: [{ role: "user", content: "Read server.js" }],
+      tools: [toolDefinition()],
+    });
+
+    assert.strictEqual(result.text, "");
+    assert.deepStrictEqual(result.toolCalls, [
+      { name: "file.read", args: { path: "server.js" } },
+    ]);
+  });
+}
+
 async function runRejectsUnofferedTool() {
   const raw = JSON.stringify({
     name: "terminal_run",
@@ -146,6 +174,7 @@ async function runRejectsInvalidArguments() {
 async function main() {
   await runNativeToolCall();
   await runJsonContentFallback();
+  await runFencedJsonContentFallback();
   await runRejectsUnofferedTool();
   await runRejectsInvalidArguments();
   console.log("model provider tool-call compatibility passed");
