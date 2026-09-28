@@ -80,29 +80,29 @@ function createBrowserInteractionRunner(options = {}) {
 
   return {
     async interact(input) {
-      const action = String(input && input.action || "").trim().toLowerCase();
-      if (action !== "click") {
+      const action = canonicalBrowserAction(input && input.action);
+      if (!["click", "fill", "assertText", "sequence"].includes(action)) {
         return {
           available: false,
           code: "unsupported_browser_action",
-          message: "browser.interact currently supports the click action.",
+          message: "browser.interact supports click, fill, assertText, or sequence.",
         };
       }
 
       const checked = validateLocalUrl(input && input.url);
       if (!checked.ok) return { available: false, ...checked };
 
-      const selector = String(input && input.selector || "").trim();
-      const targetText = String(input && input.targetText || "").trim();
-      const expectedText = String(input && input.expectedText || "").trim();
-      if (!selector && !targetText) {
+      const prepared = prepareInteractionSteps(input);
+      if (!prepared.ok) {
         return {
           available: false,
-          code: "invalid_args",
-          message: "browser.interact click requires selector or targetText.",
+          code: prepared.code || "invalid_args",
+          message: prepared.message || "Invalid browser interaction.",
           url: checked.url,
+          action,
         };
       }
+      const steps = prepared.steps;
 
       const executable = findExecutable();
       if (!executable) {
@@ -175,40 +175,24 @@ function createBrowserInteractionRunner(options = {}) {
         await client.send("Page.navigate", { url: checked.url });
         await waitForDocumentReady(client, CDP_WAIT_MS);
 
-        const click = await performVisibleClick(client, selector, targetText);
-        if (!click || !click.ok) {
-          return {
-            available: false,
-            code: click && click.code ? click.code : "browser_target_not_found",
-            message: click && click.message ? click.message : "The requested browser target was not found.",
-            url: checked.url,
-            action,
-            selector,
-            targetText,
-            expectedText,
-            consoleErrors,
-          };
-        }
-
-        const observed = await waitForObservedResult(client, expectedText, expectedText ? 2500 : ACTION_WAIT_MS);
-        const afterText = observed && typeof observed.afterText === "string" ? observed.afterText : "";
-        const matched = expectedText ? Boolean(observed && observed.matched) : true;
-
-        if (!matched) {
-          return {
-            available: false,
-            code: "browser_expectation_failed",
-            message: `The click ran, but the target text was "${afterText}" instead of containing "${expectedText}".`,
-            url: checked.url,
-            action,
-            selector,
-            targetText,
-            expectedText,
-            beforeText: click.beforeText || "",
-            afterText,
-            matched: false,
-            consoleErrors,
-          };
+        const stepResults = [];
+        for (let index = 0; index < steps.length; index += 1) {
+          const step = steps[index];
+          const result = await performInteractionStep(client, step);
+          const recorded = { index: index + 1, ...result };
+          stepResults.push(recorded);
+          if (!result || !result.ok) {
+            return {
+              available: false,
+              code: result && result.code ? result.code : "browser_interaction_failed",
+              message: result && result.message ? result.message : `Browser interaction step ${index + 1} failed.`,
+              url: checked.url,
+              action,
+              failedStep: index + 1,
+              steps: stepResults,
+              consoleErrors,
+            };
+          }
         }
 
         if (consoleErrors.length) {
@@ -218,29 +202,26 @@ function createBrowserInteractionRunner(options = {}) {
             message: `The interaction completed, but the browser reported ${consoleErrors.length} runtime/console error${consoleErrors.length === 1 ? "" : "s"}.`,
             url: checked.url,
             action,
-            selector,
-            targetText,
-            expectedText,
-            beforeText: click.beforeText || "",
-            afterText,
-            matched,
+            steps: stepResults,
             consoleErrors,
           };
         }
 
         if (headed) await delay(HOLD_VISIBLE_MS);
+        const last = stepResults[stepResults.length - 1] || {};
         return {
           available: true,
           url: checked.url,
           browser: path.basename(executable),
           visible: headed,
           action,
-          selector,
-          targetText,
-          expectedText,
-          beforeText: click.beforeText || "",
-          afterText,
-          matched,
+          selector: last.selector || "",
+          targetText: last.targetText || "",
+          expectedText: last.expectedText || "",
+          beforeText: last.beforeText || "",
+          afterText: last.afterText || last.afterValue || "",
+          matched: last.matched !== false,
+          steps: stepResults,
           consoleErrors,
         };
       } catch (error) {
@@ -249,6 +230,7 @@ function createBrowserInteractionRunner(options = {}) {
           code: error && error.code ? String(error.code) : "browser_interaction_failed",
           message: error instanceof Error ? error.message : String(error),
           url: checked.url,
+          action,
         };
       } finally {
         if (client) {
@@ -260,6 +242,129 @@ function createBrowserInteractionRunner(options = {}) {
         try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
       }
     },
+  };
+}
+
+function canonicalBrowserAction(value) {
+  const action = String(value || "").trim().toLowerCase();
+  if (action === "asserttext") return "assertText";
+  return action;
+}
+
+function prepareInteractionSteps(input) {
+  const action = canonicalBrowserAction(input && input.action);
+  const raw = action === "sequence"
+    ? (Array.isArray(input && input.steps) ? input.steps : [])
+    : [input || {}];
+  if (!raw.length || raw.length > 12) {
+    return { ok: false, code: "invalid_args", message: "browser.interact sequence requires 1-12 steps." };
+  }
+  const steps = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const item = raw[index] && typeof raw[index] === "object" ? raw[index] : {};
+    const stepAction = canonicalBrowserAction(item.action);
+    const selector = String(item.selector || "").trim();
+    const targetText = String(item.targetText || "").trim();
+    const expectedText = String(item.expectedText || "").trim();
+    if (stepAction === "click") {
+      if (!selector && !targetText) {
+        return { ok: false, code: "invalid_args", message: `browser.interact step ${index + 1} click requires selector or targetText.` };
+      }
+      steps.push({ action: stepAction, selector, targetText, expectedText });
+      continue;
+    }
+    if (stepAction === "fill") {
+      if (!selector) {
+        return { ok: false, code: "invalid_args", message: `browser.interact step ${index + 1} fill requires selector.` };
+      }
+      if (typeof item.value !== "string") {
+        return { ok: false, code: "invalid_args", message: `browser.interact step ${index + 1} fill requires a string value.` };
+      }
+      steps.push({ action: stepAction, selector, value: item.value });
+      continue;
+    }
+    if (stepAction === "assertText") {
+      if (!expectedText) {
+        return { ok: false, code: "invalid_args", message: `browser.interact step ${index + 1} assertText requires expectedText.` };
+      }
+      steps.push({ action: stepAction, selector, expectedText });
+      continue;
+    }
+    return { ok: false, code: "unsupported_browser_action", message: `browser.interact step ${index + 1} has an unsupported action.` };
+  }
+  return { ok: true, steps };
+}
+
+async function performInteractionStep(client, step) {
+  if (step.action === "fill") {
+    return client.evaluate(fillExpression(step.selector, step.value));
+  }
+
+  if (step.action === "assertText") {
+    const observed = await waitForTextResult(client, step.selector, step.expectedText, 3000);
+    if (!observed || !observed.matched) {
+      const afterText = observed && typeof observed.afterText === "string" ? observed.afterText : "";
+      return {
+        ok: false,
+        code: "browser_expectation_failed",
+        message: `The browser text was "${afterText}" instead of containing "${step.expectedText}".`,
+        action: step.action,
+        selector: step.selector,
+        expectedText: step.expectedText,
+        afterText,
+        matched: false,
+      };
+    }
+    return {
+      ok: true,
+      action: step.action,
+      selector: step.selector,
+      expectedText: step.expectedText,
+      afterText: observed.afterText || "",
+      matched: true,
+    };
+  }
+
+  const click = await performVisibleClick(client, step.selector, step.targetText);
+  if (!click || !click.ok) {
+    return {
+      ok: false,
+      code: click && click.code ? click.code : "browser_target_not_found",
+      message: click && click.message ? click.message : "The requested browser target was not found.",
+      action: step.action,
+      selector: step.selector,
+      targetText: step.targetText,
+      expectedText: step.expectedText,
+    };
+  }
+
+  const observed = await waitForObservedResult(client, step.expectedText, step.expectedText ? 2500 : ACTION_WAIT_MS);
+  const afterText = observed && typeof observed.afterText === "string" ? observed.afterText : "";
+  const matched = step.expectedText ? Boolean(observed && observed.matched) : true;
+  if (!matched) {
+    return {
+      ok: false,
+      code: "browser_expectation_failed",
+      message: `The click ran, but the target text was "${afterText}" instead of containing "${step.expectedText}".`,
+      action: step.action,
+      selector: step.selector,
+      targetText: step.targetText,
+      expectedText: step.expectedText,
+      beforeText: click.beforeText || "",
+      afterText,
+      matched: false,
+    };
+  }
+
+  return {
+    ok: true,
+    action: step.action,
+    selector: step.selector,
+    targetText: step.targetText,
+    expectedText: step.expectedText,
+    beforeText: click.beforeText || "",
+    afterText,
+    matched,
   };
 }
 
@@ -326,6 +431,65 @@ function observeExpression(expectedText) {
     const afterText = String(el && (el.innerText || el.value || el.textContent) || "").trim();
     return { afterText, matched: !expectedText || afterText.includes(expectedText) };
   })()`;
+}
+
+function fillExpression(selector, value) {
+  return `(() => {
+    const selector = ${JSON.stringify(String(selector || ""))};
+    const value = ${JSON.stringify(String(value ?? ""))};
+    const el = selector ? document.querySelector(selector) : null;
+    if (!el) return { ok: false, code: "browser_target_not_found", message: "No matching form field was found.", action: "fill", selector };
+    if (el.disabled || el.readOnly) return { ok: false, code: "browser_target_not_fillable", message: "The matching form field is disabled or read-only.", action: "fill", selector };
+    const beforeValue = String(el.value !== undefined ? el.value : el.textContent || "");
+    const tag = String(el.tagName || "").toLowerCase();
+    const type = String(el.getAttribute && el.getAttribute("type") || "").toLowerCase();
+    if (tag === "select") {
+      el.value = value;
+    } else if (tag === "input" || tag === "textarea") {
+      if (type === "checkbox" || type === "radio" || type === "file") {
+        return { ok: false, code: "browser_target_not_fillable", message: "This input type is not supported by fill.", action: "fill", selector };
+      }
+      const proto = tag === "textarea" ? window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype : window.HTMLInputElement && window.HTMLInputElement.prototype;
+      const descriptor = proto && Object.getOwnPropertyDescriptor(proto, "value");
+      if (descriptor && typeof descriptor.set === "function") descriptor.set.call(el, value);
+      else el.value = value;
+    } else if (el.isContentEditable) {
+      el.textContent = value;
+    } else {
+      return { ok: false, code: "browser_target_not_fillable", message: "The matching element is not a fillable field.", action: "fill", selector };
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    const afterValue = String(el.value !== undefined ? el.value : el.textContent || "");
+    return { ok: afterValue === value, code: afterValue === value ? "" : "browser_fill_failed", message: afterValue === value ? "" : "The field value did not update.", action: "fill", selector, beforeValue, afterValue };
+  })()`;
+}
+
+function textObservationExpression(selector, expectedText) {
+  return `(() => {
+    const selector = ${JSON.stringify(String(selector || ""))};
+    const expectedText = ${JSON.stringify(String(expectedText || ""))};
+    const el = selector ? document.querySelector(selector) : document.body;
+    if (!el) return { ok: false, code: "browser_target_not_found", afterText: "", matched: false };
+    const afterText = String(el.innerText || el.value || el.textContent || "").trim();
+    return { ok: true, afterText, matched: !expectedText || afterText.includes(expectedText) };
+  })()`;
+}
+
+async function waitForTextResult(client, selector, expectedText, timeoutMs) {
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
+  let observed = null;
+  while (Date.now() <= deadline) {
+    try {
+      observed = await client.evaluate(textObservationExpression(selector, expectedText));
+      if (observed && observed.ok && observed.matched) return observed;
+    } catch {
+      // Navigation can briefly destroy the execution context. Retry until the deadline.
+    }
+    if (Date.now() >= deadline) break;
+    await delay(80);
+  }
+  return observed || { ok: false, afterText: "", matched: false };
 }
 
 function collectBrowserError(message, errors) {
@@ -510,7 +674,11 @@ module.exports = {
   locateExpression,
   clickExpression,
   observeExpression,
+  fillExpression,
+  textObservationExpression,
+  prepareInteractionSteps,
   collectBrowserError,
   waitForObservedResult,
+  waitForTextResult,
   createBrowserInteractionRunner,
 };
