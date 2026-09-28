@@ -487,6 +487,10 @@ async function executeRun(run, options) {
       run.inFlight = null;
       pushObservation(run, call, result);
 
+      if (!result.ok && (run.failureCounts[key] || 0) >= run.maxRetries) {
+        await maybeResetRepeatedMutationStrategy(run, call, registry, store);
+      }
+
       if (!result.ok && call.name === "process.start") {
         if (run.progress) {
           run.progress.writeNow = false;
@@ -1181,6 +1185,12 @@ function successfulWrites(run) {
 async function maybeResetRepeatedMutationStrategy(run, call, registry, store) {
   if (!run || !call || call.name !== "file.patch" || !call.args || !call.args.path) return false;
   const key = actionKey(call);
+  const prior = ((run && run.toolCalls) || []).filter((item) => (
+    item && item.name === call.name && actionKey(item) === key && item.result && item.result.ok === false
+  ));
+  const latest = prior[prior.length - 1];
+  const code = latest && latest.result && latest.result.error && latest.result.error.code;
+  if (code !== "patch_not_found" && code !== "patch_ambiguous") return false;
   if (!run.strategyResets || typeof run.strategyResets !== "object") run.strategyResets = {};
   if (run.strategyResets[key]) return false;
   if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
