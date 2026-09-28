@@ -565,7 +565,7 @@ async function executeRun(run, options) {
       if (
         call.name === "capability.invoke"
         && !result.ok
-        && requiresExternalEvidenceBeforeEdit(run.goal)
+        && requiresExternalEvidenceForRun(run)
       ) {
         return finishFailed(
           run,
@@ -2651,6 +2651,16 @@ async function settleTurn(run, store, registry, options, signal) {
     && !isSiteLayoutGoal(run.goal)
     && run.taskClass !== "layout"
   ) {
+    if (run.progress && run.progress.runtimeDirectedEscalation) {
+      run.progress.focus = true;
+      run.progress.semanticStagnation = 0;
+      run.messages.push({
+        role: "user",
+        content: "Read-only research evidence has already been obtained for this run. Do not request the same research again. Consume the recorded evidence, change the repair strategy, and continue with local tools.",
+      });
+      store.save(run);
+      return { focused: true };
+    }
     await directResearch(run, registry, options, signal, store);
     if (STOPPED.has(run.lifecycle)) return run;
     return { researched: true };
@@ -3008,7 +3018,7 @@ async function directResearch(run, registry, options, signal, store, opening, ca
     content: opening ? openingCapabilityBrief(record, run.goal, result) : postResearchBrief(progress, result),
   });
   store.save(run);
-  if (requiresExternalEvidenceBeforeEdit(run.goal) && !result.ok) {
+  if (requiresExternalEvidenceForRun(run) && !result.ok) {
     finishFailed(
       run,
       store,
