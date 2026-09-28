@@ -1387,6 +1387,97 @@ async function maybeRestartRepairedProcess(run, registry, store) {
   return true;
 }
 
+async function maybeStartOwnedProcessForVerification(run, registry, store) {
+  if (!run || run.mode !== "controlled" || run.ownedProcessStartAttempted) return false;
+  if (!requiresOwnedProcess(run) || hadFailedOwnedProcess(run)) return false;
+  if (requiresExternalEvidenceForRun(run) && !externalEvidenceObserved(run)) return false;
+
+  const writes = successfulWrites(run);
+  if (!writes.length) return false;
+  const lastWrite = writes[writes.length - 1];
+  if (!uniqueWrittenPaths(writes).every((file) => wasReadAfterMutation(run, file))) return false;
+  const after = callsAfter(run, lastWrite);
+  if (after.some(processIsRunningResult)) return false;
+
+  if (workspaceHasTests(run)) {
+    const passedTests = after.some((call) => (
+      (call.name === "tests.run" || (call.name === "terminal.run" && /\btest\b/i.test(String((call.args && call.args.command) || ""))))
+      && call.result
+      && call.result.ok
+    ));
+    if (!passedTests) return false;
+  }
+
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  if (!registry.definitions().some((tool) => tool.name === "process.start")) return false;
+
+  run.ownedProcessStartAttempted = true;
+  const call = { name: "process.start", args: { command: "npm start" } };
+  const ruleDecision = resolveRequestedToolDecision(run, call, registry, []);
+  recordRuleDecision(run, ruleDecision, call);
+  touch(run, "executing_tool", call.name);
+  run.inFlight = { kind: "tool", name: call.name, args: call.args, key: actionKey(call), directedBy: "runtime" };
+  store.save(run);
+
+  let result;
+  try {
+    if (ruleDecision.action === "deny") {
+      result = {
+        ok: false,
+        tool: call.name,
+        error: {
+          code: ruleDecision.code || "policy_denied",
+          message: ruleDecision.reason,
+        },
+        data: {
+          rule: ruleDecision.rule,
+          tier: ruleDecision.tier,
+          priority: ruleDecision.priority,
+        },
+      };
+    } else {
+      const processGuard = ruleDecision.action === "guard"
+        ? await guardProcessStart(run, registry)
+        : null;
+      result = processGuard || await registry.call(call.name, call.args);
+    }
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: call.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    ruleDecision: compactRuleDecision(ruleDecision),
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  run.observations.push(observe(call, result));
+  pushObservation(run, call, result);
+  run.inFlight = null;
+
+  if (!result.ok) {
+    run.messages.push({
+      role: "user",
+      content: "The CodeMe-owned application process failed during final verification. Read process.logs, repair from the recorded error, rerun tests, then start it again.",
+    });
+  } else if (processIsRunningResult(record)) {
+    run.messages.push({
+      role: "user",
+      content: "The CodeMe-owned application process is running. Continue with browser verification, diagnostics, and the final diff before finishing.",
+    });
+  }
+  store.save(run);
+  return true;
+}
+
 async function guardProcessStart(run, registry) {
   let evidence = latestProcessEvidence(run);
   let status = evidence.status;
