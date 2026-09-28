@@ -15,17 +15,23 @@ const COMPOSER_STAGES = [
 ];
 
 function normalizeComposerMode(value) {
+  if (value === "chat" || value === "chat_only") return "chat";
   if (value === "code" || value === "controlled") return "code";
   if (value === "plan") return "plan";
   return "ask";
 }
 
 function agentModeFor(composerMode) {
-  return normalizeComposerMode(composerMode) === "code" ? "controlled" : "read_only";
+  const mode = normalizeComposerMode(composerMode);
+  if (mode === "chat") return "chat_only";
+  return mode === "code" ? "controlled" : "read_only";
 }
 
 function taskClassFor(composerMode) {
-  return normalizeComposerMode(composerMode) === "plan" ? "plan" : "";
+  const mode = normalizeComposerMode(composerMode);
+  if (mode === "chat") return "chat";
+  if (mode === "plan") return "plan";
+  return "";
 }
 
 function looksLikeWorkspaceEdit(goal) {
@@ -35,6 +41,7 @@ function looksLikeWorkspaceEdit(goal) {
 
 function composerModeLabel(composerMode) {
   const mode = normalizeComposerMode(composerMode);
+  if (mode === "chat") return "Chat";
   if (mode === "code") return "Code";
   if (mode === "plan") return "Plan";
   return "Ask";
