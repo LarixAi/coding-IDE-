@@ -115,6 +115,7 @@ function renderComposer(nonce) {
       </div>
       <div class="pickers">
         <select id="mode" aria-label="Mode">
+          <option value="chat">Chat</option>
           <option value="ask">Ask</option>
           <option value="plan">Plan</option>
           <option value="code">Code</option>
