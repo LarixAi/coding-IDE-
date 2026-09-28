@@ -17,6 +17,15 @@ if [ ! -x "$root/code-oss/.build/electron/Code - OSS.app/Contents/MacOS/Code - O
 fi
 
 mkdir -p "$user_data"
+
+# Load CodeMe runtime endpoints from a local .env file when present.
+# .env is machine-local and must not be committed.
+if [ -f "$root/.env" ]; then
+	set -a
+	. "$root/.env"
+	set +a
+fi
+
 export PATH="$node_bin:$PATH"
 export VSCODE_SKIP_PRELAUNCH=1
 
