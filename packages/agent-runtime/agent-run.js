@@ -25,7 +25,11 @@ function createRun(options) {
   const lock = options.modelLock || lockModel(options);
   const requestedMode = options.mode || "read_only";
   const noEdit = options.noEdit === true || hasNoEditDirective(options.goal);
-  const effectiveMode = noEdit ? "read_only" : requestedMode;
+  // A no-edit directive can downgrade Code to read-only, but it must never
+  // upgrade Chat into a workspace-capable mode.
+  const effectiveMode = requestedMode === "chat_only"
+    ? "chat_only"
+    : (noEdit ? "read_only" : requestedMode);
   options = { ...options, mode: effectiveMode };
   const strategy = options.strategyRecord || selectStrategy(options.goal, options);
   const requirements = effectiveMode === "chat_only" ? [] : inferRequirements(options.goal, options);
