@@ -2341,22 +2341,20 @@ function defaultVerify(run, text) {
     }
     return { status: "failed", summary: "Chat response was empty", evidence: [] };
   }
-  if (!run.observations.length) {
-    return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
-  }
+
   const writes = (run.toolCalls || []).filter((call) => (call.name === "file.write" || call.name === "file.patch") && call.result && call.result.ok);
-  if (isResearchRun(run)) return verifyResearch(run, text, writes);
-  if (run.taskClass === "inspect" && run.mode === "controlled") {
+
+  if (run.taskClass === "inspect") {
     const listed = (run.toolCalls || []).some((call) => call.name === "dir.list" && call.result && call.result.ok);
-    if (!listed) {
-      return {
-        status: "failed",
-        summary: "Call dir.list with path \".\" before answering from the workspace.",
-        evidence: [],
-      };
-    }
 
     if (isReadAllFilesGoal(run.goal)) {
+      if (!listed) {
+        return {
+          status: "failed",
+          summary: "List the workspace with dir.list before trying to read every project file.",
+          evidence: [],
+        };
+      }
       const coverage = inspectionReadCoverage(run);
       if (coverage.pendingDirs.length) {
         return {
@@ -2374,20 +2372,33 @@ function defaultVerify(run, text) {
       }
     }
 
-    if (String(text).trim()) {
+    if (String(text || "").trim() && (listed || run.workspaceInspected)) {
       const readAny = (run.toolCalls || []).some((call) => call.name === "file.read" && call.result && call.result.ok);
+      const evidence = [];
+      if (listed) evidence.push("dir.list");
+      if (readAny) evidence.push("file.read");
+      if (!evidence.length && run.workspaceInspected) evidence.push("workspace.inspect");
       return {
         status: "passed",
-        summary: readAny ? "The answer follows the inspected workspace files" : "The file list follows the workspace listing",
-        evidence: readAny ? ["dir.list", "file.read"] : ["dir.list"],
+        summary: readAny
+          ? "The answer follows the inspected workspace files"
+          : "The answer follows the recorded workspace inspection",
+        evidence,
       };
     }
+
     return {
       status: "failed",
-      summary: "Answer from the recorded workspace observations.",
-      evidence: ["dir.list"],
+      summary: "Inspect the workspace and answer from the recorded observations.",
+      evidence: [],
     };
   }
+
+  if (!run.observations.length) {
+    return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
+  }
+
+  if (isResearchRun(run)) return verifyResearch(run, text, writes);
   if (run.taskClass === "build" && run.mode === "controlled") {
     return verifyBuild(run);
   }
