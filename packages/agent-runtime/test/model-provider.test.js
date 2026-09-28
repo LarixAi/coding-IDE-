@@ -131,6 +131,41 @@ async function runFencedJsonContentFallback() {
   });
 }
 
+async function runProseWrappedFencedJsonFallback() {
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: `I'll list the workspace first.
+
+\`\`\`json
+{"name":"dir_list","arguments":{"path":"."}}
+\`\`\``,
+      },
+    },
+  ], async (baseUrl) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "fixture",
+      messages: [{ role: "user", content: "Read all the files" }],
+      tools: [{
+        name: "dir.list",
+        description: "List a directory",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      }],
+    });
+
+    assert.strictEqual(result.text, "");
+    assert.deepStrictEqual(result.toolCalls, [
+      { name: "dir.list", args: { path: "." } },
+    ]);
+  });
+}
+
 async function runRejectsUnofferedTool() {
   const raw = JSON.stringify({
     name: "terminal_run",
@@ -175,6 +210,7 @@ async function main() {
   await runNativeToolCall();
   await runJsonContentFallback();
   await runFencedJsonContentFallback();
+  await runProseWrappedFencedJsonFallback();
   await runRejectsUnofferedTool();
   await runRejectsInvalidArguments();
   console.log("model provider tool-call compatibility passed");
