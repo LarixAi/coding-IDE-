@@ -191,6 +191,8 @@ async function main() {
     assert.strictEqual(run.workspace.state, "project");
     assert.strictEqual(run.workspace.root, "badge-demo");
     assert.ok(run.events.some((event) => event.type === "workspace" && event.state === "project"));
+    assert.ok(run.toolCalls.some((call) => call.name === "workspace.inspect" && call.directedBy === "runtime" && call.result && call.result.ok));
+    assert.ok(run.toolCalls.some((call) => call.name === "dir.list" && call.directedBy === "runtime" && call.result && call.result.ok));
     assert.strictEqual(provider.calls.length, 1);
     const context = provider.calls[0].messages.map((message) => message.content || "").join("\n");
     assert.ok(context.includes("CodeMe inspected the active workspace before this run."));
