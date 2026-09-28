@@ -214,7 +214,7 @@ function renderComposer(nonce) {
         if (!sending || sentEpoch !== epoch) return;
         clearSendPending();
         notice.textContent = "Send did not receive a response. Try again.";
-      }, 15000);
+      }, 4000);
       vscode.postMessage({ type: "submit", text, epoch });
     }
     prompt.addEventListener("keydown", (event) => {
@@ -361,7 +361,12 @@ function renderComposer(nonce) {
       if (!current(state)) return;
       if (state.requestId) requestId = state.requestId;
       running = Boolean(state.running);
-      if (running && sending) clearSendPending();
+      if (running && sending) {
+        prompt.value = "";
+        prompt.style.height = "";
+        draft = "";
+        clearSendPending();
+      }
       stage.textContent = state.stage || "Waiting";
       stage.dataset.stage = state.stage || "Waiting";
       stage.dataset.runId = state.runId || "";
@@ -375,7 +380,7 @@ function renderComposer(nonce) {
       send.hidden = running;
       send.disabled = running || sending;
       prompt.disabled = false;
-      notice.textContent = state.notice || "";
+      if (!sending) notice.textContent = state.notice || "";
       const picked = normalizeComposerMode(state.composerMode || state.mode);
       document.getElementById("perm").textContent = composerModeLabel(picked);
       mode.value = picked;
@@ -543,14 +548,14 @@ function renderComposer(nonce) {
         row.appendChild(summary);
 
         const detailParts = [];
-        if (item.command) detailParts.push("Command\n" + item.command);
+        if (item.command) detailParts.push("Command\\n" + item.command);
         if (item.targetText || item.expectedText || item.beforeText || item.afterText) {
           const interaction = [];
           if (item.targetText) interaction.push("Target: " + item.targetText);
           if (item.beforeText) interaction.push("Before: " + item.beforeText);
           if (item.afterText) interaction.push("After: " + item.afterText);
           if (item.expectedText) interaction.push("Expected: " + item.expectedText);
-          if (interaction.length) detailParts.push(interaction.join("\n"));
+          if (interaction.length) detailParts.push(interaction.join("\\n"));
         }
         if (item.name === "sandbox.run") {
           const sandboxInfo = [];
@@ -561,14 +566,14 @@ function renderComposer(nonce) {
           if (item.changedPaths && item.changedPaths.length) {
             sandboxInfo.push("Temporary changes: " + item.changedPaths.join(", "));
           }
-          if (sandboxInfo.length) detailParts.push(sandboxInfo.join("\n"));
+          if (sandboxInfo.length) detailParts.push(sandboxInfo.join("\\n"));
         }
-        if (item.error) detailParts.push("Error\n" + item.error);
-        if (item.output) detailParts.push("Output\n" + item.output);
+        if (item.error) detailParts.push("Error\\n" + item.error);
+        if (item.output) detailParts.push("Output\\n" + item.output);
         if (!hasPreview && detailParts.length) {
           const detail = document.createElement("pre");
           detail.className = "tool-detail";
-          detail.textContent = detailParts.join("\n\n");
+          detail.textContent = detailParts.join("\\n\\n");
           row.appendChild(detail);
         }
 

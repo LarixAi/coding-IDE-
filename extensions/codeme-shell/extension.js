@@ -4,12 +4,12 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { renderComposer } = require("./composer-view");
-const { renderWelcome } = require("./welcome");
+const { renderWelcome, formatRelativeTime } = require("./welcome");
 const { renderEmptyEditor } = require("./empty-editor");
 const { host } = require("./code-oss-host");
 const { ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
 const { RunStore } = require("../../packages/agent-runtime/run-store");
-const { ComposerSession, listOllamaModels } = require("./composer-session");
+const { ComposerSession, listOllamaModels, modelLabel } = require("./composer-session");
 const { ConversationStore } = require("./conversation-store");
 
 let N8nCapabilityProvider;
@@ -178,7 +178,15 @@ class WelcomePanel {
   render() {
     if (!this.panel) return;
     const nonce = crypto.randomBytes(16).toString("hex");
-    this.panel.webview.html = renderWelcome({ detail: this.state.detail }, nonce);
+    listRecentProjects().then((recent) => {
+      if (!this.panel) return;
+      this.panel.webview.html = renderWelcome({
+        detail: this.state.detail,
+        ready: this.state.grade !== "chat_only",
+        modelLabel: this.state.selectedLabel || this.state.modelLabel || "",
+        recent,
+      }, nonce);
+    });
   }
 
   async onMessage(message) {
@@ -195,7 +203,29 @@ class WelcomePanel {
       await vscode.window.showInformationMessage(this.state.detail);
       return;
     }
-    if (message.action === "create") await createProject();
+    if (message.action === "create") {
+      await createProject();
+      return;
+    }
+    if (message.action === "recent" && message.uri) {
+      await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.parse(message.uri));
+      return;
+    }
+    if (message.action === "recents") {
+      await vscode.commands.executeCommand("workbench.action.openRecent");
+      return;
+    }
+    if (message.action === "shortcuts") {
+      await vscode.commands.executeCommand("workbench.action.openGlobalKeybindings");
+      return;
+    }
+    if (message.action === "learn") {
+      await vscode.window.showInformationMessage("Open a folder, then ask CodeMe from the agent panel. Explorer, editor, and terminal stay native.");
+      return;
+    }
+    if (message.action === "docs") {
+      await vscode.env.openExternal(vscode.Uri.parse("https://github.com/LarixAi/coding-IDE-"));
+    }
   }
 
   dispose() {
@@ -287,6 +317,38 @@ function hasWorkspaceEditor() {
   return false;
 }
 
+async function listRecentProjects() {
+  try {
+    const recent = await vscode.commands.executeCommand("_workbench.getRecentlyOpened");
+    const workspaces = (recent && recent.workspaces) || [];
+    return workspaces.slice(0, 3).map((item) => {
+      const uri = item.folderUri || (item.workspace && item.workspace.configPath);
+      if (!uri) return undefined;
+      const fsPath = uri.fsPath || "";
+      let when = "";
+      try {
+        when = formatRelativeTime(fs.statSync(fsPath).mtimeMs);
+      } catch {
+        when = "";
+      }
+      return {
+        name: item.label || path.basename(fsPath) || "Untitled",
+        path: displayPath(fsPath),
+        when,
+        uri: String(uri),
+      };
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function displayPath(fsPath) {
+  const home = process.env.HOME;
+  if (home && fsPath.startsWith(home)) return `~${fsPath.slice(home.length)}`;
+  return fsPath;
+}
+
 async function createProject() {
   const selected = await vscode.window.showOpenDialog({
     title: "Create Project",
@@ -334,25 +396,28 @@ function refreshConnection(state) {
       res.on("end", () => {
         if (res.statusCode !== 200) {
           state.grade = "chat_only";
+          state.modelLabel = "";
           state.detail = "The model server did not answer. Explorer, editor, and terminal still work.";
           resolve();
           return;
         }
-        let installed = false;
+        let installed = [];
         try {
           const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          installed = (body.models || []).some((model) => String(model.name || "").length > 0);
+          installed = (body.models || []).map((model) => String(model.name || "")).filter(Boolean);
         } catch {
-          installed = false;
+          installed = [];
         }
-        if (!installed) {
+        if (!installed.length) {
           state.grade = "chat_only";
+          state.modelLabel = "";
           state.detail = "Ollama is running, but no model is installed. The IDE stays usable.";
           resolve();
           return;
         }
         const recorded = readGrade();
         state.grade = recorded === "read_only_qualified" || recorded === "limited_agent" ? recorded : "limited_agent";
+        state.modelLabel = modelLabel(installed[0]);
         state.detail = state.grade === "read_only_qualified"
           ? "Read-only."
           : "A local model is installed.";
@@ -362,11 +427,13 @@ function refreshConnection(state) {
     req.setTimeout(2000, () => {
       req.destroy();
       state.grade = "chat_only";
+      state.modelLabel = "";
       state.detail = "The model server is not reachable. Explorer, editor, and terminal still work.";
       resolve();
     });
     req.on("error", () => {
       state.grade = "chat_only";
+      state.modelLabel = "";
       state.detail = "The model server is not reachable. Explorer, editor, and terminal still work.";
       resolve();
     });
@@ -502,12 +569,21 @@ class ComposerViewProvider {
     if (message.type === "submit") {
       const text = String(message.text || "");
       this.view.webview.postMessage({ type: "submitting", epoch: message.epoch });
-      const result = await this.session.submit(text, message.epoch);
-      if (!result.ok) {
-        this.view.webview.postMessage({ type: "rejected", epoch: message.epoch, code: result.code, message: result.message });
-        return;
+      try {
+        const result = await this.session.submit(text, message.epoch);
+        if (!result.ok) {
+          this.view.webview.postMessage({ type: "rejected", epoch: message.epoch, code: result.code, message: result.message });
+          return;
+        }
+        this.view.webview.postMessage({ type: "accepted", epoch: message.epoch, requestId: result.requestId, runId: result.runId, text });
+      } catch (error) {
+        this.view.webview.postMessage({
+          type: "rejected",
+          epoch: message.epoch,
+          code: "submit_failed",
+          message: error && error.message ? error.message : "Could not send.",
+        });
       }
-      this.view.webview.postMessage({ type: "accepted", epoch: message.epoch, requestId: result.requestId, runId: result.runId, text });
       return;
     }
     if (message.type === "cancel") {

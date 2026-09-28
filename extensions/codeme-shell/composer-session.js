@@ -392,6 +392,7 @@ class ComposerSession {
       handle: null,
       baseThread: baseThread.map((item) => ({ ...item })),
     };
+    this.emit();
 
     const publishing = new PublishingStore(this.store, (run) => this.publish(requestId, run));
     let handle;

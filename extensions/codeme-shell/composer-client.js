@@ -293,10 +293,6 @@ function formatGoal(text, attachments) {
   return `${body}\n\nAttachment references. Retrieve these with tools. Contents are not inlined.\n${refs.join("\n")}`;
 }
 
-function sameRequest(currentId, incomingId) {
-  return Boolean(currentId) && currentId === incomingId;
-}
-
 function composerVoiceAction(listening, available) {
   if (!available) return "unavailable";
   return listening ? "stop" : "start";
@@ -346,6 +342,9 @@ function droppedPaths(transfer) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
+  function sameRequest(currentId, incomingId) {
+    return Boolean(currentId) && currentId === incomingId;
+  }
   module.exports = {
     COMPOSER_STAGES,
     normalizeComposerMode,
