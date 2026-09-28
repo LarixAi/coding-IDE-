@@ -166,6 +166,56 @@ async function runProseWrappedFencedJsonFallback() {
   });
 }
 
+async function runMultipleFencedJsonFallback() {
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: `I'll inspect each project folder.
+
+\`\`\`json
+{"name":"dir_list","arguments":{"path":"data"}}
+\`\`\`
+
+\`\`\`json
+{"name":"dir_list","arguments":{"path":"lib"}}
+\`\`\`
+
+\`\`\`json
+{"name":"dir_list","arguments":{"path":"public"}}
+\`\`\`
+
+\`\`\`json
+{"name":"dir_list","arguments":{"path":"test"}}
+\`\`\``,
+      },
+    },
+  ], async (baseUrl) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "fixture",
+      messages: [{ role: "user", content: "Read all the files" }],
+      tools: [{
+        name: "dir.list",
+        description: "List a directory",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      }],
+    });
+
+    assert.strictEqual(result.text, "");
+    assert.deepStrictEqual(result.toolCalls, [
+      { name: "dir.list", args: { path: "data" } },
+      { name: "dir.list", args: { path: "lib" } },
+      { name: "dir.list", args: { path: "public" } },
+      { name: "dir.list", args: { path: "test" } },
+    ]);
+  });
+}
+
 async function runRejectsUnofferedTool() {
   const raw = JSON.stringify({
     name: "terminal_run",
@@ -211,6 +261,7 @@ async function main() {
   await runJsonContentFallback();
   await runFencedJsonContentFallback();
   await runProseWrappedFencedJsonFallback();
+  await runMultipleFencedJsonFallback();
   await runRejectsUnofferedTool();
   await runRejectsInvalidArguments();
   console.log("model provider tool-call compatibility passed");
