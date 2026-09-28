@@ -6,16 +6,21 @@ const { selectStrategy, strategyGuidance, folderNameFromGoal, isWebsiteBuild, is
 const { decideProject, isDependencyFreeStatic, projectDecisionContext } = require("./project-decision");
 const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
-const { RULE_PRIORITY, resolveRuleDecision, isStaticScaffoldTool } = require("./rule-decision");
+const { RULE_PRIORITY, resolveRuleDecision, isStaticScaffoldTool, READ_ONLY_BLOCKED_TOOLS } = require("./rule-decision");
+const { hasNoEditDirective, stripNegatedEditing } = require("./intent");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 const STOPPED = new Set(["completed", "cancelled", "failed", "awaiting_user"]);
 
 function createRun(options) {
   const lock = options.modelLock || lockModel(options);
+  const requestedMode = options.mode || "read_only";
+  const noEdit = options.noEdit === true || hasNoEditDirective(options.goal);
+  const effectiveMode = noEdit ? "read_only" : requestedMode;
+  options = { ...options, mode: effectiveMode };
   const strategy = options.strategyRecord || selectStrategy(options.goal, options);
   const requirements = inferRequirements(options.goal, options);
-  return {
+  const run = {
     schemaVersion: 1,
     id: `run_${crypto.randomBytes(8).toString("hex")}`,
     goal: options.goal,
@@ -25,7 +30,9 @@ function createRun(options) {
     persistentSelection: lock.persistentSelection || options.model,
     modelLock: lock,
     provider: options.providerName,
-    mode: options.mode || "read_only",
+    mode: effectiveMode,
+    requestedMode,
+    noEdit,
     composerMode: options.composerMode || "",
     taskClass: strategy.taskClass,
     strategyRecord: strategy,
@@ -72,6 +79,16 @@ function createRun(options) {
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+  if (noEdit && requestedMode !== effectiveMode) {
+    run.events.push({
+      type: "intent_override",
+      runId: run.id,
+      from: requestedMode,
+      to: effectiveMode,
+      reason: "The request says not to edit. This run is read-only regardless of the Composer mode.",
+    });
+  }
+  return run;
 }
 
 function normalizeConversationHistory(list) {
@@ -168,7 +185,7 @@ async function executeRun(run, options) {
   touch(run, "running");
   setPlan(run, "understand", "completed");
   if (run.messages.length === 0) {
-    run.messages.push({ role: "system", content: systemPrompt({ ...options, strategyRecord: run.strategyRecord }) });
+    run.messages.push({ role: "system", content: systemPrompt({ ...options, mode: run.mode, noEdit: run.noEdit, strategyRecord: run.strategyRecord }) });
     for (const message of run.conversationHistory || []) {
       run.messages.push({ role: message.role, content: message.content });
     }
@@ -410,7 +427,18 @@ async function executeRun(run, options) {
 
       let result;
       try {
-        if (ruleDecision.action === "deny") {
+        if (ruleDecision.action === "deny" && ruleDecision.soft) {
+          result = {
+            ok: true,
+            tool: call.name,
+            data: {
+              withheld: true,
+              repeated: true,
+              message: ruleDecision.reason,
+              rule: ruleDecision.rule,
+            },
+          };
+        } else if (ruleDecision.action === "deny") {
           result = {
             ok: false,
             tool: call.name,
@@ -652,6 +680,10 @@ async function executeRun(run, options) {
 
 function runIsFolder(options) {
   return options.taskClass === "folder" || (options.strategyRecord && options.strategyRecord.taskClass === "folder");
+}
+
+function runIsResearch(options) {
+  return options.taskClass === "research" || (options.strategyRecord && options.strategyRecord.taskClass === "research");
 }
 
 function runIsInspect(options) {
@@ -1629,6 +1661,10 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
     call: requestedCall,
     facts: {
       mode: run && run.mode,
+      noEdit: Boolean(run && run.noEdit),
+      capabilityAnswered: requestedCall && requestedCall.name === "capability.invoke" && requestedCall.args
+        ? capabilityAnswered(run, requestedCall.args.capability)
+        : false,
       dependencyFreeStatic: isDependencyFreeStatic(run && run.projectDecision),
       workspaceHasTests: workspaceHasTests(run),
       workspaceHasGit: workspaceHasGit(run),
@@ -1682,13 +1718,15 @@ function toolsForRun(run, localTools, capabilityTools) {
   }
 
   let local = localTools.slice();
+  if (run && run.noEdit) local = local.filter((tool) => !READ_ONLY_BLOCKED_TOOLS.has(tool.name));
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
   if (isBrowserEditTask(run) && !requiresOwnedProcess(run) && !hadFailedOwnedProcess(run)) {
     local = local.filter((tool) => tool.name !== "process.start");
   }
 
-  const external = isSimpleLocalWorkspaceTask(run) ? [] : capabilityTools;
+  let external = isSimpleLocalWorkspaceTask(run) ? [] : capabilityTools;
+  if (external.length && isResearchRun(run) && anyCapabilitySucceeded(run)) external = [];
   return local.concat(external);
 }
 
@@ -1699,6 +1737,27 @@ function workspaceHasTests(run) {
 
 function workspaceHasGit(run) {
   return Boolean(run && run.workspace && run.workspace.git === true);
+}
+
+function isResearchRun(run) {
+  return Boolean(run && run.taskClass === "research");
+}
+
+function capabilityCalls(run) {
+  return ((run && run.toolCalls) || []).filter((call) => call && call.name === "capability.invoke");
+}
+function anyCapabilitySucceeded(run) {
+  return capabilityCalls(run).some((call) => call.result && call.result.ok);
+}
+function capabilityAnswered(run, name) {
+  const calls = (run && run.toolCalls) || [];
+  let answeredAt = -1;
+  calls.forEach((call, index) => {
+    if (call && call.name === "capability.invoke" && call.result && call.result.ok && call.args && call.args.capability === name) answeredAt = index;
+  });
+  if (answeredAt < 0) return false;
+  if (isResearchRun(run)) return true;
+  return !calls.slice(answeredAt + 1).some((call) => call && !String(call.name).startsWith("capability."));
 }
 
 function workspaceHasStartScript(run) {
@@ -1802,7 +1861,8 @@ function isLocalRepairWithoutOutsideEvidence(run) {
 function isSimpleLocalWorkspaceTask(run) {
   if (!run || !run.workspace || run.workspace.state === "empty") return false;
   if (needsOutsideEvidence(run.goal)) return false;
-  const text = String(run.goal || "").toLowerCase();
+  if (isResearchRun(run)) return false;
+  const text = stripNegatedEditing(run.goal).toLowerCase();
   if (/\b(create|scaffold|new project|new app|new website|database|backend|api integration)\b/.test(text)) return false;
   return /\b(change|edit|update|set|make|fix|repair|heading|title|button|text|colour|color|centre|center|style|css|html|spacing|font|background)\b/.test(text);
 }
@@ -1928,8 +1988,9 @@ function grantRepairReserve(run, store) {
 
 function requiresWorkspaceRepair(run) {
   if (!run || run.mode !== "controlled") return false;
+  if (run.noEdit || run.taskClass === "research") return false;
   if (["bug-fix", "layout", "build", "feature"].includes(run.taskClass)) return true;
-  const text = String(run.goal || "").toLowerCase();
+  const text = stripNegatedEditing(run.goal).toLowerCase();
   return /\b(fix|repair|change|update|edit|make|add|remove|button|click|broken)\b/.test(text)
     || text.includes("doesn't work")
     || text.includes("does not work");
@@ -1976,7 +2037,8 @@ function unresolvedBrowserFailure(run) {
 
 function isBrowserEditTask(run) {
   if (!run || !run.workspace || run.workspace.state === "empty") return false;
-  const text = String(run.goal || "").toLowerCase();
+  if (isResearchRun(run)) return false;
+  const text = stripNegatedEditing(run.goal).toLowerCase();
   const visible = /\b(page|website|site|html|css|style|heading|button|click|browser|frontend|front-end)\b/.test(text);
   if (!visible) return false;
   const explicitRunOnly = /\b(start|run|launch|serve)\b/.test(text)
@@ -2061,7 +2123,9 @@ function systemPrompt(options) {
       "Use file.patch for a precise edit to an existing file and file.write for a new file or full replacement. Create folders with dir.create. Use process.start for a long-running preview server; do not use terminal.run for servers, mkdir, ls, or node -e.",
       "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
       "For local website previews, do not start the server with terminal.run or background shell commands. Call browser.check on the HTML page; CodeMe owns preview startup and reuse. For user-visible interactions such as click/button/tap behaviour, browser.check is not enough: browser.interact must verify the real resulting text/state before finishing. For booking/form journeys, use one browser.interact action=sequence with fill steps, a submit click, and assertText for the confirmation; dependent form steps must stay in one sequence because each browser.interact call starts a fresh browser session.",
-      isLayoutJob(options)
+      runIsResearch(options)
+        ? "This job is research and explanation. Do not edit files. Call the research capability at most once with input.problem, read the relevant workspace files, then answer."
+        : isLayoutJob(options)
         ? "This is a layout job. After the HTML and CSS are read, use file.patch for a precise existing-file edit or file.write for a full replacement, then browser.check. Do not wait for tests or git."
         : runIsFolder(options)
           ? "This job only creates the named folder with dir.create. Do not use the terminal."
@@ -2084,13 +2148,16 @@ function systemPrompt(options) {
     "A tool result is an observation. It does not by itself finish the goal.",
     "If a tool fails, report the failure and do not invent file contents or a successful command.",
     "Do not edit files. Write, terminal, and test tools are unavailable.",
+    runIsResearch(options)
+      ? "This is a research and explanation request. If a research capability is available, call it at most once with input.problem set to the question. Read the relevant workspace files, then answer with the researched approach and what should change in this project. Do not edit anything."
+      : "",
     "To run or open the workspace site, call browser.check with the local URL or a workspace HTML path. That starts the project preview if it is not already running.",
     "Inspect once, then write the answer. Do not reread the same files.",
     options.taskClass === "plan" || (options.strategyRecord && options.strategyRecord.taskClass === "plan")
       ? "Finish with a sequenced list of steps, files, and risks."
       : "Write the findings after one pass.",
     hub,
-  ].join(" ");
+  ].filter(Boolean).join(" ");
 }
 
 function verifyAlreadySatisfiedWebRepair(run) {
@@ -2198,6 +2265,7 @@ function defaultVerify(run, text) {
     return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
   }
   const writes = (run.toolCalls || []).filter((call) => (call.name === "file.write" || call.name === "file.patch") && call.result && call.result.ok);
+  if (isResearchRun(run)) return verifyResearch(run, text, writes);
   if (run.taskClass === "inspect" && run.mode === "controlled") {
     const listed = (run.toolCalls || []).some((call) => call.name === "dir.list" && call.result && call.result.ok);
     if (listed && String(text).trim()) {
@@ -2504,6 +2572,17 @@ function defaultVerify(run, text) {
     summary: "The answer follows recorded observations",
     evidence: run.observations.map((item) => item.tool),
   };
+}
+
+function verifyResearch(run, text, writes) {
+  if (writes.length) return { status: "failed", summary: "A research-only run must not change the workspace, but a file was written.", evidence: ["file.write"] };
+  if (!String(text || "").trim()) return { status: "failed", summary: "Write the research findings and what should change in this project.", evidence: [] };
+  const readsProject = (run.toolCalls || []).some((call) => (
+    ["file.read", "repo.search", "dir.list"].includes(call.name) && call.result && call.result.ok
+  ));
+  const aboutProject = /\b(this|the|our) (project|repo|repository|codebase|workspace|app|code)\b/i.test(String(run.goal || ""));
+  if (aboutProject && !readsProject) return { status: "failed", summary: "Read the relevant workspace files before explaining what should change in this project.", evidence: [] };
+  return { status: "passed", summary: "The answer follows the research and workspace observations", evidence: run.observations.map((item) => item.tool).filter(Boolean) };
 }
 
 function finishCompleted(run, store, text) {
@@ -3037,12 +3116,12 @@ function capabilityInput(record, question) {
   return {};
 }
 
-function openingCapabilityBrief(record, goal, result) {
+function openingCapabilityBrief(record, goal, result, options = {}) {
   const name = String(record && record.name || "external capability");
   const category = String(record && record.category || "");
   const failure = result && result.error && result.error.message;
 
-  if (category === "research") return openingResearchBrief(goal, result);
+  if (category === "research") return openingResearchBrief(goal, result, options);
 
   if (category === "knowledge") {
     const matches = result && result.data && Array.isArray(result.data.matches) ? result.data.matches : [];
@@ -3151,7 +3230,7 @@ async function directResearch(run, registry, options, signal, store, opening, ca
   run.strategy = progress.strategy;
   run.messages.push({
     role: "user",
-    content: opening ? openingCapabilityBrief(record, run.goal, result) : postResearchBrief(progress, result),
+    content: opening ? openingCapabilityBrief(record, run.goal, result, { readOnly: isResearchRun(run) }) : postResearchBrief(progress, result, { readOnly: isResearchRun(run) }),
   });
   if (!opening && result && result.ok && run.mode === "controlled") {
     run.recoveryEditPending = true;

@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { stripNegatedEditing } = require("./intent");
 
 const STOP_WORDS = new Set([
   "the", "a", "an", "and", "or", "to", "of", "for", "in", "on", "with", "that", "this",
@@ -83,7 +84,8 @@ function isUnknownTechnicalProblem(text) {
   return false;
 }
 
-function isLargeMultiPart(text, options = {}) {
+function isLargeMultiPart(rawText, options = {}) {
+  const text = stripNegatedEditing(rawText).toLowerCase();
   if (options.taskClass === "plan" || options.composerMode === "plan") {
     const words = text.split(/\s+/).filter(Boolean).length;
     if (words >= 16 || text.length >= 80) return true;
@@ -101,12 +103,12 @@ function isKnowledgeLookup(text) {
 }
 
 function wantsCreatedFile(goal) {
-  const text = String(goal || "").toLowerCase();
+  const text = stripNegatedEditing(goal).toLowerCase();
   return /\b(create|write|add|missing)\b/.test(text) && /\b(files?|pages?|html|website|site)\b/.test(text);
 }
 
 function isSiteLayoutGoal(goal) {
-  const text = String(goal || "").toLowerCase();
+  const text = stripNegatedEditing(goal).toLowerCase();
   if (/\b(layout|restyle|redesign|better website|improve the (site|page|layout))\b/.test(text)) return true;
   return /\b(edit|change|update|rewrite|improve)\b/.test(text) && /\b(html|css|page|site|website|layout)\b/.test(text);
 }
@@ -402,7 +404,7 @@ function markQuestionSeen(state, goal) {
   remember(state.seenQuestions, questionKey(goal));
 }
 
-function openingResearchBrief(goal, result) {
+function openingResearchBrief(goal, result, options = {}) {
   const evidence = result && result.data && Array.isArray(result.data.evidence) ? result.data.evidence : [];
   const excerpts = evidence.slice(0, 4).map((item) => clip(`${item.title || "Source"}: ${item.excerpt || ""}`, 220));
   const failure = result && result.error && result.error.message;
@@ -411,11 +413,13 @@ function openingResearchBrief(goal, result) {
     "The research cannot edit files, run commands, or finish the run.",
     `Request: ${clip(goal || "", 800)}`,
     `Evidence: ${excerpts.join(" | ") || clip(failure, 180) || "none"}.`,
-    "Use that evidence to understand the request, then create what it asks for with the workspace tools.",
+    options.readOnly
+      ? "This is a read-only research request. That evidence is the research: do not call the research capability again. Read the relevant workspace files, then answer with the researched approach and a project-specific analysis. Do not edit files."
+      : "Use that evidence to understand the request, then create what it asks for with the workspace tools.",
   ].join(" ");
 }
 
-function postResearchBrief(state, result) {
+function postResearchBrief(state, result, options = {}) {
   const evidence = result && result.data && Array.isArray(result.data.evidence) ? result.data.evidence : [];
   const excerpts = evidence.slice(0, 4).map((item) => clip(`${item.title || ""}: ${item.excerpt || ""}`, 260));
   return [
@@ -426,7 +430,9 @@ function postResearchBrief(state, result) {
     `Files already inspected: ${state.filesRead.slice(0, 8).join(", ") || "none"}.`,
     `Actions already attempted: ${state.window.slice(-6).join(" ; ") || "none"}.`,
     "Do not repeat those searches, rereads, or the same hypothesis unless the evidence changed.",
-    "The next useful action must inspect a location not read yet, edit the implementation, run verification, or state a materially different hypothesis.",
+    options.readOnly
+      ? "The next useful action must read a workspace location not read yet or write the answer. Do not edit files."
+      : "The next useful action must inspect a location not read yet, edit the implementation, run verification, or state a materially different hypothesis.",
   ].join(" ");
 }
 

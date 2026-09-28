@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { startAgentRun } = require("../../packages/agent-runtime");
+const { stripNegatedEditing } = require("../../packages/agent-runtime/intent");
 const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
 
 const MAX_ATTACHMENTS = 6;

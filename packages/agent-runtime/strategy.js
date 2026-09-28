@@ -1,4 +1,12 @@
+const { hasNoEditDirective, stripNegatedEditing, isResearchOnlyRequest } = require("./intent");
+
 const STRATEGIES = {
+  research: {
+    id: "research",
+    version: 1,
+    taskClass: "research",
+    guidance: "This is a research and explanation request, not a repair job. Gather outside evidence with the research capability at most once, read the relevant workspace files, then answer with the researched approach and a project-specific analysis. Do not edit files.",
+  },
   inspect: {
     id: "inspect",
     version: 1,
@@ -63,7 +71,9 @@ function folderNameFromGoal(goal) {
 
 function classifyTask(goal, options = {}) {
   if (options.taskClass && STRATEGIES[options.taskClass]) return options.taskClass;
-  const text = String(goal || "").toLowerCase();
+  const noEdit = hasNoEditDirective(goal);
+  if (noEdit) return isWorkspaceInventory(stripNegatedEditing(goal)) ? "inspect" : "research";
+  const text = stripNegatedEditing(goal).toLowerCase();
   if (folderNameFromGoal(goal)) return options.mode === "read_only" ? "inspect" : "folder";
   if (isWorkspaceInventory(goal)) return "inspect";
   if ((options.requirements || []).length >= 3) return "feature";
@@ -74,6 +84,7 @@ function classifyTask(goal, options = {}) {
   if (isBuildGoal(goal)) return options.mode === "read_only" ? "inspect" : "build";
   if (/\b(fix|repair|bug|failing|broken|does not|regression)\b/.test(text)) return "bug-fix";
   if (options.mode === "read_only") return "inspect";
+  if (isResearchOnlyRequest(goal)) return "research";
   if (options.mode === "controlled") return "bug-fix";
   return "general";
 }

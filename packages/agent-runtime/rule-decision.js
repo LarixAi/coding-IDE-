@@ -123,6 +123,28 @@ function resolveRuleDecision(input = {}) {
     ));
   }
 
+  if (facts.noEdit && READ_ONLY_BLOCKED_TOOLS.has(name)) {
+    candidates.push(candidate(
+      "user",
+      "user.no_edit",
+      "deny",
+      `The user said not to edit anything, so ${name} is not permitted in this run. Answer from research and workspace reads only.`,
+      originalCall,
+      { code: "no_edit_requested" },
+    ));
+  }
+
+  if (name === "capability.invoke" && facts.capabilityAnswered) {
+    candidates.push(candidate(
+      "strategy",
+      "strategy.capability_already_answered",
+      "deny",
+      "This capability already returned evidence for the run. Use that evidence and the workspace files to answer. Do not call it again.",
+      originalCall,
+      { code: "capability_already_answered", soft: true },
+    ));
+  }
+
   if (
     facts.requireFailureBeforeEdit
     && WORKSPACE_MUTATION_TOOLS.has(name)
@@ -341,6 +363,8 @@ module.exports = {
   RULE_PRIORITY,
   resolveRuleDecision,
   isStaticScaffoldTool,
+  READ_ONLY_BLOCKED_TOOLS,
+  WORKSPACE_MUTATION_TOOLS,
   isPreviewStartCommand,
   forbiddenStaticPath,
 };
