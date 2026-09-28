@@ -59,6 +59,7 @@ function createRun(options) {
     maxIdenticalActions: options.maxIdenticalActions ?? 4,
     actionCounts: {},
     failureCounts: {},
+    strategyResets: {},
     cancelRequested: false,
     timeoutMs: options.timeoutMs ?? (strategy.taskClass === "layout" ? 300000 : 180000),
     inFlight: null,
@@ -200,9 +201,10 @@ async function executeRun(run, options) {
     store.save(run);
   }
 
-  // Simple local repairs stay fully local until they actually stagnate.
-  // If that happens, settleTurn lazily discovers a read-only research capability.
-  const capabilitiesDisabled = isDependencyFreeStatic(run.projectDecision) || isLocalRepairWithoutOutsideEvidence(run);
+  // Dependency-free static scaffolds never need the hub. Existing projects still
+  // discover the registry so an explicit planning/knowledge intent can be routed
+  // before the local-repair shortcut hides external capabilities from the model.
+  const capabilitiesDisabled = isDependencyFreeStatic(run.projectDecision);
   const capabilityRegistry = await loadCapabilityRegistry(capabilitiesDisabled ? null : options.capabilities);
   const capabilityRecords = capabilityRegistry.list();
   const capabilityTools = capabilityRecords.length ? capabilityToolDefinitions(capabilityRecords) : [];
@@ -321,6 +323,7 @@ async function executeRun(run, options) {
       if (cancelled(run, signal)) return finishCancelled(run, store);
       const key = actionKey(call);
       if ((run.failureCounts[key] || 0) >= run.maxRetries) {
+        if (await maybeResetRepeatedMutationStrategy(run, call, registry, store)) continue;
         return finishFailed(run, store, "repeated_action", `Repeated failing action ${call.name}`);
       }
       if ((run.actionCounts[key] || 0) >= run.maxIdenticalActions) {
@@ -585,7 +588,9 @@ async function executeRun(run, options) {
     if (done) return done;
 
     await maybeReadBackRepairedFiles(run, registry, store);
-    if (await maybeRestartRepairedProcess(run, registry, store)) {
+    const processChanged = await maybeRestartRepairedProcess(run, registry, store)
+      || await maybeStartOwnedProcessForVerification(run, registry, store);
+    if (processChanged) {
       const verifiedNow = maybeFinishVerifiedWork(run, store, text);
       if (verifiedNow) return verifiedNow;
     }
@@ -1239,7 +1244,7 @@ async function maybeReadBackRepairedFiles(run, registry, store) {
 
 async function maybeRestartRepairedProcess(run, registry, store) {
   if (!run || run.mode !== "controlled" || run.processRestartAttempted) return false;
-  if (requiresExternalEvidenceBeforeEdit(run.goal) || workspaceHasTests(run)) return false;
+  if (requiresExternalEvidenceForRun(run) || workspaceHasTests(run)) return false;
   if (!failedProcessRepairNeedsRestart(run)) return false;
   const writes = successfulWrites(run);
   if (!writes.length) return false;
@@ -1372,7 +1377,7 @@ async function guardProcessStart(run, registry) {
     };
   }
 
-  if (isBrowserEditTask(run)) {
+  if (isBrowserEditTask(run) && !requiresOwnedProcess(run)) {
     return {
       ok: true,
       tool: "process.start",
@@ -1423,7 +1428,7 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
       requireFailureBeforeEdit: requiresFailureBeforeEdit(run && run.goal),
       browserFailureObserved: browserFailureObserved(run),
       failedProcessNeedsLogs: failedProcessNeedsLogs(run),
-      requireExternalEvidenceBeforeEdit: requiresExternalEvidenceBeforeEdit(run && run.goal),
+      requireExternalEvidenceBeforeEdit: requiresExternalEvidenceForRun(run),
       testFailureObserved: testFailureObserved(run),
       externalEvidenceObserved: externalEvidenceObserved(run),
       externalEvidenceUnavailable: externalEvidenceUnavailable(run),
@@ -1466,7 +1471,7 @@ function toolsForRun(run, localTools, capabilityTools) {
   let local = localTools.slice();
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
-  if (isBrowserEditTask(run) && !hadFailedOwnedProcess(run)) {
+  if (isBrowserEditTask(run) && !requiresOwnedProcess(run) && !hadFailedOwnedProcess(run)) {
     local = local.filter((tool) => tool.name !== "process.start");
   }
 
@@ -1483,6 +1488,29 @@ function workspaceHasGit(run) {
   return Boolean(run && run.workspace && run.workspace.git === true);
 }
 
+function workspaceHasStartScript(run) {
+  const scripts = run && run.workspace && run.workspace.scripts;
+  return Boolean(scripts && typeof scripts === "object" && typeof scripts.start === "string" && scripts.start.trim());
+}
+
+function isFullStackRuntimeGoal(run) {
+  const text = String(run && run.goal || "").toLowerCase();
+  const explicit = /\b(full[- ]?stack|end[- ]?to[- ]?end)\b/.test(text);
+  const server = /\b(api|backend|back-end|server|database|persistent|persistence)\b/.test(text);
+  const surface = /\b(website|web app|page|frontend|front-end|form|booking|checkout|browser)\b/.test(text);
+  return explicit || (server && surface);
+}
+
+function requiresOwnedProcess(run) {
+  if (!workspaceHasStartScript(run)) return false;
+  const text = String(run && run.goal || "").toLowerCase();
+  return isFullStackRuntimeGoal(run) || /\b(api|backend|back-end|server)\b/.test(text);
+}
+
+function requiresEndToEndVerification(run) {
+  return requiresOwnedProcess(run) && isFullStackRuntimeGoal(run);
+}
+
 function needsOutsideEvidence(goal) {
   const text = String(goal || "").toLowerCase();
   return /\b(research|documentation|docs|latest|current api|best practice|external|look up|lookup|search the web|web research)\b/.test(text);
@@ -1493,6 +1521,25 @@ function requiresExternalEvidenceBeforeEdit(goal) {
   if (/\bpublished\b.{0,48}\b(rule|standard|algorithm|spec)\b/.test(text)) return true;
   return /\b(not (fully )?documented|does not (fully )?document|undocumented)\b/.test(text)
     && /\b(rule|behaviour|behavior|algorithm)\b/.test(text);
+}
+
+function observedExternalRuleSignal(run) {
+  const calls = (run && run.toolCalls) || [];
+  return calls.some((call) => {
+    if (!call || !call.result) return false;
+    const isFailedTest = (
+      (call.name === "tests.run" || (call.name === "terminal.run" && /\btest\b/i.test(String((call.args && call.args.command) || ""))))
+      && call.result.ok === false
+    );
+    const isTestRead = call.name === "file.read" && /(^|\/)(test|tests|spec)(\/|\.|$)/i.test(String((call.args && call.args.path) || ""));
+    if (!isFailedTest && !isTestRead) return false;
+    const body = JSON.stringify(call.result).toLowerCase();
+    return /\b(unpublished|undocumented|not documented|not in (?:the )?repo(?:sitory)?|external (?:rule|specification)|published (?:rule|standard|algorithm|specification))\b/.test(body);
+  });
+}
+
+function requiresExternalEvidenceForRun(run) {
+  return requiresExternalEvidenceBeforeEdit(run && run.goal) || observedExternalRuleSignal(run);
 }
 
 function testFailureObserved(run) {
@@ -1535,6 +1582,7 @@ function goalRequiresNativeVerification(goal) {
 function isLocalRepairWithoutOutsideEvidence(run) {
   if (!run || !run.workspace || run.workspace.state === "empty") return false;
   if (!requiresWorkspaceRepair(run)) return false;
+  if (requiresExternalEvidenceForRun(run)) return false;
   return !needsOutsideEvidence(run.goal);
 }
 
@@ -1731,6 +1779,9 @@ function verificationPolicyText(run) {
       : "Verification policy: read back every created file and verify the page with browser.check. Do not run tests or Git.";
   }
   const parts = [];
+  if (requiresEndToEndVerification(run)) {
+    parts.push("this is an end-to-end runtime task: after final edits CodeMe must own a running process, pass diagnostics, and verify the browser flow");
+  }
   if (workspaceHasTests(run)) parts.push("tests are available");
   else parts.push("there is no test script, so do not call tests.run");
   if (workspaceHasGit(run)) parts.push("Git verification is available");
@@ -2009,7 +2060,7 @@ function defaultVerify(run, text) {
     const changed = uniqueWrittenPaths(writes);
     const lastWrite = writes[writes.length - 1];
     const after = callsAfter(run, lastWrite);
-    const evidenceTask = requiresExternalEvidenceBeforeEdit(run.goal);
+    const evidenceTask = requiresExternalEvidenceForRun(run);
     const nativeChecks = goalRequiresNativeVerification(run.goal) || workspaceHasTests(run) || workspaceHasGit(run);
     const webWrite = isWebVisibleWrite(run, writes) && !evidenceTask && !workspaceHasTests(run) && !goalRequiresNativeVerification(run.goal);
     const allReadBack = changed.every((file) => wasReadAfterMutation(run, file));
@@ -2365,7 +2416,7 @@ function pushObservation(run, call, result) {
 
 async function settleTurn(run, store, registry, options, signal) {
   if (
-    requiresExternalEvidenceBeforeEdit(run.goal)
+    requiresExternalEvidenceForRun(run)
     && testFailureObserved(run)
     && !externalEvidenceObserved(run)
   ) {
@@ -2424,7 +2475,7 @@ async function maybeEscalateStagnantLocalRepair(run, options, signal, store) {
   if (run.taskClass === "layout" || isSiteLayoutGoal(run.goal)) return false;
 
   const failEvidenceUnavailable = () => {
-    if (!requiresExternalEvidenceBeforeEdit(run.goal)) return false;
+    if (!requiresExternalEvidenceForRun(run)) return false;
     finishFailed(
       run,
       store,
@@ -2452,8 +2503,8 @@ async function maybeEscalateStagnantLocalRepair(run, options, signal, store) {
   run.progress.recommendedFields = (research.inputSchema && research.inputSchema.required) || [];
   run.messages.push({
     role: "user",
-    content: requiresExternalEvidenceBeforeEdit(run.goal)
-      ? "The repository does not document the published rule. CodeMe is requesting read-only hub evidence once before any workspace edit."
+    content: requiresExternalEvidenceForRun(run)
+      ? "The observed failure depends on a rule that is not documented locally. CodeMe is requesting read-only hub evidence once before another workspace edit."
       : "Local repair attempts have genuinely stagnated. CodeMe is escalating once to the read-only evidence hub before deciding to stop.",
   });
   store.save(run);
@@ -2567,7 +2618,6 @@ function promisesFile(text) {
 
 async function prepareResearch(run, capabilityRegistry, options, signal, store) {
   if (isDependencyFreeStatic(run && run.projectDecision)) return;
-  if (isLocalRepairWithoutOutsideEvidence(run)) return;
   if (run.taskClass === "layout" || run.taskClass === "folder" || isSiteLayoutGoal(run.goal) || isWorkspaceInventory(run.goal) || isLocalFollowUp(run.goal)) return;
   if (run.progress && run.progress.runtimeDirectedEscalation) return;
 
@@ -2578,8 +2628,8 @@ async function prepareResearch(run, capabilityRegistry, options, signal, store) 
   });
 
   // Explicit knowledge and decomposition intents should go straight to the matching
-  // capability. Do not burn a generic research call first and do not ask the coding
-  // model to translate between capability input contracts.
+  // capability even when the workspace already exists and the implementation itself
+  // can remain local. Do not burn a generic research call first.
   if (selected && selected.name && selected.category && selected.category !== "research") {
     run.progress.recommendedName = selected.name;
     run.progress.recommendedDescription = selected.description || "";
@@ -2588,6 +2638,10 @@ async function prepareResearch(run, capabilityRegistry, options, signal, store) 
     if (run.progress) run.progress.focus = false;
     return;
   }
+
+  // Ordinary local repairs stay local until a real failure or stagnation creates
+  // a reason to ask for outside evidence.
+  if (isLocalRepairWithoutOutsideEvidence(run)) return;
 
   const needsOpeningEvidence = (
     needsOutsideEvidence(run && run.goal)
