@@ -150,11 +150,11 @@ function normalizeMessage(message, offeredTools = []) {
     };
   }
 
-  const fallback = contentToolCall(message.content || "", offeredTools);
-  if (fallback) {
+  const fallbackCalls = contentToolCalls(message.content || "", offeredTools);
+  if (fallbackCalls.length) {
     return {
       text: "",
-      toolCalls: [fallback],
+      toolCalls: fallbackCalls,
     };
   }
 
@@ -164,10 +164,31 @@ function normalizeMessage(message, offeredTools = []) {
   };
 }
 
-function contentToolCall(content, offeredTools) {
-  const text = toolJsonText(content);
-  if (!text.startsWith("{") || !text.endsWith("}")) return null;
+function contentToolCalls(content, offeredTools) {
+  const text = stripThinking(content).trim();
+  const candidates = [];
 
+  if (text.startsWith("{") && text.endsWith("}")) candidates.push(text);
+
+  for (const match of text.matchAll(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/gi)) {
+    const candidate = String(match[1] || "").trim();
+    if (candidate.startsWith("{") && candidate.endsWith("}")) candidates.push(candidate);
+  }
+
+  const calls = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const call = parseContentToolCall(candidate, offeredTools);
+    if (!call) continue;
+    const key = `${call.name}:${JSON.stringify(call.args || {})}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    calls.push(call);
+  }
+  return calls;
+}
+
+function parseContentToolCall(text, offeredTools) {
   let parsed;
   try {
     parsed = JSON.parse(text);
@@ -195,19 +216,6 @@ function contentToolCall(content, offeredTools) {
   if (!validToolArguments(args, offered.parameters)) return null;
 
   return { name: offered.name, args };
-}
-
-function toolJsonText(content) {
-  const text = stripThinking(content).trim();
-  const wholeFence = text.match(/^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i);
-  if (wholeFence) return wholeFence[1].trim();
-
-  const fences = [...text.matchAll(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/gi)];
-  if (fences.length === 1) {
-    const candidate = fences[0][1].trim();
-    if (candidate.startsWith("{") && candidate.endsWith("}")) return candidate;
-  }
-  return text;
 }
 
 function validToolArguments(args, schema) {
