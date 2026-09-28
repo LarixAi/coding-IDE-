@@ -111,10 +111,25 @@ function isLocalFollowUp(goal) {
   return /\b(go ahead|please proceed|fix the issue|fix this|fix it|run the|start the|continue working|missing files?)\b/.test(text);
 }
 
+function isReadAllFilesGoal(goal) {
+  const text = String(goal || "").toLowerCase();
+  return /\b(read|review|inspect|look through|go through)\b/.test(text)
+    && /\b(all|every)\b[\s\S]{0,40}\bfiles?\b/.test(text);
+}
+
 function isWorkspaceInventory(goal) {
   const text = String(goal || "").toLowerCase();
   if (/\b(create|make|build|add|write|implement|fix|repair|continue|working|run|start|serve)\b/.test(text)) return false;
-  return /\b(what|which|list|missing|exist|inside)\b/.test(text) && /\b(files?|folders?|directory|workspace)\b/.test(text);
+
+  const explicitRead = /\b(read|review|inspect|look through|go through|open)\b/.test(text)
+    && (
+      /\b(files?|folders?|directory|workspace|repo|repository|codebase|project)\b/.test(text)
+      || /(?:^|\s)[\w./-]+\.[a-z0-9]{1,10}\b/i.test(text)
+    );
+  if (explicitRead) return true;
+
+  return /\b(what|which|list|missing|exist|inside)\b/.test(text)
+    && /\b(files?|folders?|directory|workspace)\b/.test(text);
 }
 
 function isBuildGoal(goal) {
@@ -139,4 +154,4 @@ function strategyGuidance(strategy) {
   return (strategy && strategy.guidance) || STRATEGIES.general.guidance;
 }
 
-module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite };
+module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isReadAllFilesGoal, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite };
