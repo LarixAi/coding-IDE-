@@ -1681,6 +1681,7 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
     facts: {
       mode: run && run.mode,
       taskClass: run && run.taskClass,
+      workspaceInspectionOnly: Boolean(run && isWorkspaceInventory(run.goal)),
       noEdit: Boolean(run && run.noEdit),
       capabilityAnswered: requestedCall && requestedCall.name === "capability.invoke" && requestedCall.args
         ? capabilityAnswered(run, requestedCall.args.capability)
@@ -1740,7 +1741,7 @@ function toolsForRun(run, localTools, capabilityTools) {
   }
 
   let local = localTools.slice();
-  if (run && (run.mode === "read_only" || run.taskClass === "inspect")) {
+  if (run && (run.mode === "read_only" || isWorkspaceInventory(run.goal))) {
     local = local.filter((tool) => READ_ONLY_COMPOSER_TOOLS.has(tool.name));
   }
   if (run && run.noEdit) local = local.filter((tool) => !READ_ONLY_BLOCKED_TOOLS.has(tool.name));
@@ -2142,6 +2143,7 @@ function systemPrompt(options) {
       "Do not call tools, capabilities, terminal commands, tests, browser checks, or file operations.",
       "Do not promise that you changed, checked, ran, created, fixed, or verified anything in the workspace.",
       "Answer conversationally from the visible conversation and general model knowledge.",
+      "If the user asks you to inspect, read, search, test, or change workspace files, explain that Chat mode has no workspace access and tell them to use Ask for read-only inspection, Plan for planning, or Code for edits.",
     ].join(" ");
   }
   if (options.mode === "controlled") {
@@ -2329,6 +2331,16 @@ function inspectionReadCoverage(run) {
 }
 
 function defaultVerify(run, text) {
+  if (run.mode === "chat_only") {
+    if (String(text || "").trim()) {
+      return {
+        status: "passed",
+        summary: "Chat response completed without workspace tools",
+        evidence: [],
+      };
+    }
+    return { status: "failed", summary: "Chat response was empty", evidence: [] };
+  }
   if (!run.observations.length) {
     return { status: "failed", summary: "No tool observations support this answer", evidence: [] };
   }
@@ -2420,13 +2432,6 @@ function defaultVerify(run, text) {
         ? "The layout write is not complete until browser.check succeeds"
         : "Apply the layout with file.write on the HTML or CSS, then call browser.check",
       evidence: htmlWrite ? ["file.write"] : [],
-    };
-  }
-  if (run.mode === "chat_only" && String(text).trim()) {
-    return {
-      status: "passed",
-      summary: "Chat response completed without workspace tools",
-      evidence: [],
     };
   }
   if ((run.mode === "read_only" || run.taskClass === "plan") && trustedObservation(run) && String(text).trim()) {
