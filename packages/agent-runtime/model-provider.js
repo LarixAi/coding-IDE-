@@ -199,8 +199,15 @@ function contentToolCall(content, offeredTools) {
 
 function toolJsonText(content) {
   const text = stripThinking(content).trim();
-  const fenced = text.match(/^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i);
-  return fenced ? fenced[1].trim() : text;
+  const wholeFence = text.match(/^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i);
+  if (wholeFence) return wholeFence[1].trim();
+
+  const fences = [...text.matchAll(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/gi)];
+  if (fences.length === 1) {
+    const candidate = fences[0][1].trim();
+    if (candidate.startsWith("{") && candidate.endsWith("}")) return candidate;
+  }
+  return text;
 }
 
 function validToolArguments(args, schema) {
