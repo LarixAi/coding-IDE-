@@ -6,56 +6,6 @@ const { validateCommand } = require("../agent-tools");
 function createWorkspaceHost(root) {
   const rootReal = fs.realpathSync(root);
   return {
-    async inspectWorkspace() {
-      const entries = [];
-      const languages = new Set();
-      const markers = [];
-      const walk = (dir) => {
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-          if (entry.name === ".git" || entry.name === "node_modules") continue;
-          const full = path.join(dir, entry.name);
-          const relative = path.relative(rootReal, full).split(path.sep).join("/");
-          entries.push(relative);
-          if (entry.isDirectory()) {
-            walk(full);
-            continue;
-          }
-          const ext = path.extname(entry.name).toLowerCase();
-          if (ext === ".js" || ext === ".mjs" || ext === ".cjs") languages.add("javascript");
-          else if (ext === ".ts" || ext === ".tsx") languages.add("typescript");
-          else if (ext === ".html" || ext === ".htm") languages.add("html");
-          else if (ext === ".css") languages.add("css");
-          else if (ext === ".json") languages.add("json");
-        }
-      };
-      walk(rootReal);
-
-      let scripts = {};
-      let packageManager = "";
-      const packagePath = path.join(rootReal, "package.json");
-      if (fs.existsSync(packagePath)) {
-        markers.push("package.json");
-        packageManager = "npm";
-        try {
-          const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
-          if (pkg && pkg.scripts && typeof pkg.scripts === "object") scripts = { ...pkg.scripts };
-        } catch {
-          scripts = {};
-        }
-      }
-
-      return {
-        state: entries.length ? "project" : "empty",
-        root: path.basename(rootReal),
-        entries: entries.length,
-        git: fs.existsSync(path.join(rootReal, ".git")),
-        projectMarkers: markers,
-        languages: [...languages].sort(),
-        frameworks: [],
-        packageManager,
-        scripts,
-      };
-    },
     async readFile(filePath) {
       const full = resolveInside(rootReal, filePath);
       if (!fs.existsSync(full) || !fs.statSync(full).isFile()) {
