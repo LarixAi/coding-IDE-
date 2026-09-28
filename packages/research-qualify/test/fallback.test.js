@@ -4,7 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, startAgentRun, ControlledToolProvider, ToolRegistry } = require("../../agent-runtime");
-const { createWorkspaceHost } = require("../../coding-qualify/host");
+const { createResearchWorkspaceHost } = require("../host");
 const { N8nCapabilityProvider } = require("../../n8n-capability");
 const { REQUIREMENTS } = require("../acceptance");
 const { fallbackComplete, workspaceChanges } = require("../verify");
@@ -29,15 +29,50 @@ const REPAIR = `function validNumber(value) {
 module.exports = { validNumber };
 `;
 
-class ScriptedModelProvider extends ModelProvider {
-  constructor(steps) {
+class FallbackAwareModelProvider extends ModelProvider {
+  constructor() {
     super("scripted");
-    this.steps = [...steps];
+    this.localStep = 0;
+    this.afterFailureStep = 0;
   }
 
-  async complete() {
-    const step = this.steps.shift();
-    return { text: step.text || "", toolCalls: step.toolCalls || [] };
+  async complete(input) {
+    const messages = input.messages || [];
+    const capabilityFailed = messages.some((message) => {
+      const text = String(message && message.content || "");
+      return (
+        (message.role === "tool" && message.name === "capability.invoke" && text.includes('"trusted":false') && text.includes('"ok":false'))
+        || (text.includes("Research observation") && text.includes("untrusted") && /unavailable|refused|failed/i.test(text))
+      );
+    });
+
+    if (capabilityFailed) {
+      if (this.afterFailureStep === 0) {
+        this.afterFailureStep += 1;
+        return { text: "The evidence hub is unavailable, so I will make the bounded local repair now.", toolCalls: [{ name: "file.write", args: { path: "src/check.js", contents: REPAIR } }] };
+      }
+      if (this.afterFailureStep === 1) {
+        this.afterFailureStep += 1;
+        return { text: "Retesting the local fallback repair.", toolCalls: [{ name: "tests.run", args: { command: "npm test" } }] };
+      }
+      if (this.afterFailureStep === 2) {
+        this.afterFailureStep += 1;
+        return { text: "Checking diagnostics after the local fallback.", toolCalls: [{ name: "diagnostics.run", args: {} }] };
+      }
+      return { text: "The hub was unavailable, so the repair was decided and verified locally.", toolCalls: [] };
+    }
+
+    const steps = [
+      { text: "Inspecting the identification-number implementation.", toolCalls: [{ name: "repo.search", args: { query: "validNumber" } }] },
+      { text: "Reading the implementation before deciding on a repair.", toolCalls: [{ name: "file.read", args: { path: "src/check.js" } }] },
+      { text: "Reading the tests before deciding on a repair.", toolCalls: [{ name: "file.read", args: { path: "test/check.test.js" } }] },
+      { text: "Keeping the failing test result as local evidence.", toolCalls: [{ name: "tests.run", args: { command: "npm test" } }] },
+      { text: "The repository still does not define the missing rule.", toolCalls: [{ name: "repo.search", args: { query: "validNumber" } }] },
+      { text: "The repository still does not define the missing rule.", toolCalls: [{ name: "file.read", args: { path: "src/check.js" } }] },
+    ];
+    const step = steps[Math.min(this.localStep, steps.length - 1)];
+    this.localStep += 1;
+    return step;
   }
 }
 
@@ -71,26 +106,21 @@ async function main() {
 
   const hub = new N8nCapabilityProvider({ baseUrl: "http://127.0.0.1:9", retries: 0, retryDelayMs: 0 });
   hub.listCapabilities = async () => [{ name: "research.problem", description: "Gather short evidence for a problem. Returns sources and excerpts." }];
-  const provider = new ScriptedModelProvider([
-    { toolCalls: [{ name: "capability.invoke", args: { capability: "research.problem", input: { problem: "Luhn algorithm which digits are doubled" } } }] },
-    { toolCalls: [{ name: "file.write", args: { path: "src/check.js", contents: REPAIR } }] },
-    { toolCalls: [{ name: "tests.run", args: { command: "npm test" } }] },
-    { toolCalls: [{ name: "diagnostics.run", args: {} }] },
-    { toolCalls: [{ name: "git.diff", args: {} }] },
-    { text: "The hub was unavailable, so the repair was decided locally." },
-  ]);
+  const provider = new FallbackAwareModelProvider();
   const store = new RunStore(path.join(path.dirname(workspace), "runs"));
   const run = await startAgentRun({
-    goal: "Repair the identification-number check after the external capability fails.",
+    goal: "Repair the identification-number check. The missing rule is not documented in the repository.",
     model: "scripted",
     providerName: provider.name,
     mode: "controlled",
     requirements: REQUIREMENTS,
     provider,
-    registry: new ToolRegistry(new ControlledToolProvider(createWorkspaceHost(workspace))),
+    registry: new ToolRegistry(new ControlledToolProvider(createResearchWorkspaceHost(workspace))),
     store,
     capabilities: hub,
-    maxIterations: 8,
+    maxIterations: 14,
+    maxIdenticalActions: 20,
+    maxRetries: 10,
     verify(runState) {
       return fallbackComplete(runState, workspace);
     },
@@ -98,11 +128,27 @@ async function main() {
 
   const observation = run.observations.find((item) => item.type === "capability");
   const event = run.events.find((item) => item.type === "capability");
-  assert.strictEqual(run.lifecycle, "completed");
+  const capabilityCall = run.toolCalls.find((call) => call.name === "capability.invoke" && call.args && call.args.capability === "research.problem");
+  assert.strictEqual(run.lifecycle, "completed", JSON.stringify({
+    error: run.error,
+    outcome: run.outcome,
+    verification: run.verification,
+    tools: (run.toolCalls || []).map((call) => ({
+      iteration: call.iteration,
+      name: call.name,
+      ok: call.result && call.result.ok,
+      status: call.result && call.result.status,
+      code: call.result && call.result.error && call.result.error.code,
+    })),
+    messages: (run.messages || []).slice(-6).map((message) => String(message.content || "").slice(0, 260)),
+  }, null, 2));
   assert.strictEqual(run.error, null);
   assert.strictEqual(run.verification.status, "passed");
   assert.ok(run.requirements.every((item) => item.status === "satisfied"));
   assert.ok(observation);
+  assert.ok(capabilityCall);
+  assert.ok(capabilityCall.iteration > 0, "fallback research must be runtime-directed after local stagnation");
+  assert.strictEqual(capabilityCall.directedBy, "runtime");
   assert.strictEqual(observation.trusted, false);
   assert.strictEqual(observation.ok, false);
   assert.strictEqual(observation.capability, "research.problem");

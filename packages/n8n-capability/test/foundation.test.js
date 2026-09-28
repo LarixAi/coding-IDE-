@@ -108,7 +108,17 @@ async function runWith(provider, modelSteps, capabilities, verify) {
     capabilities,
     mode: "controlled",
     maxIterations: 8,
-    verify,
+    verify: verify || ((runState, text) => {
+      const capability = (runState.observations || []).find((item) => item.type === "capability");
+      if (capability && String(text || "").trim()) {
+        return {
+          status: "passed",
+          summary: "the hub observation stayed contained and the model continued",
+          evidence: ["capability.invoke"],
+        };
+      }
+      return { status: "failed", summary: "waiting for a capability observation and follow-up", evidence: [] };
+    }),
   });
   const run = await handle.done;
   return { run, provider, host, directory };
@@ -270,6 +280,13 @@ async function main() {
       store,
       capabilities: hub,
       mode: "controlled",
+      verify(runState, text) {
+        const capability = (runState.observations || []).find((item) => item.type === "capability");
+        if (capability && String(text || "").includes("command stayed evidence")) {
+          return { status: "passed", summary: "the hub response remained evidence only", evidence: ["capability.invoke"] };
+        }
+        return { status: "failed", summary: "waiting for the evidence-only boundary to be confirmed", evidence: [] };
+      },
     }).done;
     assert.strictEqual(writes, 0);
     assert.deepStrictEqual(run.filesChanged, []);
