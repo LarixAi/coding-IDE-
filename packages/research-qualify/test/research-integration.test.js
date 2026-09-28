@@ -65,8 +65,9 @@ async function main() {
   assert.strictEqual(GOAL.includes("capability.invoke"), false);
   assert.strictEqual(/do not edit/i.test(GOAL), false);
   const source = fs.readFileSync(path.join(__dirname, "../run.js"), "utf8");
-  assert.strictEqual(source.includes("researchComplete"), false);
-  assert.ok(source.includes("localComplete"));
+  assert.ok(source.includes("researchComplete"));
+  assert.ok(source.includes('execute("baseline", new ExternalCapabilityProvider(), localComplete)'));
+  assert.ok(source.includes('execute("assisted", hub, researchComplete)'));
 
   const workspace = prepareWorkspace();
   const hub = { invocations: 0 };
