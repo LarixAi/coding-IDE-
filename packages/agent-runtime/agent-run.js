@@ -55,6 +55,9 @@ function createRun(options) {
     repairReserveUsed: 0,
     recoveryReserve: options.recoveryReserve ?? 2,
     recoveryReserveUsed: 0,
+    recoveryEditPending: false,
+    recoveryEditAttempted: false,
+    recoveryEditResearchIteration: null,
     maxRetries: options.maxRetries ?? 2,
     maxIdenticalActions: options.maxIdenticalActions ?? 4,
     actionCounts: {},
@@ -256,12 +259,21 @@ async function executeRun(run, options) {
     run.inFlight = { kind: "model", iteration: run.iteration };
     store.save(run);
 
+    const recoveryEditTurn = Boolean(run.recoveryEditPending && !run.recoveryEditAttempted);
+    const offeredTools = toolsForRun(run, registry.definitions(), capabilityTools);
+    const modelTools = recoveryEditTurn
+      ? recoveryEditTools(offeredTools)
+      : focusTools(run.progress, offeredTools);
+    const modelMessages = recoveryEditTurn
+      ? recoveryEditMessages(run)
+      : run.messages.map((message) => ({ ...message }));
+
     let decision;
     try {
       decision = await provider.complete({
         model: run.effectiveModel,
-        messages: run.messages.map((message) => ({ ...message })),
-        tools: focusTools(run.progress, toolsForRun(run, registry.definitions(), capabilityTools)),
+        messages: modelMessages,
+        tools: modelTools,
         signal,
         timeoutMs: run.timeoutMs,
       });
@@ -284,6 +296,32 @@ async function executeRun(run, options) {
       at: new Date().toISOString(),
     });
     run.messages.push({ role: "assistant", content: text, toolCalls: calls });
+
+    if (recoveryEditTurn) {
+      run.recoveryEditAttempted = true;
+      const validRecoveryEdit = calls.length > 0 && calls.every((call) => (
+        call && (call.name === "file.patch" || call.name === "file.write")
+      ));
+      if (!validRecoveryEdit) {
+        store.save(run);
+        return finishFailed(
+          run,
+          store,
+          "recovery_edit_required",
+          "Research evidence was available, but the bounded recovery turn did not return a structured file.patch or file.write request.",
+        );
+      }
+      run.recoveryEditPending = false;
+      if (!Array.isArray(run.events)) run.events = [];
+      run.events.push({
+        type: "recovery_edit",
+        status: "structured_edit_received",
+        iteration: run.iteration,
+        researchIteration: run.recoveryEditResearchIteration,
+        at: new Date().toISOString(),
+      });
+    }
+
     store.save(run);
 
     if (calls.length === 0) {
@@ -2631,6 +2669,81 @@ function pathsFromDiff(diff) {
   return paths;
 }
 
+function recoveryEditTools(definitions) {
+  const edits = (definitions || []).filter((tool) => tool && (tool.name === "file.patch" || tool.name === "file.write"));
+  return edits;
+}
+
+function recoveryEditMessages(run) {
+  const system = (run.messages || []).find((message) => message && message.role === "system");
+  const reads = [];
+  const seen = new Set();
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0 && reads.length < 3; index -= 1) {
+    const call = calls[index];
+    if (!call || call.name !== "file.read" || !call.result || !call.result.ok) continue;
+    const file = String(call.args && call.args.path || "");
+    const contents = call.result.data && call.result.data.contents;
+    if (!file || typeof contents !== "string" || seen.has(file)) continue;
+    seen.add(file);
+    reads.push({ file, contents: clipText(contents, 2600) });
+  }
+  reads.reverse();
+
+  let failedCheck = null;
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    const testLike = call && (
+      call.name === "tests.run"
+      || (call.name === "terminal.run" && /\btest\b/i.test(String((call.args && call.args.command) || "")))
+    );
+    if (testLike && call.result && call.result.ok === false) {
+      failedCheck = call;
+      break;
+    }
+  }
+
+  let research = null;
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (
+      call
+      && call.name === "capability.invoke"
+      && call.directedBy === "runtime"
+      && call.result
+      && call.result.ok
+    ) {
+      research = call;
+      break;
+    }
+  }
+
+  const evidence = research && research.result && research.result.data && Array.isArray(research.result.data.evidence)
+    ? research.result.data.evidence.slice(0, 4).map((item, index) => (
+      `E${index + 1} ${clipText(item && item.title, 100)}: ${clipText(item && item.excerpt, 360)}`
+    ))
+    : [];
+
+  const body = [
+    "BOUNDED RECOVERY EDIT TURN.",
+    `Original goal: ${clipText(run && run.goal, 1200)}`,
+    run && run.verification && run.verification.summary
+      ? `Current verification failure: ${clipText(run.verification.summary, 700)}`
+      : "",
+    failedCheck ? `Latest failing check: ${clipText(JSON.stringify(failedCheck.result), 1800)}` : "",
+    evidence.length ? `External evidence (all retained sources): ${evidence.join(" | ")}` : "",
+    reads.length
+      ? `Current relevant files:\n${reads.map((item) => `--- ${item.file} ---\n${item.contents}`).join("\n")}`
+      : "No readable source snapshot was available.",
+    "Return a structured file.patch or file.write tool call now. Do not return prose instead of an edit. Do not repeat prior reasoning. The runtime will execute the edit and then restore the normal test/diagnostics/browser/git verification loop.",
+  ].filter(Boolean).join("\n\n");
+
+  return [
+    ...(system ? [{ role: "system", content: system.content }] : []),
+    { role: "user", content: body },
+  ];
+}
+
 function pushObservation(run, call, result) {
   const key = observationKey(call, result);
   run.messages.push({
@@ -3040,6 +3153,21 @@ async function directResearch(run, registry, options, signal, store, opening, ca
     role: "user",
     content: opening ? openingCapabilityBrief(record, run.goal, result) : postResearchBrief(progress, result),
   });
+  if (!opening && result && result.ok && run.mode === "controlled") {
+    run.recoveryEditPending = true;
+    run.recoveryEditAttempted = false;
+    run.recoveryEditResearchIteration = run.iteration;
+    if (run.progress) {
+      run.progress.focus = true;
+      run.progress.writeNow = true;
+      run.progress.semanticStagnation = 0;
+      run.progress.stagnantTurns = 0;
+    }
+    run.messages.push({
+      role: "user",
+      content: "Recovery contract: the next model turn is bounded and must return a structured file.patch or file.write tool call. Prose-only recovery is not accepted. Use the source, failing verification, and research evidence already recorded.",
+    });
+  }
   store.save(run);
   if (requiresExternalEvidenceForRun(run) && !result.ok) {
     finishFailed(
