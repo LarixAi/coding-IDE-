@@ -23,6 +23,47 @@ async function main() {
 
   {
     const decision = resolve(
+      { name: "file.patch", args: { path: "test/booking.test.js", oldText: "false", newText: "true" } },
+      {
+        mode: "controlled",
+        taskClass: "inspect",
+        registeredToolNames: ["file.patch", "file.read", "dir.list"],
+      },
+    );
+    assert.strictEqual(decision.rule, "safety.inspect_only");
+    assert.strictEqual(decision.priority, RULE_PRIORITY.safety);
+    assert.strictEqual(decision.action, "deny");
+    assert.strictEqual(decision.code, "inspect_only_tool_denied");
+  }
+
+  {
+    const decision = resolve(
+      { name: "capability.invoke", args: { capability: "research.problem" } },
+      {
+        mode: "controlled",
+        taskClass: "inspect",
+        registeredToolNames: ["capability.invoke", "file.read", "dir.list"],
+      },
+    );
+    assert.strictEqual(decision.rule, "safety.inspect_only");
+    assert.strictEqual(decision.action, "deny");
+  }
+
+  {
+    const decision = resolve(
+      { name: "file.read", args: { path: "server.js" } },
+      {
+        mode: "controlled",
+        taskClass: "inspect",
+        registeredToolNames: ["file.read", "dir.list"],
+      },
+    );
+    assert.strictEqual(decision.rule, "allow.default");
+    assert.strictEqual(decision.action, "allow");
+  }
+
+  {
+    const decision = resolve(
       { name: "file.patch", args: { path: "script.js", oldText: "broken", newText: "fixed" } },
       {
         mode: "controlled",
