@@ -152,7 +152,7 @@ async function main() {
     const run = await start({ provider, capabilities: researchHub(hubState) }).done;
     const directed = run.toolCalls.find((call) => call.directedBy === "runtime");
     assert.strictEqual(run.lifecycle, "failed");
-    assert.strictEqual(run.error.code, "stagnation");
+    assert.strictEqual(run.error.code, "recovery_edit_required");
     assert.ok(run.iteration <= 6);
     assert.ok(run.iteration < run.maxIterations);
     assert.ok(directed.iteration > 0, "local repair research should happen only after local stagnation");
