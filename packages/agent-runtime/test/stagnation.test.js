@@ -60,6 +60,36 @@ function researchHub(state) {
   };
 }
 
+function fourSourceResearchHub(state) {
+  return {
+    async listCapabilities() {
+      return [{ name: "research.problem", description: "Gather short evidence for a problem. Returns sources and excerpts." }];
+    },
+    async invoke(request) {
+      state.invocations += 1;
+      return {
+        protocolVersion: 1,
+        requestId: request.requestId,
+        status: "ok",
+        data: {
+          problem: request.input && request.input.problem,
+          confidence: "medium",
+          evidence: [
+            { title: "Rule overview", url: "https://example.com/one", excerpt: "Use the published checksum rule.", source: "test" },
+            { title: "Parity", url: "https://example.com/two", excerpt: "Work from the right-hand side.", source: "test" },
+            { title: "Reduction", url: "https://example.com/three", excerpt: "Reduce doubled digits above nine.", source: "test" },
+            { title: "Concrete example", url: "https://example.com/four", excerpt: "79927398713 is a valid worked check-digit example.", source: "test" },
+          ],
+        },
+        sources: [],
+        warnings: [],
+        error: null,
+        duration: 4,
+      };
+    },
+  };
+}
+
 function step(text, toolCall) {
   return { usage: { total: 40 }, text, toolCalls: toolCall ? [toolCall] : [] };
 }
@@ -235,6 +265,43 @@ async function main() {
     assert.strictEqual(hubState.invocations, 1);
     assert.strictEqual(run.progress.researchEscalations, 1);
     assert.ok(provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("double every second digit from the right"))));
+  });
+
+  await test("post-research recovery gets compact evidence and rejects prose-only recovery", async () => {
+    const hubState = { invocations: 0 };
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-recovery-contract-"));
+    fs.cpSync(FIXTURE, workspace, { recursive: true });
+    const read = { name: "file.read", args: { path: "src/check.js" } };
+    const provider = new ScriptedModelProvider([
+      step("Reading the local implementation first.", read),
+      step("Reading the local implementation first.", read),
+      step("I would change the parity logic now, but this is only prose."),
+    ]);
+
+    const run = await start({
+      provider,
+      workspace,
+      capabilities: fourSourceResearchHub(hubState),
+      stagnationThreshold: 1,
+      maxIterations: 8,
+      maxIdenticalActions: 20,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "failed");
+    assert.strictEqual(run.error.code, "recovery_edit_required");
+    assert.strictEqual(hubState.invocations, 1);
+    assert.strictEqual(run.progress.researchEscalations, 1);
+    const recoveryCall = provider.calls.at(-1);
+    assert.ok(recoveryCall);
+    assert.ok(recoveryCall.tools.length >= 1);
+    assert.ok(recoveryCall.tools.every((tool) => tool.name === "file.patch" || tool.name === "file.write"));
+    const recoveryText = recoveryCall.messages.map((message) => String(message.content || "")).join("\n");
+    assert.ok(recoveryText.includes("BOUNDED RECOVERY EDIT TURN"));
+    assert.ok(recoveryText.includes("Concrete example"));
+    assert.ok(recoveryText.includes("79927398713"));
+    assert.strictEqual(recoveryText.includes("Reading the local implementation first."), false);
+    assert.ok(recoveryCall.messages.length <= 2);
+    assert.strictEqual(run.events.some((event) => event.type === "recovery_edit" && event.status === "structured_edit_received"), false);
   });
 
   await test("fresh research at the iteration boundary gets a bounded recovery reserve", async () => {
