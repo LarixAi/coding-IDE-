@@ -2731,7 +2731,7 @@ function recoveryEditMessages(run) {
       ? `Current verification failure: ${clipText(run.verification.summary, 700)}`
       : "",
     failedCheck ? `Latest failing check: ${clipText(JSON.stringify(failedCheck.result), 1800)}` : "",
-    evidence.length ? `External evidence (all retained sources): ${evidence.join(" | ")}` : "",
+    evidence.length ? `Research observation. Evidence obtained (all retained sources): ${evidence.join(" | ")}` : "",
     reads.length
       ? `Current relevant files:\n${reads.map((item) => `--- ${item.file} ---\n${item.contents}`).join("\n")}`
       : "No readable source snapshot was available.",
