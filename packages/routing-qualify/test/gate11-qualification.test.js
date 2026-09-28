@@ -130,7 +130,7 @@ function createHost(workspace) {
   };
 }
 
-async function runScenario({ goal, composerMode = "ask", expectedCapability = null }) {
+async function runScenario({ goal, composerMode = "ask", mode = "read_only", expectedCapability = null }) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-gate11-"));
   const workspace = path.join(parent, "ws");
   fs.mkdirSync(workspace);
@@ -142,7 +142,7 @@ async function runScenario({ goal, composerMode = "ask", expectedCapability = nu
     goal,
     model: "gate11-scripted",
     providerName: provider.name,
-    mode: "read_only",
+    mode,
     composerMode,
     provider,
     registry: new ToolRegistry(new ReadOnlyToolProvider(createHost(workspace))),
@@ -181,6 +181,18 @@ async function main() {
   assert.strictEqual(Object.prototype.hasOwnProperty.call(task.state.requests[0].input, "question"), false);
   assert.match(firstModelText(task.provider), /Task graph:/);
   assert.match(firstModelText(task.provider), /T1 Define checkout contract/);
+
+  const controlledTaskGoal = "1. Fix the checkout API 2. Repair the booking form 3. Verify the confirmation flow";
+  const controlledTask = await runScenario({
+    goal: controlledTaskGoal,
+    composerMode: "code",
+    mode: "controlled",
+    expectedCapability: "task.decompose",
+  });
+  assert.strictEqual(controlledTask.run.lifecycle, "completed");
+  assert.deepStrictEqual(controlledTask.state.requests.map((item) => item.capability), ["task.decompose"]);
+  assert.strictEqual(controlledTask.state.requests[0].input.goal, controlledTaskGoal);
+  assert.match(firstModelText(controlledTask.provider), /T1 Define checkout contract/);
 
   const knowledgeGoal = "What did we save in the project notes about completion evidence";
   const knowledge = await runScenario({ goal: knowledgeGoal, expectedCapability: "knowledge.lookup" });
