@@ -105,6 +105,8 @@ async function main() {
     assert.strictEqual(classifyTask("can you create e a folder called website test 2", { mode: "controlled" }), "folder");
     assert.strictEqual(classifyTask("can you create a folder called website test 2", { mode: "read_only" }), "inspect");
     assert.strictEqual(classifyTask("can you check what files are missing from inthe folder", { mode: "controlled" }), "inspect");
+    assert.strictEqual(classifyTask("can you read all the files", { mode: "controlled" }), "inspect");
+    assert.strictEqual(classifyTask("read server.js and tell me what it does", { mode: "controlled" }), "inspect");
     assert.strictEqual(classifyTask("can you continue working on the files thhat are missing and run the website", { mode: "controlled" }), "build");
     assert.strictEqual(classifyTask("can you create the missing file in the folder", { mode: "controlled" }), "build");
     assert.strictEqual(classifyTask("can you create me a website about a dealership where I can sell cars", { mode: "controlled" }), "build");
@@ -171,6 +173,50 @@ async function main() {
     assert.ok(listed && listed.result && listed.result.ok);
     assert.ok(listed.result.data.entries.some((entry) => entry.path === "package.json"));
     assert.ok(provider.calls[0].messages.some((message) => String(message.content).includes("dir.list")));
+  });
+
+  await test("read-all-files stays inspection-only in Code mode and does not call the hub", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-read-all-"));
+    fs.mkdirSync(path.join(workspace, "lib"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "README.md"), "demo workspace\n");
+    fs.writeFileSync(path.join(workspace, "server.js"), "console.log('server');\n");
+    fs.writeFileSync(path.join(workspace, "lib/util.js"), "module.exports = 1;\n");
+
+    const hub = {
+      invocations: [],
+      async listCapabilities() {
+        return [{ name: "research.problem", category: "research", risk: "read", permissions: ["evidence"], description: "Gather evidence" }];
+      },
+      async invoke() {
+        hub.invocations.push("research.problem");
+        return { protocolVersion: 1, status: "ok", data: { evidence: [] }, error: null };
+      },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "dir.list", args: { path: "." } }] },
+      { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+      { toolCalls: [{ name: "file.read", args: { path: "server.js" } }] },
+      { toolCalls: [{ name: "dir.list", args: { path: "lib" } }] },
+      { toolCalls: [{ name: "file.read", args: { path: "lib/util.js" } }] },
+      { text: "I read README.md, server.js, and lib/util.js." },
+    ]);
+
+    const run = await start({
+      goal: "can you read all the files",
+      mode: "controlled",
+      workspace,
+      provider,
+      capabilities: hub,
+      maxIterations: 12,
+    }).done;
+
+    assert.strictEqual(run.taskClass, "inspect");
+    assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
+    assert.deepStrictEqual(hub.invocations, []);
+    assert.ok(run.toolCalls.some((call) => call.name === "dir.list" && call.args.path === "lib"));
+    assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "lib/util.js"));
+    assert.ok(provider.calls.every((call) => !(call.tools || []).some((tool) => ["file.write", "file.patch", "terminal.run", "capability.invoke"].includes(tool.name))));
   });
 
   await test("finding a missing site file does not finish until that file is written", async () => {
