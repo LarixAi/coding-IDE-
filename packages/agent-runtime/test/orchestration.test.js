@@ -62,6 +62,15 @@ function workspaceHost(root, hooks = {}) {
       }
       return { path: filePath, contents: fs.readFileSync(full, "utf8") };
     },
+    async listDirectory(dirPath = ".") {
+      const relative = dirPath === "." ? "" : dirPath;
+      const full = path.resolve(root, relative);
+      const entries = fs.readdirSync(full, { withFileTypes: true }).map((entry) => {
+        const entryPath = path.join(relative, entry.name).replace(/\\/g, "/");
+        return { path: entryPath, type: entry.isDirectory() ? "directory" : "file" };
+      });
+      return { path: dirPath, entries };
+    },
     async search(query) {
       state.searches += 1;
       const matches = [];
