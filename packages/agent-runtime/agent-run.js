@@ -2321,7 +2321,43 @@ function defaultVerify(run, text) {
       evidence.push("tests.run");
     }
 
-    if (/\bdiagnostics\b/i.test(String(run.goal || ""))) {
+    if (requiresEndToEndVerification(run)) {
+      const running = after.find(processIsRunningResult);
+      if (!running) {
+        return {
+          status: "failed",
+          summary: "This end-to-end task needs a CodeMe-owned application process running after the final edit. Start it with process.start or confirm it with process.status.",
+          evidence,
+        };
+      }
+      evidence.push("process.start");
+
+      const browser = after.find((call) => call.name === "browser.check" && call.result && call.result.ok);
+      if (!browser) {
+        return {
+          status: "failed",
+          summary: "The application process is running, but the final browser flow has not passed browser.check after the last edit.",
+          evidence,
+        };
+      }
+      evidence.push("browser.check");
+
+      const interactionRequired = isInteractiveBrowserGoal(run.goal)
+        || /\b(form|booking|checkout)\b/i.test(String(run.goal || ""));
+      if (interactionRequired) {
+        const interaction = after.find((call) => call.name === "browser.interact" && call.result && call.result.ok);
+        if (!interaction) {
+          return {
+            status: "failed",
+            summary: "The page loads, but the end-to-end form or interaction has not been exercised successfully in the real browser.",
+            evidence,
+          };
+        }
+        evidence.push("browser.interact");
+      }
+    }
+
+    if (requiresEndToEndVerification(run) || /\bdiagnostics\b/i.test(String(run.goal || ""))) {
       const diagnostics = after.find((call) => call.name === "diagnostics.run" && call.result && call.result.ok);
       const items = diagnostics && diagnostics.result && diagnostics.result.data && diagnostics.result.data.items;
       if (!diagnostics || (Array.isArray(items) && items.length)) {
