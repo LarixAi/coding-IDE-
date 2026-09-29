@@ -3,7 +3,7 @@ const { GATES, RUNTIME_INVARIANTS, gateContractPrompt } = require("../gate-contr
 
 assert.strictEqual(GATES.length, 11);
 assert.deepStrictEqual(GATES.map((item) => item.gate), [1,2,3,4,5,6,7,8,9,10,11]);
-assert.ok(GATES.find((item) => item.gate === 8).name.includes("n8n"));
+assert.ok(GATES.find((item) => item.gate === 8).name.includes("intelligence hub"));
 assert.ok(GATES.find((item) => item.gate === 10).name.includes("Research"));
 assert.ok(GATES.find((item) => item.gate === 11).name.includes("Autonomous"));
 assert.ok(RUNTIME_INVARIANTS.some((item) => item.includes("CodeMe runtime owns")));
