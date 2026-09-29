@@ -1,6 +1,5 @@
 const vscode = require("vscode");
 const crypto = require("crypto");
-const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { renderComposer } = require("./composer-view");
@@ -9,22 +8,31 @@ const { renderEmptyEditor } = require("./empty-editor");
 const { host } = require("./code-oss-host");
 const { ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
 const { RunStore } = require("../../packages/agent-runtime/run-store");
-const { ComposerSession, listOllamaModels, modelLabel } = require("./composer-session");
+const { ComposerSession, listOllamaModels } = require("./composer-session");
 const { ConversationStore } = require("./conversation-store");
 const { hasWorkspaceEditorInGroups } = require("./tab-policy");
+const { loadRuntimeEnv } = require("./runtime-config");
 
 let N8nCapabilityProvider;
+let N8nMcpProvider;
 let OllamaModelProvider;
 try {
-  ({ N8nCapabilityProvider } = require("../../packages/n8n-capability"));
+  ({ N8nCapabilityProvider, N8nMcpProvider } = require("../../packages/n8n-capability"));
   ({ OllamaModelProvider } = require("../../packages/agent-runtime/model-provider"));
 } catch {
   N8nCapabilityProvider = null;
+  N8nMcpProvider = null;
   OllamaModelProvider = null;
 }
 
 function activate(context) {
-  console.log("CodeMe shell activated");
+  const runtimeEnv = loadRuntimeEnv();
+  console.log(
+    "CodeMe shell activated",
+    runtimeEnv.loaded
+      ? `(runtime config loaded: ${runtimeEnv.keys.length} values)`
+      : `(runtime config: ${runtimeEnv.reason || "not loaded"})`,
+  );
 
   const state = {
     grade: "chat_only",
@@ -72,21 +80,29 @@ function activate(context) {
     applyConnection(connection, state);
     applyHub(hubItem, state);
   };
-  refreshConnection(state).then(() => {
+  const refreshModels = () => composer.sync().then(() => {
     applyConnection(connection, state);
-    applyHub(hubItem, state);
-    composer.sync();
     welcome.render();
-    console.log(`CodeMe connection: ${state.grade}`);
+    console.log(`CodeMe model discovery: ${state.detail}`);
+  }).catch((error) => {
+    state.grade = "chat_only";
+    state.detail = `Model discovery failed: ${error instanceof Error ? error.message : String(error)}`;
+    applyConnection(connection, state);
   });
-  const refreshHub = () => probeHub().then((hub) => {
+  refreshModels();
+
+  const refreshHub = () => probeHub(composer.capabilities, composer.externalTools).then((hub) => {
     state.hub = hub;
     applyHub(hubItem, state);
-    composer.sync();
   });
   refreshHub();
+
+  const modelTimer = setInterval(refreshModels, 15000);
   const hubTimer = setInterval(refreshHub, 15000);
-  context.subscriptions.push({ dispose: () => clearInterval(hubTimer) });
+  context.subscriptions.push(
+    { dispose: () => clearInterval(modelTimer) },
+    { dispose: () => clearInterval(hubTimer) },
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codeme.showConnection", () => {
@@ -371,21 +387,119 @@ async function createProject() {
   await vscode.commands.executeCommand("vscode.openFolder", selected[0]);
 }
 
-async function probeHub() {
-  if (!N8nCapabilityProvider) {
-    return { connected: false, capabilities: [], detail: "Intelligence hub client is missing." };
+async function probeHub(capabilityProvider, mcpProvider) {
+  const details = [];
+  const capabilities = [];
+  let connected = false;
+
+  if (mcpProvider && typeof mcpProvider.connectionStatus === "function") {
+    const mcp = await mcpProvider.connectionStatus();
+    if (mcp.connected) {
+      connected = true;
+      const count = Number(mcp.toolCount || 0);
+      details.push("n8n MCP connected: " + count + " tool" + (count === 1 ? "" : "s"));
+      for (const name of mcp.tools || []) capabilities.push(name);
+    } else {
+      const code = mcp.error && mcp.error.code;
+      details.push(code === "auth_required"
+        ? "n8n MCP is reachable but needs an MCP bearer token"
+        : "n8n MCP unavailable");
+    }
+  } else {
+    details.push("n8n MCP client unavailable");
   }
-  const provider = new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 });
-  const status = await provider.connectionStatus();
-  if (!status.connected) {
-    return { connected: false, capabilities: [], detail: "Intelligence hub is not reachable. Explorer, editor, and terminal still work." };
+
+  if (capabilityProvider && typeof capabilityProvider.connectionStatus === "function") {
+    const status = await capabilityProvider.connectionStatus();
+    if (status.connected) {
+      connected = true;
+      const listed = await capabilityProvider.listCapabilities();
+      const names = listed.map((item) => item.name).filter((name) => typeof name === "string");
+      for (const name of names) capabilities.push(name);
+      details.push(names.length
+        ? "Webhook hub: " + names.length + " capabilit" + (names.length === 1 ? "y" : "ies")
+        : "Webhook hub reachable, no published capabilities");
+    } else {
+      details.push("Webhook hub unavailable");
+    }
   }
-  const listed = await provider.listCapabilities();
-  const capabilities = listed.map((item) => item.name).filter((name) => typeof name === "string");
-  const detail = capabilities.length
-    ? `Intelligence hub connected: ${capabilities.join(", ")}.`
-    : "Intelligence hub is up, but no capabilities are published.";
-  return { connected: true, capabilities, detail };
+
+  return {
+    connected,
+    capabilities: [...new Set(capabilities)],
+    detail: details.join(" · ") || "Intelligence hub is not configured.",
+  };
+}
+
+async function discoverConfiguredModels() {
+  const localUrl = process.env.CODEME_LOCAL_OLLAMA_URL || process.env.CODEME_OLLAMA_URL || "http://127.0.0.1:11434";
+  const serverUrl = process.env.CODEME_SERVER_OLLAMA_URL || "";
+  const endpoints = [
+    { id: "local", label: "Local", provider: "ollama-local", url: localUrl, configured: true },
+    { id: "server", label: "Server", provider: "ollama-server", url: serverUrl, configured: Boolean(serverUrl) },
+  ];
+
+  const results = await Promise.all(endpoints.map(async (endpoint) => {
+    if (!endpoint.configured) {
+      return {
+        source: {
+          id: endpoint.id,
+          label: endpoint.label,
+          configured: false,
+          available: false,
+          count: 0,
+          message: "Not configured",
+        },
+        models: [],
+      };
+    }
+    try {
+      const models = await listOllamaModels(
+        endpoint.url,
+        endpoint.provider,
+        endpoint.label,
+        { strict: true },
+      );
+      return {
+        source: {
+          id: endpoint.id,
+          label: endpoint.label,
+          configured: true,
+          available: true,
+          count: models.length,
+          message: models.length ? `${models.length} model${models.length === 1 ? "" : "s"}` : "No models installed",
+        },
+        models,
+      };
+    } catch (error) {
+      return {
+        source: {
+          id: endpoint.id,
+          label: endpoint.label,
+          configured: true,
+          available: false,
+          count: 0,
+          message: error instanceof Error ? error.message : String(error),
+        },
+        models: [],
+      };
+    }
+  }));
+
+  return {
+    models: results.flatMap((item) => item.models),
+    sources: results.map((item) => item.source),
+  };
+}
+
+function modelDiscoveryDetail(snapshot) {
+  const sources = (snapshot && snapshot.modelSources) || [];
+  if (!sources.length) return "No model sources have been checked yet.";
+  return sources.map((source) => {
+    if (!source.configured) return `${source.label}: not configured`;
+    if (!source.available) return `${source.label}: unavailable`;
+    return `${source.label}: ${source.count} model${source.count === 1 ? "" : "s"}`;
+  }).join(" · ");
 }
 
 function applyConnection(item, state) {
@@ -396,58 +510,6 @@ function applyConnection(item, state) {
     item.text = `$(sparkle) ${selected}`;
   }
   item.tooltip = state.detail;
-}
-
-function refreshConnection(state) {
-  return new Promise((resolve) => {
-    const req = http.get("http://127.0.0.1:11434/api/tags", (res) => {
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => {
-        if (res.statusCode !== 200) {
-          state.grade = "chat_only";
-          state.modelLabel = "";
-          state.detail = "The model server did not answer. Explorer, editor, and terminal still work.";
-          resolve();
-          return;
-        }
-        let installed = [];
-        try {
-          const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          installed = (body.models || []).map((model) => String(model.name || "")).filter(Boolean);
-        } catch {
-          installed = [];
-        }
-        if (!installed.length) {
-          state.grade = "chat_only";
-          state.modelLabel = "";
-          state.detail = "Ollama is running, but no model is installed. The IDE stays usable.";
-          resolve();
-          return;
-        }
-        const recorded = readGrade();
-        state.grade = recorded === "read_only_qualified" || recorded === "limited_agent" ? recorded : "limited_agent";
-        state.modelLabel = modelLabel(installed[0]);
-        state.detail = state.grade === "read_only_qualified"
-          ? "Read-only."
-          : "A local model is installed.";
-        resolve();
-      });
-    });
-    req.setTimeout(2000, () => {
-      req.destroy();
-      state.grade = "chat_only";
-      state.modelLabel = "";
-      state.detail = "The model server is not reachable. Explorer, editor, and terminal still work.";
-      resolve();
-    });
-    req.on("error", () => {
-      state.grade = "chat_only";
-      state.modelLabel = "";
-      state.detail = "The model server is not reachable. Explorer, editor, and terminal still work.";
-      resolve();
-    });
-  });
 }
 
 function readGrade() {
@@ -518,6 +580,8 @@ class ComposerViewProvider {
     this.context = context;
     this.state = state;
     this.view = undefined;
+    this.capabilities = N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null;
+    this.externalTools = N8nMcpProvider ? new N8nMcpProvider() : null;
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
       historyStore: new ConversationStore(path.join(context.globalStorageUri.fsPath, "composer-history")),
@@ -527,17 +591,7 @@ class ComposerViewProvider {
         getMode: () => context.globalState.get("codeme.mode") || "read_only",
         setMode: (value) => context.globalState.update("codeme.mode", value),
       },
-      listModels: async () => {
-        const localUrl = process.env.CODEME_LOCAL_OLLAMA_URL || process.env.CODEME_OLLAMA_URL || "http://127.0.0.1:11434";
-        const serverUrl = process.env.CODEME_SERVER_OLLAMA_URL || "";
-        const [localResult, serverResult] = await Promise.allSettled([
-          listOllamaModels(localUrl, "ollama-local", "Local"),
-          serverUrl ? listOllamaModels(serverUrl, "ollama-server", "Server") : Promise.resolve([]),
-        ]);
-        const localModels = localResult.status === "fulfilled" ? localResult.value : [];
-        const serverModels = serverResult.status === "fulfilled" ? serverResult.value : [];
-        return localModels.concat(serverModels);
-      },
+      listModels: () => discoverConfiguredModels(),
       createProvider: (selection) => {
         if (!OllamaModelProvider) {
           throw Object.assign(new Error("Ollama provider is not connected"), { code: "unknown_provider" });
@@ -558,7 +612,8 @@ class ComposerViewProvider {
       createRegistry: (mode) => new ToolRegistry(
         mode === "controlled" ? new ControlledToolProvider(host) : new ReadOnlyToolProvider(host),
       ),
-      capabilities: N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null,
+      capabilities: this.capabilities,
+      externalTools: this.externalTools,
       root: workspaceRoot(),
       onChange: (snapshot) => this.post(snapshot),
     });
@@ -574,20 +629,31 @@ class ComposerViewProvider {
     await this.session.refreshModels();
   }
 
-  sync() {
-    if (!this.session) return;
+  async sync() {
+    if (!this.session) return null;
     this.session.setRoot(workspaceRoot());
-    this.session.refreshModels();
+    return this.session.refreshModels();
   }
 
   post(snapshot) {
-    if (!this.view) return;
     const selected = snapshot.selected;
+    const discovery = modelDiscoveryDetail(snapshot);
     if (selected) {
+      const recorded = readGrade();
+      this.state.grade = recorded === "read_only_qualified" || recorded === "limited_agent"
+        ? recorded
+        : "limited_agent";
       this.state.selectedLabel = selected.label;
-      this.state.detail = `${selected.label} is selected.`;
+      this.state.modelLabel = selected.label;
+      this.state.detail = `${selected.label} selected · ${discovery}`;
+    } else {
+      this.state.grade = "chat_only";
+      this.state.selectedLabel = "";
+      this.state.modelLabel = "";
+      this.state.detail = discovery;
     }
     if (this.refreshStatus) this.refreshStatus();
+    if (!this.view) return;
     this.view.webview.postMessage({ type: "state", readOnly: snapshot.mode !== "controlled", ...snapshot });
   }
 
@@ -625,6 +691,18 @@ class ComposerViewProvider {
     if (message.type === "select-model") {
       const result = this.session.selectModel(message.provider, message.id);
       if (!result.ok) this.view.webview.postMessage({ type: "rejected", code: result.code, message: result.message });
+      return;
+    }
+    if (message.type === "refresh-models") {
+      try {
+        await this.sync();
+      } catch (error) {
+        this.view.webview.postMessage({
+          type: "rejected",
+          code: "model_refresh_failed",
+          message: error instanceof Error ? error.message : "Could not refresh models.",
+        });
+      }
       return;
     }
     if (message.type === "select-mode") {

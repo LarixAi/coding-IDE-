@@ -3,6 +3,7 @@ const { ToolProvider, ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry
 const { ExternalCapabilityProvider, CapabilityRegistry } = require("./capability");
 const { RunStore } = require("./run-store");
 const { createRun, startAgentRun, resumeRun, applyFollowUp } = require("./agent-run");
+const { startPipelineRun } = require("./pipeline-run");
 const { lockModel } = require("./model-lock");
 const { classifyTask, selectStrategy } = require("./strategy");
 const { diagnose } = require("./diagnosis");
@@ -22,6 +23,7 @@ module.exports = {
   RunStore,
   createRun,
   startAgentRun,
+  startPipelineRun,
   resumeRun,
   applyFollowUp,
   lockModel,

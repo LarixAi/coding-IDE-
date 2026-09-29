@@ -26,7 +26,7 @@ const DEFINITIONS = {
     parameters: { type: "object", properties: {}, required: [] },
   },
   "browser.check": {
-    description: "Verify an already-running local page with HTTP readiness plus a real Chromium observation. This tool never starts, restarts, or kills the application process. Optionally provide selector/expectedText to assert rendered text.",
+    description: "Verify the current CodeMe-owned preview with HTTP readiness plus a real Chromium observation. Call process.start first. URL is optional; when an owned preview is running CodeMe uses its canonical URL instead of trusting an invented port. Optionally provide selector/expectedText to assert rendered text.",
     parameters: {
       type: "object",
       properties: {
@@ -34,11 +34,11 @@ const DEFINITIONS = {
         selector: { type: "string" },
         expectedText: { type: "string" },
       },
-      required: ["url"],
+      required: [],
     },
   },
   "browser.interact": {
-    description: "Drive a real installed Chromium browser against the local preview. Supports click, fill, assertText, and sequence. Use sequence for a form journey so field values, submit click, navigation, and confirmation assertion happen in one browser session. The tool fails on unmet expectations or browser runtime/console errors.",
+    description: "Drive a real installed Chromium browser against the current CodeMe-owned preview. Call process.start first. URL is optional; CodeMe prefers the owned preview URL over model-invented ports. Supports click, fill, assertText, and sequence. Use sequence for a form journey so field values, submit click, navigation, and confirmation assertion happen in one browser session. The tool fails on unmet expectations or browser runtime/console errors.",
     parameters: {
       type: "object",
       properties: {
@@ -65,7 +65,7 @@ const DEFINITIONS = {
           },
         },
       },
-      required: ["url", "action"],
+      required: ["action"],
     },
   },
   "dir.create": {
@@ -97,7 +97,7 @@ const DEFINITIONS = {
     },
   },
   "terminal.run": {
-    description: "Run one short Node command or npm test and wait for it to finish. Never use this to start a website/dev server or append &: use browser.check for web previews.",
+    description: "Run one short Node command or npm test and wait for it to finish. Never use this to start a website/dev server or append &: use process.start for the owned preview process, process.logs for its output, and browser.check/browser.interact to verify it.",
     parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
   },
   "sandbox.run": {

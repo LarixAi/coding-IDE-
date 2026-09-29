@@ -18,8 +18,13 @@ fi
 
 mkdir -p "$user_data"
 
-# Load CodeMe runtime endpoints from a local .env file when present.
-# .env is machine-local and must not be committed.
+# Load CodeMe runtime endpoints from a machine-local .env file.
+# On a fresh clone, bootstrap the non-secret endpoint template once so the
+# configured Local/Server model sources do not silently disappear.
+if [ ! -f "$root/.env" ] && [ -f "$root/.env.example" ]; then
+	cp "$root/.env.example" "$root/.env"
+	echo "CodeMe: created .env from .env.example. Add private tokens to .env only." >&2
+fi
 if [ -f "$root/.env" ]; then
 	set -a
 	. "$root/.env"
@@ -27,7 +32,7 @@ if [ -f "$root/.env" ]; then
 fi
 
 export PATH="$node_bin:$PATH"
-export VSCODE_SKIP_PRELAUNCH=1
+export CODEME_ROOT="$root"\nexport VSCODE_SKIP_PRELAUNCH=1
 
 # The Code - OSS pin keeps the upstream product name. Swap the dock icon
 # in the built app so Finder and the Dock show the CodeMe mark.

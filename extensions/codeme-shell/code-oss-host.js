@@ -1,7 +1,7 @@
 const vscode = require("vscode");
 const cp = require("child_process");
 const { execute, executeReadOnly } = require("../../packages/agent-tools");
-const { createPreviewRunner } = require("./preview-runner");
+const { createPreviewRunner, resolveOwnedPreviewUrl } = require("./preview-runner");
 const { createPreviewSessionManager } = require("./preview-session-manager");
 const { createBrowserInteractionRunner } = require("./browser-interaction-runner");
 const { createSandboxRunner } = require("./sandbox-runner");
@@ -60,8 +60,20 @@ async function listDirectory(dirPath) {
 async function writeFile(filePath, contents) {
   const uri = vscode.Uri.joinPath(workspaceFolder().uri, filePath);
   const bytes = Buffer.from(contents, "utf8");
-  await vscode.workspace.fs.writeFile(uri, bytes);
-  return { path: filePath, bytes: bytes.byteLength };
+  let before = null;
+  try {
+    before = Buffer.from(await vscode.workspace.fs.readFile(uri));
+  } catch {
+    before = null;
+  }
+  const changed = !before || !before.equals(bytes);
+  if (changed) await vscode.workspace.fs.writeFile(uri, bytes);
+  return {
+    path: filePath,
+    bytes: bytes.byteLength,
+    changed,
+    noOp: !changed,
+  };
 }
 
 async function patchFile(filePath, oldText, newText) {
@@ -80,13 +92,16 @@ async function patchFile(filePath, oldText, newText) {
   }
   const after = before.slice(0, first) + newText + before.slice(first + oldText.length);
   const bytes = Buffer.from(after, "utf8");
-  await vscode.workspace.fs.writeFile(uri, bytes);
+  const changed = after !== before;
+  if (changed) await vscode.workspace.fs.writeFile(uri, bytes);
   return {
     path: filePath,
     bytes: bytes.byteLength,
-    replacements: 1,
+    replacements: changed ? 1 : 0,
     before: oldText,
     after: newText,
+    changed,
+    noOp: !changed,
   };
 }
 
@@ -205,9 +220,19 @@ async function diagnostics() {
 async function browserCheck(url, input = {}) {
   const root = workspaceFolder().uri.fsPath;
   const requestedUrl = String(url || "");
+  const effectiveUrl = resolveOwnedPreviewUrl(previewSessions.status(root), requestedUrl);
   const args = input && typeof input === "object" ? input : {};
+  if (!effectiveUrl) {
+    return {
+      available: false,
+      code: "preview_not_running",
+      message: "No CodeMe-owned preview is running. Call process.start first.",
+      url: "",
+      session: previewSessions.status(root),
+    };
+  }
   try {
-    const checked = await preview.check(root, requestedUrl);
+    const checked = await preview.check(root, effectiveUrl);
     const session = previewSessions.status(root);
     if (!checked || checked.available === false) {
       return {
@@ -274,8 +299,18 @@ async function browserInteract(input) {
   const args = input && typeof input === "object" ? input : {};
   const requestedUrl = String(args.url || "");
   const root = workspaceFolder().uri.fsPath;
+  const effectiveUrl = resolveOwnedPreviewUrl(previewSessions.status(root), requestedUrl);
+  if (!effectiveUrl) {
+    return {
+      available: false,
+      code: "preview_not_running",
+      message: "No CodeMe-owned preview is running. Call process.start first.",
+      url: "",
+      session: previewSessions.status(root),
+    };
+  }
   try {
-    const checked = await preview.check(root, requestedUrl);
+    const checked = await preview.check(root, effectiveUrl);
     if (!checked || checked.available === false) {
       return {
         ...checked,

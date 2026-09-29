@@ -27,6 +27,7 @@ function createPreviewSessionManager(vscode, options = {}) {
         command: "",
         port: null,
         origin: "",
+        url: "",
         exitCode: null,
         startedAt: null,
         endedAt: null,
@@ -42,6 +43,7 @@ function createPreviewSessionManager(vscode, options = {}) {
       command: record.command,
       port: record.port || null,
       origin: record.origin || "",
+      url: record.url || record.origin || "",
       exitCode: record.exitCode,
       startedAt: record.startedAt,
       endedAt: record.endedAt,
@@ -97,6 +99,7 @@ function createPreviewSessionManager(vscode, options = {}) {
         command: "static-preview",
         port: Number(staticPreview.port) || plan.port || 4173,
         origin: `http://127.0.0.1:${Number(staticPreview.port) || plan.port || 4173}`,
+        url: "",
         server: staticPreview.server,
         terminal: null,
         execution: null,
@@ -108,6 +111,7 @@ function createPreviewSessionManager(vscode, options = {}) {
         endedAt: null,
         restartCount: old ? Number(old.restartCount || 0) + 1 : 0,
       };
+      record.url = new URL(plan.staticPath || "/", record.origin).toString();
       sessions.set(workspace, record);
       if (record.server && typeof record.server.once === "function") {
         record.server.once("close", () => {
@@ -151,6 +155,7 @@ function createPreviewSessionManager(vscode, options = {}) {
       command,
       port: plan.port || null,
       origin: plan.origin || "",
+      url: plan.url || plan.origin || "",
       terminal,
       execution,
       status: "running",

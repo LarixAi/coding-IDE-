@@ -8,6 +8,7 @@ const {
   fillExpression,
   textObservationExpression,
   prepareInteractionSteps,
+  collectBrowserEvidence,
   collectBrowserError,
   createBrowserInteractionRunner,
 } = require("../browser-interaction-runner");
@@ -33,6 +34,18 @@ async function main() {
   const blocked = validateLocalUrl("https://example.com/");
   assert.strictEqual(blocked.ok, false);
   assert.strictEqual(blocked.code, "invalid_url");
+
+  const networkEvidence = { pageErrors: [], failedRequests: [], httpErrors: [] };
+  collectBrowserEvidence({
+    method: "Network.loadingFailed",
+    params: { errorText: "net::ERR_ABORTED" },
+  }, networkEvidence);
+  assert.deepStrictEqual(networkEvidence.failedRequests, []);
+  collectBrowserEvidence({
+    method: "Network.loadingFailed",
+    params: { errorText: "net::ERR_CONNECTION_REFUSED" },
+  }, networkEvidence);
+  assert.deepStrictEqual(networkEvidence.failedRequests, ["net::ERR_CONNECTION_REFUSED"]);
 
   const click = clickExpression("#actionBtn", "Click Me");
   assert.ok(click.includes("data-codeme-interaction-target"));
