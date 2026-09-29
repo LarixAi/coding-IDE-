@@ -46,14 +46,15 @@ class OllamaModelProvider extends ModelProvider {
     this.timeoutMs = options.timeoutMs || 180000;
   }
 
-  async listModels() {
+  async listModels(options = {}) {
     try {
       const body = await getJson(this.baseUrl, "/api/tags");
       return (body.models || []).map((model) => {
         const id = String(model && model.name || "");
         return id ? { provider: this.name, id, label: id } : null;
       }).filter(Boolean);
-    } catch {
+    } catch (error) {
+      if (options && options.strict) throw error;
       return [];
     }
   }
