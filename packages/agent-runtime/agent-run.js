@@ -505,7 +505,7 @@ async function executeRun(run, options) {
             && ruleDecision.action === "guard"
             && call.name === "process.start"
           )
-            ? await guardProcessStart(run, registry)
+            ? await guardProcessStart(run, registry, call.args || {})
             : null;
           if (noOpMutation) {
             result = noOpMutation;
@@ -1550,6 +1550,76 @@ async function maybeDiagnoseBrowserFailure(run, registry, store, record) {
   return true;
 }
 
+async function maybeRestartServerRuntimeAfterEdit(run, registry, store, lastWrite) {
+  if (!run || !lastWrite || !lastWrite.args || !isServerRuntimeFile(run, lastWrite.args.path)) return false;
+  const calls = run.toolCalls || [];
+  const writeIndex = calls.indexOf(lastWrite);
+  if (writeIndex < 0) return false;
+  const hadBrowserFailureBeforeWrite = calls.slice(0, writeIndex).some((call) => (
+    call && call.name === "browser.check" && call.result && call.result.ok === false
+  ));
+  if (!hadBrowserFailureBeforeWrite) return false;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  const names = new Set(registry.definitions().map((tool) => tool && tool.name).filter(Boolean));
+  if (!names.has("process.status") || !names.has("process.start")) return false;
+
+  const statusResult = await runtimeInspectionCall(run, registry, store, "process.status", {});
+  const status = statusResult && statusResult.data;
+  if (!statusResult || !statusResult.ok || !status || status.status !== "running") return false;
+
+  const command = status.command || "npm start";
+  const call = { name: "process.start", args: { command, restart: true } };
+  touch(run, "executing_tool", call.name);
+  run.inFlight = {
+    kind: "tool",
+    name: call.name,
+    args: call.args,
+    key: actionKey(call),
+    directedBy: "runtime",
+  };
+  store.save(run);
+
+  let result;
+  try {
+    result = await registry.call(call.name, call.args);
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: call.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  const observation = observe(call, result);
+  observation.directedBy = "runtime";
+  run.observations.push(observation);
+  pushObservation(run, call, result);
+  run.inFlight = null;
+
+  if (!result.ok) {
+    run.messages.push({
+      role: "user",
+      content: "CodeMe repaired the server runtime file but could not restart the owned process. Read process.logs or process.status before another browser check.",
+    });
+  } else {
+    run.messages.push({
+      role: "user",
+      content: "CodeMe restarted the owned server process so the repaired server file is now loaded. Verify the preview again.",
+    });
+  }
+  store.save(run);
+  return result.ok;
+}
+
 async function maybeVerifyBrowserEditAfterWrite(run, registry, store) {
   if (!run || run.mode !== "controlled" || !isBrowserEditTask(run) || hadFailedOwnedProcess(run)) return false;
   const writes = successfulWrites(run);
@@ -1557,6 +1627,7 @@ async function maybeVerifyBrowserEditAfterWrite(run, registry, store) {
   const lastWrite = writes[writes.length - 1];
   const changed = uniqueWrittenPaths(writes);
   if (!changed.every((file) => wasReadAfterMutation(run, file))) return false;
+  await maybeRestartServerRuntimeAfterEdit(run, registry, store, lastWrite);
   const after = callsAfter(run, lastWrite);
   if (after.some((call) => call.name === "browser.check" && call.result && call.result.ok)) return false;
   if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
@@ -1686,7 +1757,7 @@ async function maybeRestartRepairedProcess(run, registry, store) {
       };
     } else {
       const processGuard = ruleDecision.action === "guard"
-        ? await guardProcessStart(run, registry)
+        ? await guardProcessStart(run, registry, call.args || {})
         : null;
       result = processGuard || await registry.call(call.name, call.args);
     }
@@ -1777,7 +1848,7 @@ async function maybeStartOwnedProcessForVerification(run, registry, store) {
       };
     } else {
       const processGuard = ruleDecision.action === "guard"
-        ? await guardProcessStart(run, registry)
+        ? await guardProcessStart(run, registry, call.args || {})
         : null;
       result = processGuard || await registry.call(call.name, call.args);
     }
@@ -1818,7 +1889,7 @@ async function maybeStartOwnedProcessForVerification(run, registry, store) {
   return true;
 }
 
-async function guardProcessStart(run, registry) {
+async function guardProcessStart(run, registry, args = {}) {
   let evidence = latestProcessEvidence(run);
   let status = evidence.status;
   if (!status && registry && typeof registry.call === "function") {
@@ -1845,7 +1916,7 @@ async function guardProcessStart(run, registry) {
     }
   }
 
-  if (status && status.status === "running") {
+  if (status && status.status === "running" && !(args && args.restart === true)) {
     return {
       ok: true,
       tool: "process.start",
