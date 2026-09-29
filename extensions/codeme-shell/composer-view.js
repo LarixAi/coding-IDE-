@@ -83,6 +83,13 @@ function renderComposer(nonce) {
     .file[open] summary::before { content: "⌄ "; }
     .file pre { margin: 6px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; color: #97a3b6; font-size: 11px; }
     .error { margin: 0 0 8px; color: #ff918b; font-size: 12px; }
+    .debug-panel { margin: 8px 0 0; border: 1px solid #55383d; border-radius: 8px; background: #171a20; }
+    .debug-panel summary { cursor: pointer; padding: 8px 10px; color: #ffaaa4; font-size: 11px; font-weight: 650; list-style: none; }
+    .debug-panel summary::-webkit-details-marker { display: none; }
+    .debug-text { margin: 0; padding: 9px 10px; max-height: 320px; overflow: auto; border-top: 1px solid #392a2d; color: #c7ced8; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; line-height: 1.45; }
+    .debug-actions { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid #292f38; }
+    .debug-actions button { border: 1px solid #343b46; border-radius: 5px; background: #20252d; color: #c7ced8; padding: 4px 7px; cursor: pointer; font: inherit; font-size: 10px; }
+    .debug-actions button:hover { background: #29313b; }
     footer { flex-shrink: 0; padding: 0 8px 8px; }
     .notice { min-height: 0; margin: 0 2px 4px; color: #eebb58; font-size: 11px; }
     .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 2px 6px; }
@@ -684,6 +691,43 @@ function renderComposer(nonce) {
         verify.textContent = label + (state.verification.summary ? " — " + state.verification.summary : "");
         result.appendChild(verify);
       }
+      if (state.stage === "Failed" && state.debug) {
+        const panel = document.createElement("details");
+        panel.className = "debug-panel";
+        panel.open = true;
+        const header = document.createElement("summary");
+        header.textContent = "Error details";
+        panel.appendChild(header);
+
+        const body = document.createElement("pre");
+        body.className = "debug-text";
+        body.textContent = formatDebug(state.debug);
+        panel.appendChild(body);
+
+        const actions = document.createElement("div");
+        actions.className = "debug-actions";
+
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.textContent = "Copy error";
+        copy.addEventListener("click", () => vscode.postMessage({
+          type: "copy-debug",
+          text: formatDebug(state.debug),
+        }));
+        actions.appendChild(copy);
+
+        const terminal = document.createElement("button");
+        terminal.type = "button";
+        terminal.textContent = "Open run log";
+        terminal.addEventListener("click", () => vscode.postMessage({
+          type: "open-run-log",
+          runId: state.runId || (state.debug && state.debug.runId) || "",
+        }));
+        actions.appendChild(terminal);
+
+        panel.appendChild(actions);
+        result.appendChild(panel);
+      }
       if (files.length) {
         const count = document.createElement("p");
         count.className = "result-count";
@@ -704,6 +748,50 @@ function renderComposer(nonce) {
         }
       }
     }
+    function formatDebug(debug) {
+      if (!debug) return "";
+      const lines = [];
+      if (debug.runId) lines.push("Run: " + debug.runId);
+      if (debug.model) lines.push("Model: " + debug.model + (debug.provider ? " (" + debug.provider + ")" : ""));
+      if (debug.mode || debug.taskClass) lines.push("Mode: " + (debug.mode || "") + (debug.taskClass ? " · Task: " + debug.taskClass : ""));
+      lines.push("Iteration: " + Number(debug.iteration || 0));
+      if (debug.error) lines.push("Error: " + (debug.error.code || "failed") + " — " + (debug.error.message || ""));
+      if (debug.verification && debug.verification.summary) lines.push("Verification: " + debug.verification.summary);
+      if (debug.filesRead && debug.filesRead.length) lines.push("Files read: " + debug.filesRead.join(", "));
+      lines.push("Last model response contained structured tools: " + (debug.lastDecisionHadTools ? "yes" : "no"));
+      lines.push("Semantic stagnation: " + Number(debug.semanticStagnation || 0) + " · Stagnant turns: " + Number(debug.stagnantTurns || 0));
+
+      for (const item of debug.recentDecisions || []) {
+        lines.push("");
+        lines.push("Model turn " + item.iteration + ":");
+        if (item.toolCalls && item.toolCalls.length) {
+          lines.push("Structured tool calls: " + JSON.stringify(item.toolCalls, null, 2));
+        }
+        if (item.text) lines.push("Text output:\n" + item.text);
+      }
+
+      if (debug.recentTools && debug.recentTools.length) {
+        lines.push("");
+        lines.push("Recent executed tools:");
+        for (const item of debug.recentTools) {
+          lines.push(
+            "- #" + Number(item.iteration || 0) + " " + item.name
+            + (item.routedFrom ? " (from " + item.routedFrom + ")" : "")
+            + " " + (item.ok ? "OK" : "FAILED")
+            + " args=" + JSON.stringify(item.args || {})
+            + (item.error ? " error=" + (item.error.code || "") + ": " + (item.error.message || "") : "")
+          );
+        }
+      }
+
+      if (debug.diagnoses && debug.diagnoses.length) {
+        lines.push("");
+        lines.push("Runtime diagnoses:");
+        for (const item of debug.diagnoses) lines.push("- " + JSON.stringify(item));
+      }
+      return lines.join("\n");
+    }
+
     function renderThread(items) {
       messages.innerHTML = "";
       for (const item of items) addMessage(item.role, item.text);
