@@ -165,11 +165,11 @@ async function testVerificationRepair() {
     },
     { text: "Updated the button.", toolCalls: [] },
     { text: "", toolCalls: [{ name: "process.start", args: {} }] },
-    { text: "", toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:4173/" } }] },
+    { text: "", toolCalls: [{ name: "browser.interact", args: { url: "http://127.0.0.1:4173/", action: "click", targetText: "Click Me", expectedText: "It works!" } }] },
     { text: "Updated and verified the button.", toolCalls: [] },
   ]);
   const handle = startPipelineRun({
-    goal: "Change the website button text to New and verify it in the browser.",
+    goal: "Fix the website button so clicking Click Me changes it to It works! and verify the real browser interaction.",
     model: "fixture",
     providerName: "fixture-local",
     provider,
