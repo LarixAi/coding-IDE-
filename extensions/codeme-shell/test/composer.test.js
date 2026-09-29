@@ -239,6 +239,9 @@ async function main() {
   assert.ok(html.includes("composer:focus-within"));
   assert.ok(html.includes("Loading model…"));
   assert.ok(html.includes("No model connected"));
+  const scriptMatch = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch, "composer client script should be present");
+  assert.doesNotThrow(() => new Function(scriptMatch[1]), "rendered composer client script should parse");
   assert.ok(html.includes("#model { flex: 0 1 190px"));
   assert.ok(html.includes("border: 1px solid #343b46"));
   assert.ok(html.includes("renderProjectDecision"));
