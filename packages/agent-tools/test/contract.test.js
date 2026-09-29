@@ -159,6 +159,32 @@ async function main() {
     assert.strictEqual(received.targetText, "Click Me");
     assert.strictEqual(result.data.afterText, "It works!");
 
+    let noUrlReceived = null;
+    const ownedUrlResult = await executeControlled(
+      {
+        async browserInteract(args) {
+          noUrlReceived = args;
+          return {
+            available: true,
+            action: "click",
+            targetText: args.targetText,
+            beforeText: "Click Me",
+            afterText: "It works!",
+            matched: true,
+          };
+        },
+      },
+      "browser.interact",
+      {
+        action: "click",
+        targetText: "Click Me",
+        expectedText: "It works!",
+      },
+    );
+    assert.strictEqual(ownedUrlResult.ok, true);
+    assert.strictEqual(noUrlReceived.url, undefined);
+
+
     const missingTarget = await executeControlled(
       { async browserInteract() { throw new Error("must not run"); } },
       "browser.interact",
