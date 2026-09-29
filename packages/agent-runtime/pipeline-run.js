@@ -51,6 +51,8 @@ function summarize(result) {
 }
 
 function recordTool(run, call, result, directedBy) {
+  const external = String(call && call.name || "").startsWith("capability.")
+    || String(call && call.name || "").startsWith("mcp_n8n_");
   const record = {
     id: call.id || "call_" + crypto.randomBytes(4).toString("hex"),
     iteration: run.iteration,
@@ -61,10 +63,10 @@ function recordTool(run, call, result, directedBy) {
   };
   run.toolCalls.push(record);
   run.observations.push({
-    type: call.name.startsWith("capability.") ? "capability" : "tool",
+    type: external ? "capability" : "tool",
     tool: call.name,
     ok: Boolean(result && result.ok),
-    trusted: !call.name.startsWith("capability."),
+    trusted: !external,
     summary: summarize(result),
     ...(directedBy ? { directedBy } : {}),
   });
@@ -334,10 +336,21 @@ async function executePipelineRun(run, options, followUpQueue) {
     if (listed.length) capabilityDefinitions = capabilityToolDefinitions(listed);
   }
 
+  let externalDefinitions = [];
+  if (run.mode !== "chat_only" && options.externalTools && typeof options.externalTools.listTools === "function") {
+    try {
+      const listed = await options.externalTools.listTools(signal);
+      if (Array.isArray(listed)) externalDefinitions = listed;
+    } catch {
+      externalDefinitions = [];
+    }
+  }
+  const externalToolNames = new Set(externalDefinitions.map((tool) => tool && tool.name).filter(Boolean));
+
   const baseDefinitions = run.mode === "chat_only"
     ? []
     : registry.definitions().filter((tool) => run.mode !== "read_only" || !READ_ONLY_BLOCKED.has(tool.name));
-  const definitions = [...baseDefinitions, ...capabilityDefinitions];
+  const definitions = [...baseDefinitions, ...capabilityDefinitions, ...externalDefinitions];
   const context = buildModelContext({
     goal: run.goal,
     system: instructionsForMode(run.mode, run.composerMode),
@@ -382,6 +395,8 @@ async function executePipelineRun(run, options, followUpQueue) {
         };
       } else if (name === "capability.list" || name === "capability.invoke") {
         result = await dispatchCapability(options.capabilities, run, call, signal, capabilityRegistry);
+      } else if (externalToolNames.has(name) && options.externalTools && typeof options.externalTools.call === "function") {
+        result = await options.externalTools.call(name, call.args, signal);
       } else if (name === "process.start") {
         const status = await safeContextCall(registry, "process.status", {});
         const data = status && status.ok && status.data;
