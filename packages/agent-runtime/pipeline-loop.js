@@ -25,8 +25,12 @@ function recoverTextToolCalls(content, knownNames) {
     try {
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
-      const name = String(parsed.name || parsed.tool || "").trim();
-      if (!knownNames.has(name)) continue;
+      let name = String(parsed.name || parsed.tool || "").trim();
+      if (!knownNames.has(name)) {
+        const canonical = [...knownNames].find((candidate) => candidate.replace(/\\./g, "_") === name);
+        if (!canonical) continue;
+        name = canonical;
+      }
       let args = parsed.arguments !== undefined ? parsed.arguments : parsed.args;
       if (typeof args === "string") args = JSON.parse(args);
       if (!args || typeof args !== "object" || Array.isArray(args)) args = {};
