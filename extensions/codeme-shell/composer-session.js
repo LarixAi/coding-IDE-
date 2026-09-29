@@ -574,7 +574,13 @@ function buildDebugDetails(run) {
     mode: run.composerMode || run.mode || "",
     taskClass: run.taskClass || "",
     iteration: run.iteration || 0,
-    filesRead: Array.isArray(progress.filesRead) ? progress.filesRead.slice(-30) : [],
+    filesRead: [...new Set([
+      ...(Array.isArray(progress.filesRead) ? progress.filesRead : []),
+      ...((run.toolCalls || [])
+        .filter((call) => call && call.name === "file.read" && call.result && call.result.ok)
+        .map((call) => String(call.args && call.args.path || ""))
+        .filter(Boolean)),
+    ])].slice(-30),
     semanticStagnation: Number(progress.semanticStagnation) || 0,
     stagnantTurns: Number(progress.stagnantTurns) || 0,
     lastDecisionHadTools: Boolean(latestDecision && Array.isArray(latestDecision.toolCalls) && latestDecision.toolCalls.length),
