@@ -212,6 +212,11 @@ function applyIteration(state, input) {
       if (rememberKey(state, `list:${listed}`)) categories.push("new_relevant_file");
     } else if (call.name === "file.write" || call.name === "file.patch") {
       if (!call.result || call.result.ok !== true) continue;
+      if (call.result.data && call.result.data.noChange) {
+        const file = call.args && call.args.path;
+        if (file) rememberKey(state, `write-noop:${file}`);
+        continue;
+      }
       const file = call.args && call.args.path;
       const body = call.name === "file.patch" ? `${(call.args && call.args.oldText) || ""}=>${(call.args && call.args.newText) || ""}` : ((call.args && call.args.contents) || "");
       const key = `write:${file}:${digest(body)}`;
