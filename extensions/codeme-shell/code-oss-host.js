@@ -60,8 +60,20 @@ async function listDirectory(dirPath) {
 async function writeFile(filePath, contents) {
   const uri = vscode.Uri.joinPath(workspaceFolder().uri, filePath);
   const bytes = Buffer.from(contents, "utf8");
-  await vscode.workspace.fs.writeFile(uri, bytes);
-  return { path: filePath, bytes: bytes.byteLength };
+  let before = null;
+  try {
+    before = Buffer.from(await vscode.workspace.fs.readFile(uri));
+  } catch {
+    before = null;
+  }
+  const changed = !before || !before.equals(bytes);
+  if (changed) await vscode.workspace.fs.writeFile(uri, bytes);
+  return {
+    path: filePath,
+    bytes: bytes.byteLength,
+    changed,
+    noOp: !changed,
+  };
 }
 
 async function patchFile(filePath, oldText, newText) {
@@ -80,13 +92,16 @@ async function patchFile(filePath, oldText, newText) {
   }
   const after = before.slice(0, first) + newText + before.slice(first + oldText.length);
   const bytes = Buffer.from(after, "utf8");
-  await vscode.workspace.fs.writeFile(uri, bytes);
+  const changed = after !== before;
+  if (changed) await vscode.workspace.fs.writeFile(uri, bytes);
   return {
     path: filePath,
     bytes: bytes.byteLength,
-    replacements: 1,
+    replacements: changed ? 1 : 0,
     before: oldText,
     after: newText,
+    changed,
+    noOp: !changed,
   };
 }
 
