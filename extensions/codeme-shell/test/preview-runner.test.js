@@ -18,11 +18,7 @@ function mockVscode(commands) {
       commands: {
         getCommands: async () => ["workbench.action.browser.open"],
         executeCommand: async (name, value, options) => {
-          commands.push({
-            name,
-            value: value && value.toString ? value.toString() : value,
-            options,
-          });
+          commands.push({ name, value, options });
         },
       },
       env: {
