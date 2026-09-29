@@ -297,7 +297,11 @@ function parseContentToolCall(text, offeredTools) {
   try {
     parsed = JSON.parse(text);
   } catch {
-    return null;
+    try {
+      parsed = JSON.parse(repairInvalidJsonEscapes(text));
+    } catch {
+      return null;
+    }
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
 
@@ -320,6 +324,46 @@ function parseContentToolCall(text, offeredTools) {
   if (!validToolArguments(args, offered.parameters)) return null;
 
   return { name: offered.name, args };
+}
+
+function repairInvalidJsonEscapes(text) {
+  const source = String(text || "");
+  let output = "";
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (char !== "\\") {
+      output += char;
+      continue;
+    }
+
+    const next = source[index + 1];
+    if (next === undefined) {
+      output += char;
+      continue;
+    }
+
+    if ('"\\/bfnrt'.includes(next)) {
+      output += char + next;
+      index += 1;
+      continue;
+    }
+
+    if (next === "u") {
+      const hex = source.slice(index + 2, index + 6);
+      if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+        output += "\\u" + hex;
+        index += 5;
+        continue;
+      }
+    }
+
+    // Some coding models escape HTML/Markdown punctuation inside JSON string
+    // values (for example \<html>). JSON does not permit those escapes.
+    // Dropping only the invalid backslash recovers the intended literal text.
+    output += next;
+    index += 1;
+  }
+  return output;
 }
 
 function parseQwenXmlToolCall(providerName, body, offeredTools) {
