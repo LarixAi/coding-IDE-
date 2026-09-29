@@ -1,4 +1,4 @@
-const { previewPlan, ensureStaticPreview, recoverFlagSocket } = require("./preview-runner");
+const { previewPlan, ensureStaticPreview, recoverFlagSocket, probe } = require("./preview-runner");
 
 const PROCESS_LOG_LIMIT = 50000;
 
@@ -64,6 +64,7 @@ function createPreviewSessionManager(vscode, options = {}) {
       });
     } else if (record.terminal && typeof record.terminal.dispose === "function") {
       try { record.terminal.dispose(); } catch {}
+      if (record.origin) await waitForOriginToStop(record.origin, 4000);
     }
 
     record.status = "stopped";
@@ -204,6 +205,16 @@ function createPreviewSessionManager(vscode, options = {}) {
   };
 }
 
+async function waitForOriginToStop(origin, timeoutMs) {
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
+  while (Date.now() < deadline) {
+    const current = await probe(origin);
+    if (!current.available && current.code === "preview_not_running") return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
 function redact(value) {
   return String(value || "")
     .replace(/(authorization\s*:\s*bearer\s+)[^\s]+/gi, "$1[REDACTED]")
@@ -237,5 +248,6 @@ function waitForShellIntegration(vscode, terminal) {
 module.exports = {
   PROCESS_LOG_LIMIT,
   createPreviewSessionManager,
+  waitForOriginToStop,
   redact,
 };
