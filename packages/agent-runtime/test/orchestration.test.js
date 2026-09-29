@@ -1668,8 +1668,6 @@ async function main() {
           },
         }],
       },
-      { toolCalls: [{ name: "file.read", args: { path: "server.js" } }] },
-      { toolCalls: [{ name: "browser.check", args: { url: "index.html" } }] },
       {
         toolCalls: [{
           name: "browser.interact",
