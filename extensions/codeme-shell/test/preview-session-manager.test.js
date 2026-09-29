@@ -99,6 +99,23 @@ async function main() {
   assert.strictEqual(staticFake.terminalStarts, 0, "browser verification must not create a process terminal");
   await staticSessions.stop(staticRoot);
 
+  // A common plain-site layout keeps the entrypoint under public/. The owned
+  // preview must publish that canonical page instead of returning a 404 at /.
+  const publicRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-session-public-"));
+  fs.mkdirSync(path.join(publicRoot, "public"), { recursive: true });
+  fs.writeFileSync(path.join(publicRoot, "public", "index.html"), "<title>Public</title><h1>CodeMe Final Test</h1>");
+  fs.writeFileSync(path.join(publicRoot, "public", "style.css"), "body { font-family: sans-serif; }");
+  const publicFake = createFakeVscode(await freePort(), { value: 200 });
+  const publicSessions = createPreviewSessionManager(publicFake.vscode);
+  const publicStart = await publicSessions.start(publicRoot, "");
+  assert.strictEqual(publicStart.kind, "static");
+  assert.ok(publicStart.url.endsWith("/public/"), publicStart.url);
+  assert.strictEqual(publicSessions.status(publicRoot).url, publicStart.url);
+  const publicPreview = await createPreviewRunner(publicFake.vscode).check(publicRoot, publicStart.url);
+  assert.strictEqual(publicPreview.available, true, JSON.stringify(publicPreview));
+  assert.strictEqual(publicPreview.statusCode, 200);
+  await publicSessions.stop(publicRoot);
+
   // Dynamic server: one owned session, 500 does not trigger a second start, and
   // restart keeps the same session identity after the repair.
   const port = await freePort();
