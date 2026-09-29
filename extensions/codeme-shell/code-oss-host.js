@@ -2,6 +2,7 @@ const vscode = require("vscode");
 const cp = require("child_process");
 const { execute, executeReadOnly } = require("../../packages/agent-tools");
 const { createPreviewRunner } = require("./preview-runner");
+const { createPreviewSessionManager } = require("./preview-session-manager");
 const { createBrowserInteractionRunner } = require("./browser-interaction-runner");
 const { createSandboxRunner } = require("./sandbox-runner");
 const { describeFileRead } = require("./image-meta");
@@ -10,9 +11,7 @@ const { inspectWorkspace } = require("./workspace-inspector");
 const preview = createPreviewRunner(vscode);
 const browserInteraction = createBrowserInteractionRunner();
 const sandbox = createSandboxRunner();
-const PROCESS_RECORDS = new Map();
-let PROCESS_SEQUENCE = 0;
-const PROCESS_LOG_LIMIT = 50000;
+const previewSessions = createPreviewSessionManager(vscode);
 
 function workspaceFolder() {
   const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
@@ -126,23 +125,6 @@ function runProcess(command) {
   });
 }
 
-function waitForShellIntegration(terminal) {
-  if (terminal && terminal.shellIntegration) return Promise.resolve(terminal.shellIntegration);
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      disposable.dispose();
-      reject(Object.assign(new Error("Terminal shell integration did not start"), { code: "terminal_timeout" }));
-    }, 20000);
-    const disposable = vscode.window.onDidChangeTerminalShellIntegration((event) => {
-      if (event.terminal !== terminal) return;
-      clearTimeout(timer);
-      disposable.dispose();
-      resolve(event.shellIntegration);
-    });
-    terminal.show();
-  });
-}
-
 async function runSandbox(input) {
   return sandbox.run(workspaceFolder().uri.fsPath, input || {});
 }
@@ -159,136 +141,16 @@ async function runTerminal(command) {
   };
 }
 
-function processWorkspaceKey() {
-  return workspaceFolder().uri.fsPath;
-}
-
-function redactProcessOutput(value) {
-  return String(value || "")
-    .replace(/(authorization\s*:\s*bearer\s+)[^\s]+/gi, "$1[REDACTED]")
-    .replace(/\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)\s*=\s*([^\s]+)/g, "$1=[REDACTED]");
-}
-
-function appendProcessOutput(record, chunk) {
-  const next = redactProcessOutput(chunk);
-  if (!next) return;
-  record.output = (record.output + next).slice(-PROCESS_LOG_LIMIT);
-  record.updatedAt = new Date().toISOString();
-}
-
-function latestProcessRecord() {
-  return PROCESS_RECORDS.get(processWorkspaceKey()) || null;
-}
-
-function processSnapshot(record, includeOutput) {
-  if (!record) {
-    return {
-      found: false,
-      status: "none",
-      command: "",
-      exitCode: null,
-      startedAt: null,
-      endedAt: null,
-      output: includeOutput ? "" : undefined,
-    };
-  }
-  return {
-    found: true,
-    id: record.id,
-    status: record.status,
-    command: record.command,
-    exitCode: record.exitCode,
-    startedAt: record.startedAt,
-    endedAt: record.endedAt,
-    output: includeOutput ? record.output : undefined,
-  };
-}
-
 async function startProcess(command) {
-  const cwd = workspaceFolder().uri.fsPath;
-  const terminal = vscode.window.createTerminal({
-    name: "CodeMe Process",
-    shellPath: "/bin/bash",
-    cwd,
-  });
-  terminal.show(true);
-
-  let shellIntegration;
-  try {
-    shellIntegration = await waitForShellIntegration(terminal);
-  } catch (error) {
-    terminal.dispose();
-    throw error;
-  }
-
-  const execution = await new Promise((resolve) => {
-    setTimeout(() => resolve(shellIntegration.executeCommand(command)), 200);
-  });
-
-  let resolveEnded;
-  const ended = new Promise((resolve) => { resolveEnded = resolve; });
-  const now = new Date().toISOString();
-  const record = {
-    id: `proc_${++PROCESS_SEQUENCE}`,
-    workspace: cwd,
-    command,
-    terminal,
-    execution,
-    status: "running",
-    exitCode: null,
-    output: "",
-    startedAt: now,
-    updatedAt: now,
-    endedAt: null,
-    ended,
-  };
-  PROCESS_RECORDS.set(cwd, record);
-
-  const endDisposable = vscode.window.onDidEndTerminalShellExecution((event) => {
-    if (event.execution && event.execution !== execution) return;
-    if (!event.execution && event.shellIntegration !== shellIntegration) return;
-    record.exitCode = typeof event.exitCode === "number" ? event.exitCode : 1;
-    record.status = record.exitCode === 0 ? "exited" : "failed";
-    record.endedAt = new Date().toISOString();
-    record.updatedAt = record.endedAt;
-    endDisposable.dispose();
-    resolveEnded(record);
-  });
-
-  (async () => {
-    try {
-      for await (const chunk of execution.read()) appendProcessOutput(record, chunk);
-    } catch (error) {
-      appendProcessOutput(record, `\n[CodeMe log reader error] ${error instanceof Error ? error.message : String(error)}\n`);
-    }
-  })();
-
-  await Promise.race([
-    ended,
-    new Promise((resolve) => setTimeout(resolve, 700)),
-  ]);
-
-  const snapshot = processSnapshot(record, true);
-  if (record.status === "failed") {
-    return {
-      ...snapshot,
-      started: false,
-      terminal: "CodeMe Process",
-    };
-  }
-  return {
-    ...snapshot,
-    started: true,
-    terminal: "CodeMe Process",
-  };
+  return previewSessions.start(workspaceFolder().uri.fsPath, String(command || ""));
 }
 
 async function processStatus() {
-  return processSnapshot(latestProcessRecord(), false);
+  return previewSessions.status(workspaceFolder().uri.fsPath);
 }
 
 async function processLogs() {
-  return processSnapshot(latestProcessRecord(), true);
+  return previewSessions.logs(workspaceFolder().uri.fsPath);
 }
 
 async function gitRepository() {
@@ -340,15 +202,70 @@ async function diagnostics() {
   return { items };
 }
 
-async function browserCheck(url) {
+async function browserCheck(url, input = {}) {
+  const root = workspaceFolder().uri.fsPath;
+  const requestedUrl = String(url || "");
+  const args = input && typeof input === "object" ? input : {};
   try {
-    return await preview.check(workspaceFolder().uri.fsPath, url);
+    const checked = await preview.check(root, requestedUrl);
+    const session = previewSessions.status(root);
+    if (!checked || checked.available === false) {
+      return {
+        ...(checked || {
+          available: false,
+          code: "preview_failed",
+          message: "The preview check returned no result.",
+          url: requestedUrl,
+        }),
+        session,
+      };
+    }
+
+    const observed = await browserInteraction.interact({
+      url: checked.url || requestedUrl,
+      action: "observe",
+      selector: String(args.selector || "body"),
+      expectedText: String(args.expectedText || ""),
+    });
+    if (!observed || observed.available === false) {
+      return {
+        ...(observed || {
+          available: false,
+          code: "browser_observation_failed",
+          message: "The real browser did not return observation evidence.",
+          url: checked.url || requestedUrl,
+        }),
+        statusCode: checked.statusCode,
+        title: checked.title || "",
+        assets: Array.isArray(checked.assets) ? checked.assets : [],
+        session,
+      };
+    }
+
+    return {
+      ...observed,
+      available: true,
+      statusCode: checked.statusCode,
+      title: checked.title || "",
+      assets: Array.isArray(checked.assets) ? checked.assets : [],
+      renderedText: String(observed.afterText || ""),
+      expectedText: String(args.expectedText || ""),
+      expectedTextMatched: args.expectedText ? observed.matched === true : true,
+      session,
+      preview: {
+        url: checked.url || requestedUrl,
+        statusCode: checked.statusCode,
+        title: checked.title || "",
+        assets: Array.isArray(checked.assets) ? checked.assets : [],
+      },
+    };
   } catch (error) {
     return {
       available: false,
       code: error && error.code ? String(error.code) : "preview_failed",
       message: error instanceof Error ? error.message : String(error),
-      url,
+      url: requestedUrl,
+      session: previewSessions.status(root),
     };
   }
 }
@@ -356,9 +273,15 @@ async function browserCheck(url) {
 async function browserInteract(input) {
   const args = input && typeof input === "object" ? input : {};
   const requestedUrl = String(args.url || "");
+  const root = workspaceFolder().uri.fsPath;
   try {
-    const checked = await preview.check(workspaceFolder().uri.fsPath, requestedUrl);
-    if (!checked || checked.available === false) return checked;
+    const checked = await preview.check(root, requestedUrl);
+    if (!checked || checked.available === false) {
+      return {
+        ...checked,
+        session: previewSessions.status(root),
+      };
+    }
     const result = await browserInteraction.interact({
       ...args,
       url: checked.url || requestedUrl,
@@ -367,6 +290,7 @@ async function browserInteract(input) {
       result.statusCode = checked.statusCode;
       result.title = checked.title || "";
       result.assets = Array.isArray(checked.assets) ? checked.assets : [];
+      result.session = previewSessions.status(root);
       result.preview = {
         url: checked.url || requestedUrl,
         statusCode: checked.statusCode,
@@ -381,6 +305,7 @@ async function browserInteract(input) {
       code: error && error.code ? String(error.code) : "browser_interaction_failed",
       message: error instanceof Error ? error.message : String(error),
       url: requestedUrl,
+      session: previewSessions.status(root),
     };
   }
 }
