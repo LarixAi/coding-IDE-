@@ -261,6 +261,60 @@ async function testNoOpAfterBrowserDoesNotInvalidateVerification() {
   assert.ok(run.verification.evidence.includes("browser.interact"));
 }
 
+async function testVerifierReplaysBrowserAfterLaterRealEdit() {
+  const registry = new FakeRegistry();
+  const first = "<button id=\"demo\">Click Me</button>\n";
+  const second = "<button id=\"demo\" class=\"ready\">Click Me</button>\n";
+  const provider = new ScriptedProvider([
+    {
+      text: "",
+      toolCalls: [{ name: "file.write", args: { path: "index.html", contents: first } }],
+    },
+    {
+      text: "",
+      toolCalls: [{ name: "process.start", args: {} }],
+    },
+    {
+      text: "",
+      toolCalls: [{
+        name: "browser.interact",
+        args: {
+          url: "http://127.0.0.1:4173/",
+          action: "click",
+          targetText: "Click Me",
+          expectedText: "It works!",
+        },
+      }],
+    },
+    {
+      text: "",
+      toolCalls: [{ name: "file.write", args: { path: "index.html", contents: second } }],
+    },
+    { text: "The button is ready.", toolCalls: [] },
+  ]);
+
+  const run = await startPipelineRun({
+    goal: "Fix the website button so clicking Click Me changes it to It works! and verify the real browser interaction.",
+    model: "fixture",
+    providerName: "fixture-local",
+    provider,
+    registry,
+    store: storeFor("replay-browser"),
+    mode: "controlled",
+    composerMode: "code",
+    maxIterations: 8,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  assert.strictEqual(run.verification.status, "passed");
+  const browserCalls = run.toolCalls.filter((call) => call.name === "browser.interact" && call.result && call.result.ok);
+  assert.strictEqual(browserCalls.length, 2);
+  assert.strictEqual(browserCalls[0].directedBy, "model");
+  assert.strictEqual(browserCalls[1].directedBy, "verification");
+  assert.deepStrictEqual(browserCalls[1].args, browserCalls[0].args);
+  assert.ok(run.verification.evidence.includes("browser.interact"));
+}
+
 async function testExternalToolsStayVisibleAndUntrusted() {
   const registry = new FakeRegistry();
   const externalTools = {
@@ -378,6 +432,7 @@ async function main() {
   await testAskLoop();
   await testVerificationRepair();
   await testNoOpAfterBrowserDoesNotInvalidateVerification();
+  await testVerifierReplaysBrowserAfterLaterRealEdit();
   await testExternalToolsStayVisibleAndUntrusted();
   await testLiveFollowUp();
   console.log("ok pipeline v2 cursor-style loop");
