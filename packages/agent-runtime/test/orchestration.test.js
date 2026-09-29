@@ -1725,7 +1725,8 @@ async function main() {
     assert.strictEqual(run.lifecycle, "failed");
     assert.strictEqual(run.outcome.reason, "repeated_action");
     assert.strictEqual(host.state.reads, 2);
-    assert.strictEqual(run.toolCalls.length, 2);
+    assert.strictEqual(run.toolCalls.filter((item) => item.name === "file.read").length, 2);
+    assert.ok(run.toolCalls.some((item) => item.name === "dir.list" && item.directedBy === "runtime"));
     assert.strictEqual(run.filesChanged.length, 0);
   });
 
@@ -2123,7 +2124,8 @@ async function main() {
     await assert.rejects(handle.done, (error) => error.code === "crash");
     const interrupted = store.load(handle.id);
     assert.strictEqual(interrupted.lifecycle, "interrupted");
-    assert.strictEqual(interrupted.toolCalls.length, 1);
+    assert.strictEqual(interrupted.toolCalls.filter((item) => item.name === "file.read").length, 1);
+    assert.ok(interrupted.toolCalls.some((item) => item.name === "dir.list" && item.directedBy === "runtime"));
     assert.strictEqual(interrupted.inFlight, null);
     const resumed = await resumeRun(handle.id, {
       provider,
