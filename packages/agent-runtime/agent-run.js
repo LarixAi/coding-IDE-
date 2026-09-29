@@ -665,6 +665,13 @@ async function executeRun(run, options) {
 
       store.save(run);
 
+      if (call.name === "browser.check" && !result.ok) {
+        const startedPreview = await maybeStartPreviewSessionAfterBrowserFailure(run, record, registry, store);
+        if (!startedPreview) {
+          await maybeCaptureServerFailureEvidence(run, record, registry, store);
+        }
+      }
+
       if (call.name === "browser.check" && result.ok) {
         await maybeAutoVerifyBrowserInteraction(run, registry, store);
       }
@@ -685,7 +692,8 @@ async function executeRun(run, options) {
     if (done) return done;
 
     await maybeReadBackRepairedFiles(run, registry, store);
-    const processChanged = await maybeRestartRepairedProcess(run, registry, store)
+    const processChanged = await maybeRestartServerRuntimeAfterEdit(run, registry, store)
+      || await maybeRestartRepairedProcess(run, registry, store)
       || await maybeStartOwnedProcessForVerification(run, registry, store);
     if (processChanged) {
       const verifiedNow = maybeFinishVerifiedWork(run, store, text);
@@ -1366,6 +1374,234 @@ function isWebVisibleWrite(run, writes) {
     isBrowserEditTask(run)
     && (writes || []).some((call) => isServerRuntimeFile(run, String(call.args && call.args.path || ""))),
   );
+}
+
+function resultCode(result) {
+  return String(
+    result && result.error && result.error.code
+    || result && result.data && result.data.code
+    || "",
+  );
+}
+
+function resultStatusCode(result) {
+  const value = result && result.data && result.data.statusCode;
+  const status = Number(value);
+  return Number.isFinite(status) ? status : 0;
+}
+
+function isPreviewNotRunningResult(result) {
+  const code = resultCode(result);
+  const cause = String(result && result.data && result.data.cause || "");
+  return code === "preview_not_running"
+    || code === "connection_refused"
+    || code === "ECONNREFUSED"
+    || cause === "ECONNREFUSED";
+}
+
+function isServerHttpFailureResult(result) {
+  return resultCode(result) === "page_status" && resultStatusCode(result) >= 500;
+}
+
+function latestUnresolvedServerHttpFailure(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call.name !== "browser.check" && call.name !== "browser.interact") continue;
+    if (call.result && call.result.ok) return null;
+    return isServerHttpFailureResult(call.result) ? call : null;
+  }
+  return null;
+}
+
+async function executeRuntimeTool(run, registry, store, call) {
+  const ruleDecision = resolveRequestedToolDecision(run, call, registry, []);
+  recordRuleDecision(run, ruleDecision, call);
+  touch(run, "executing_tool", call.name);
+  run.inFlight = {
+    kind: "tool",
+    name: call.name,
+    args: call.args || {},
+    key: actionKey(call),
+    directedBy: "runtime",
+  };
+  store.save(run);
+
+  let result;
+  try {
+    if (ruleDecision.action === "deny") {
+      result = {
+        ok: false,
+        tool: call.name,
+        error: {
+          code: ruleDecision.code || "policy_denied",
+          message: ruleDecision.reason,
+        },
+        data: {
+          rule: ruleDecision.rule,
+          tier: ruleDecision.tier,
+          priority: ruleDecision.priority,
+        },
+      };
+    } else {
+      const guarded = ruleDecision.action === "guard" && call.name === "process.start"
+        ? await guardProcessStart(run, registry, call)
+        : null;
+      result = guarded || await registry.call(call.name, call.args || {});
+    }
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: call.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args || {},
+    ruleDecision: compactRuleDecision(ruleDecision),
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  run.observations.push(observe(call, result));
+  pushObservation(run, call, result);
+  run.inFlight = null;
+  store.save(run);
+  return record;
+}
+
+async function maybeStartPreviewSessionAfterBrowserFailure(run, browserRecord, registry, store) {
+  if (!run || run.mode !== "controlled" || run.previewStartAttempted) return false;
+  if (!browserRecord || browserRecord.name !== "browser.check" || !isPreviewNotRunningResult(browserRecord.result)) return false;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  if (!registry.definitions().some((tool) => tool.name === "process.start")) return false;
+
+  run.previewStartAttempted = true;
+  const started = await executeRuntimeTool(run, registry, store, {
+    name: "process.start",
+    args: {},
+  });
+
+  if (started.result && started.result.ok && processIsRunningResult(started)) {
+    if (run.progress) {
+      run.progress.focus = true;
+      run.progress.semanticStagnation = 0;
+      run.progress.stagnantTurns = 0;
+    }
+    run.messages.push({
+      role: "user",
+      content: "browser.check proved that no preview server was reachable. CodeMe started the single owned preview session. Retry browser.check against that same session; do not start another server.",
+    });
+  } else {
+    run.messages.push({
+      role: "user",
+      content: "The runtime could not start the owned preview session. Read process.status and process.logs before changing files or attempting another start.",
+    });
+  }
+  store.save(run);
+  return true;
+}
+
+async function maybeCaptureServerFailureEvidence(run, browserRecord, registry, store) {
+  if (!run || run.mode !== "controlled" || !browserRecord || !isServerHttpFailureResult(browserRecord.result)) return false;
+  if (run.serverFailureEvidenceCaptured === browserRecord.id) return false;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+
+  run.serverFailureEvidenceCaptured = browserRecord.id;
+  run.serverRuntimeRestartAttempted = false;
+  const definitions = registry.definitions();
+  let statusRecord = null;
+  let logsRecord = null;
+
+  if (definitions.some((tool) => tool.name === "process.status")) {
+    statusRecord = await executeRuntimeTool(run, registry, store, { name: "process.status", args: {} });
+  }
+  if (
+    definitions.some((tool) => tool.name === "process.logs")
+    && statusRecord
+    && statusRecord.result
+    && statusRecord.result.ok
+    && statusRecord.result.data
+    && statusRecord.result.data.found
+  ) {
+    logsRecord = await executeRuntimeTool(run, registry, store, { name: "process.logs", args: {} });
+  }
+
+  const statusSession = statusRecord && statusRecord.result && statusRecord.result.data && statusRecord.result.data.sessionId;
+  const logSession = logsRecord && logsRecord.result && logsRecord.result.data && logsRecord.result.data.sessionId;
+  if (!Array.isArray(run.events)) run.events = [];
+  run.events.push({
+    type: "preview_server_failure",
+    statusCode: resultStatusCode(browserRecord.result),
+    sessionId: statusSession || "",
+    logsSessionId: logSession || "",
+    sameSession: Boolean(statusSession && logSession && statusSession === logSession),
+    iteration: run.iteration,
+    at: new Date().toISOString(),
+  });
+
+  run.messages.push({
+    role: "user",
+    content: statusSession
+      ? `browser.check received HTTP ${resultStatusCode(browserRecord.result)} from owned session ${statusSession}. A server answered, so do not start a second server. Use the captured logs to repair the server runtime; after the server edit is read back, CodeMe will restart this owned session once.`
+      : `browser.check received HTTP ${resultStatusCode(browserRecord.result)} but process.status found no CodeMe-owned session. A server answered on the port, so do not start another server. Treat this as an ownership mismatch and inspect server-side evidence rather than rewriting the page.`,
+  });
+  if (run.progress) {
+    run.progress.focus = true;
+    run.progress.semanticStagnation = 0;
+    run.progress.stagnantTurns = 0;
+  }
+  store.save(run);
+  return true;
+}
+
+async function maybeRestartServerRuntimeAfterEdit(run, registry, store) {
+  if (!run || run.mode !== "controlled" || run.serverRuntimeRestartAttempted) return false;
+  const failure = latestUnresolvedServerHttpFailure(run);
+  if (!failure) return false;
+  const calls = run.toolCalls || [];
+  const failureIndex = calls.indexOf(failure);
+  if (failureIndex < 0) return false;
+
+  const later = calls.slice(failureIndex + 1);
+  const serverWrites = later.filter((call) => (
+    (call.name === "file.patch" || call.name === "file.write")
+    && call.result
+    && call.result.ok
+    && isServerRuntimeFile(run, String(call.args && call.args.path || ""))
+  ));
+  if (!serverWrites.length) return false;
+  const lastWrite = serverWrites[serverWrites.length - 1];
+  const file = String(lastWrite.args && lastWrite.args.path || "");
+  if (!file || !wasReadAfterMutation(run, file)) return false;
+  if (!later.some((call) => call.name === "process.logs" && call.result && call.result.ok)) return false;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  if (!registry.definitions().some((tool) => tool.name === "process.start")) return false;
+
+  run.serverRuntimeRestartAttempted = true;
+  const restarted = await executeRuntimeTool(run, registry, store, {
+    name: "process.start",
+    args: { restart: true },
+  });
+
+  if (restarted.result && restarted.result.ok && processIsRunningResult(restarted)) {
+    const sessionId = restarted.result.data && (restarted.result.data.sessionId || restarted.result.data.id) || "";
+    run.messages.push({
+      role: "user",
+      content: `The repaired server runtime was restarted through the owned preview session${sessionId ? ` ${sessionId}` : ""}. Retry browser.check now. Do not create another application server.`,
+    });
+  } else {
+    run.messages.push({
+      role: "user",
+      content: "The owned preview session failed to restart after the server repair. Read process.logs and continue from that exact session evidence.",
+    });
+  }
+  store.save(run);
+  return true;
 }
 
 async function maybeReadBackRepairedFiles(run, registry, store) {
