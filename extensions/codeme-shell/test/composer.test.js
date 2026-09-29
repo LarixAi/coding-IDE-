@@ -151,6 +151,25 @@ async function main() {
   assert.strictEqual(processCard[0].name, "process.start");
   assert.strictEqual(processCard[0].status, "running");
 
+  const mixedProtocolStream = compactRunStream({
+    decisions: [{
+      iteration: 1,
+      text: 'First, let\'s check the HTML content.\n{"name":"file_read","arguments":{"path":"public/index.html"}}',
+      toolCalls: [{ name: "file.read", args: { path: "public/index.html" } }],
+    }],
+    toolCalls: [{
+      iteration: 1,
+      name: "file.read",
+      args: { path: "public/index.html" },
+      result: { ok: true, data: { path: "public/index.html", contents: "<h1>Test</h1>" } },
+    }],
+  });
+  const mixedNarration = mixedProtocolStream.find((item) => item.type === "narration");
+  assert.ok(mixedNarration);
+  assert.ok(mixedNarration.text.includes("First, let's check the HTML content."));
+  assert.ok(!mixedNarration.text.includes("file_read"));
+  assert.ok(!mixedNarration.text.includes('"arguments"'));
+
   const repeatedWrite = compactTools({
     workspace: { state: "project" },
     toolCalls: [
