@@ -766,7 +766,7 @@ async function main() {
     assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "public/index.html" && call.directedBy === "runtime"));
     assert.ok(provider.calls[0].messages.some((message) => String(message.content || "").includes("file.write is intentionally unavailable")));
     assert.strictEqual(provider.calls[0].tools.some((tool) => tool.name === "file.write"), false);
-    assert.strictEqual(provider.calls[0].tools.some((tool) => tool.name === "file.patch"), true);
+    assert.deepStrictEqual(provider.calls[0].tools.map((tool) => tool.name), ["file.patch"]);
     assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.directedBy === "runtime" && call.args.path === "public/index.html"));
     assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.directedBy === "runtime" && call.result && call.result.ok));
     assert.ok(fs.readFileSync(path.join(root, "public/index.html"), "utf8").includes("CodeMe Test Heading"));
