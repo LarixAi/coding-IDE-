@@ -3455,7 +3455,7 @@ async function preloadExplicitGoalFiles(run, registry, store) {
   if (preferPatchForExplicitExistingEdit(run)) {
     run.messages.push({
       role: "user",
-      content: `CodeMe already read the existing target file${run.explicitExistingFiles.length === 1 ? "" : "s"}: ${run.explicitExistingFiles.join(", ")}. This is a small existing-file edit. Use file.patch with the smallest exact oldText/newText replacement. file.write is intentionally unavailable for this turn; do not emit a full-file replacement.`,
+      content: `CodeMe already read the existing target file${run.explicitExistingFiles.length === 1 ? "" : "s"}: ${run.explicitExistingFiles.join(", ")}. This is a small existing-file edit. Prefer file.patch with the smallest exact oldText/newText replacement. If you emit file.write for the existing target, CodeMe may normalize the full replacement into a bounded patch before execution.`,
     });
   }
   store.save(run);
