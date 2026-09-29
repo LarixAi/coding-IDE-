@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { startAgentRun } = require("../../packages/agent-runtime");
+const { startAgentRun, startPipelineRun } = require("../../packages/agent-runtime");
 const { stripNegatedEditing } = require("../../packages/agent-runtime/intent");
 const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
 
@@ -349,12 +349,42 @@ class ComposerSession {
   }
 
   async submit(text, epoch) {
-    if (this.running) return reject("busy", "A run is already in progress.");
     const goal = formatGoal(text, this.attachments);
     if (!goal.trim()) return reject("empty", "Enter a message first.");
-    if (!this.selected) return reject("no_model", "No local model is installed.");
 
     const visibleText = String(text || "").trim() || goal;
+    if (this.running) {
+      if (!this.active || !this.active.handle || typeof this.active.handle.followUp !== "function") {
+        return reject("busy", "The active run cannot accept a follow-up.");
+      }
+      this.active.handle.followUp(goal);
+      let baseThread = (this.active.baseThread || this.thread).concat([{ role: "user", text: visibleText }]);
+      if (this.historyStore && this.conversationId) {
+        const saved = this.historyStore.append(this.conversationId, this.root, {
+          role: "user",
+          text: visibleText,
+          runId: this.active.runId,
+        });
+        if (saved) baseThread = conversationMessages(saved);
+      }
+      this.active.baseThread = baseThread.map((item) => ({ ...item }));
+      this.thread = baseThread;
+      this.notice = "Follow-up added to the active run";
+      this.emit();
+      return {
+        ok: true,
+        requestId: this.active.requestId,
+        runId: this.active.runId,
+        conversationId: this.conversationId,
+        followUp: true,
+        model: this.selected ? this.selected.id : "",
+        provider: this.selected ? this.selected.provider : "",
+        mode: this.mode,
+        composerMode: this.composerMode,
+      };
+    }
+
+    if (!this.selected) return reject("no_model", "No local model is installed.");
     const priorThread = this.thread.map((item) => ({ ...item }));
     this.ensureConversation(visibleText);
 
@@ -399,10 +429,13 @@ class ComposerSession {
     const publishing = new PublishingStore(this.store, (run) => this.publish(requestId, run));
     let handle;
     try {
-      handle = startAgentRun({
+      const runAgent = process.env.CODEME_AGENT_PIPELINE === "legacy"
+        ? startAgentRun
+        : startPipelineRun;
+      handle = runAgent({
         goal,
         model: this.selected.id,
-        providerName: provider.name || "ollama",
+        providerName: this.selected.provider || provider.name || "ollama",
         provider,
         registry,
         store: publishing,
@@ -418,8 +451,11 @@ class ComposerSession {
           type: item.type,
           size: item.size,
         })),
+        inferRequirements: true,
         timeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
-        maxIterations: this.composerMode === "code" ? 40 : 12,
+        maxIterations: this.composerMode === "code" ? 20 : 12,
+        maxRepairRounds: 2,
+        maxToolCallsPerTurn: 8,
         maxIdenticalActions: this.composerMode === "code" ? 12 : 4,
       });
     } catch (error) {
