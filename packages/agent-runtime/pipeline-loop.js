@@ -27,7 +27,7 @@ function recoverTextToolCalls(content, knownNames) {
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
       let name = String(parsed.name || parsed.tool || "").trim();
       if (!knownNames.has(name)) {
-        const canonical = [...knownNames].find((candidate) => candidate.replace(/\\./g, "_") === name);
+        const canonical = [...knownNames].find((candidate) => candidate.replace(/\./g, "_") === name);
         if (!canonical) continue;
         name = canonical;
       }
