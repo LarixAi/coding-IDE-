@@ -16,6 +16,22 @@ function toolDefinition() {
   };
 }
 
+function fileWriteDefinition() {
+  return {
+    name: "file.write",
+    description: "Write a workspace file",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        contents: { type: "string" },
+      },
+      required: ["path", "contents"],
+    },
+  };
+}
+
+
 async function withServer(responses, run) {
   const queue = responses.slice();
   const server = http.createServer((req, res) => {
@@ -216,6 +232,60 @@ async function runMultipleFencedJsonFallback() {
   });
 }
 
+async function runQwenRecoveryJsonFallback() {
+  const css = "body {\n  margin: 0;\n}\n";
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: JSON.stringify({
+          tool: "file.write",
+          path: "public/styles.css",
+          content: css,
+        }),
+      },
+    },
+  ], async (baseUrl) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "qwen3.5:9b",
+      messages: [{ role: "user", content: "BOUNDED RECOVERY EDIT TURN. Return file.write now." }],
+      tools: [fileWriteDefinition()],
+    });
+
+    assert.strictEqual(result.text, "");
+    assert.deepStrictEqual(result.toolCalls, [
+      {
+        name: "file.write",
+        args: {
+          path: "public/styles.css",
+          contents: css,
+        },
+      },
+    ]);
+  });
+}
+
+async function runRejectsUnofferedQwenShorthand() {
+  const raw = JSON.stringify({
+    tool: "terminal.run",
+    command: "rm -rf .",
+  });
+  await withServer([
+    { message: { role: "assistant", content: raw } },
+  ], async (baseUrl) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "qwen3.5:9b",
+      messages: [{ role: "user", content: "Write the CSS file" }],
+      tools: [fileWriteDefinition()],
+    });
+
+    assert.strictEqual(result.text, raw);
+    assert.deepStrictEqual(result.toolCalls, []);
+  });
+}
+
 async function runRejectsUnofferedTool() {
   const raw = JSON.stringify({
     name: "terminal_run",
@@ -262,6 +332,8 @@ async function main() {
   await runFencedJsonContentFallback();
   await runProseWrappedFencedJsonFallback();
   await runMultipleFencedJsonFallback();
+  await runQwenRecoveryJsonFallback();
+  await runRejectsUnofferedQwenShorthand();
   await runRejectsUnofferedTool();
   await runRejectsInvalidArguments();
   console.log("model provider tool-call compatibility passed");
