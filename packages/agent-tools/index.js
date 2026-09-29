@@ -149,7 +149,7 @@ async function dispatch(host, tool, args) {
     case "sandbox.run":
       return host.runSandbox(args);
     case "process.start":
-      return host.startProcess(args.command || "npm start");
+      return host.startProcess(args.command || "npm start", { restart: args.restart === true });
     case "process.status":
       return host.processStatus();
     case "process.logs":
@@ -301,6 +301,9 @@ async function executeControlled(host, tool, args) {
   if (tool === "process.start") {
     const commandError = validateProcessCommand(input.command || "npm start");
     if (commandError) return failure(tool, commandError.code, commandError.message);
+    if (input.restart !== undefined && typeof input.restart !== "boolean") {
+      return failure(tool, "invalid_args", "process.start restart must be a boolean when provided");
+    }
   }
   return execute(host, tool, args);
 }
