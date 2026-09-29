@@ -737,8 +737,12 @@ function renderComposer(nonce) {
       }
       if (item.name === "process.status") return live ? "Checking preview process" : "Preview status";
       if (item.name === "process.logs") return live ? "Reading preview logs" : "Preview logs";
-      if (item.name === "browser.check") return (live ? "Checking browser" : "Browser") + (item.path ? "  " + item.path : "");
+      if (item.name === "browser.check") {
+        if (item.status === "failed") return "Browser check";
+        return (live ? "Checking browser" : "Browser") + (item.path ? "  " + item.path : "");
+      }
       if (item.name === "browser.interact") {
+        if (item.status === "failed") return "Browser interaction";
         if (!live && item.targetText && item.afterText) return 'Clicked "' + item.targetText + '" → "' + item.afterText + '"';
         if (!live && item.afterText) return "Browser → " + item.afterText;
         return live ? "Testing browser interaction" : "Verified browser interaction";
