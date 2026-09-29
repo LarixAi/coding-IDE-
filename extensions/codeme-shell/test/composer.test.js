@@ -565,6 +565,25 @@ async function main() {
     "Done — I applied the requested change to `index.html` and verified the result in the browser.",
   );
 
+  const failedWithProtocolNoise = finalAssistantText({
+    lifecycle: "failed",
+    taskClass: "bug-fix",
+    filesChanged: ["public/script.js"],
+    outcome: {
+      summary: [
+        'Verification is still failing.',
+        '',
+        '\`\`\`json',
+        '{"name":"file_write","arguments":{"path":"public/script.js","content":"ignored"}}',
+        '\`\`\`',
+      ].join("\n"),
+    },
+  });
+  assert.ok(failedWithProtocolNoise.includes("Verification is still failing."));
+  assert.ok(!failedWithProtocolNoise.includes("file_write"));
+  assert.ok(!failedWithProtocolNoise.includes('"arguments"'));
+
+
   const layout = sessionFor(root, [
     { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
     { text: "1. Restyle the header\n2. Tighten the hero\n3. Switch to Code to apply edits" },
