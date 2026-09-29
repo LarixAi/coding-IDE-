@@ -25,9 +25,9 @@ const RUNTIME_INVARIANTS = Object.freeze([
 ]);
 
 function gateContractPrompt() {
-  const gates = GATES.map((item) => \`G\${item.gate} \${item.name}\`).join("; ");
+  const gates = GATES.map((item) => `G${item.gate} ${item.name}`).join("; ");
   return [
-    \`CodeMe canonical gate contract v\${GATE_CONTRACT_VERSION} (current implementation through Gate 11): \${gates}.\`,
+    `CodeMe canonical gate contract v${GATE_CONTRACT_VERSION} (current implementation through Gate 11): ${gates}.`,
     "Treat this mapping as canonical if older docs or historical blueprint numbering conflict.",
     ...RUNTIME_INVARIANTS,
   ].join(" ");
