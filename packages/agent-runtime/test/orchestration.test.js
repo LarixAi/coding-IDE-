@@ -748,8 +748,6 @@ async function main() {
           },
         }],
       },
-      { toolCalls: [{ name: "browser.check", args: { url: "public/index.html" } }] },
-      { text: "Changed the heading and verified it in the browser." },
     ]);
 
     const { store } = trackedStore(tempDir());
@@ -769,7 +767,65 @@ async function main() {
     assert.ok(provider.calls[0].messages.some((message) => String(message.content || "").includes("file.write is intentionally unavailable")));
     assert.strictEqual(provider.calls[0].tools.some((tool) => tool.name === "file.write"), false);
     assert.strictEqual(provider.calls[0].tools.some((tool) => tool.name === "file.patch"), true);
+    assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.directedBy === "runtime" && call.args.path === "public/index.html"));
+    assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.directedBy === "runtime" && call.result && call.result.ok));
     assert.ok(fs.readFileSync(path.join(root, "public/index.html"), "utf8").includes("CodeMe Test Heading"));
+  });
+
+  await test("run-only website request reuses a port already in use without editing server.js", async () => {
+    const root = tempDir();
+    fs.writeFileSync(path.join(root, "server.js"), "server.listen(3000);\n", "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }), "utf8");
+
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 2,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return { path: ".", entries: [{ path: "package.json", type: "file" }, { path: "server.js", type: "file" }] };
+      },
+      async readFile(filePath) { return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") }; },
+      async processStatus() { return { found: false, status: "none", command: "", exitCode: null }; },
+      async startProcess() {
+        return { started: false, status: "failed", command: "npm start", exitCode: 1, output: "Error: listen EADDRINUSE: address already in use :::3000" };
+      },
+      async processLogs() { return { found: true, status: "failed", command: "npm start", exitCode: 1, output: "EADDRINUSE :::3000" }; },
+      async browserCheck(url) { return { available: true, statusCode: 200, title: "Already running", url }; },
+      async writeFile() { throw new Error("run-only must not write"); },
+      async patchFile() { throw new Error("run-only must not patch"); },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "process.start", args: { command: "npm start" } }] },
+    ]);
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: "run the website",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 4,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.directedBy === "runtime" && call.args.url === "http://127.0.0.1:3000/"));
+    assert.ok(provider.calls[0].tools.every((tool) => !["file.write", "file.patch"].includes(tool.name)));
+    assert.strictEqual(fs.readFileSync(path.join(root, "server.js"), "utf8"), "server.listen(3000);\n");
   });
 
   await test("already-satisfied button repair reroutes preview shell commands and completes without a new write", async () => {
