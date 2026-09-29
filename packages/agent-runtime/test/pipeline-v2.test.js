@@ -221,7 +221,19 @@ async function testLiveFollowUp() {
   assert.ok(run.requirements.some((item) => /project name/i.test(item.text)));
 }
 
+function testProviderStyleToolRecovery() {
+  const calls = recoverTextToolCalls(
+    '<tool_call>{"name":"file_write","arguments":{"path":"index.html","content":"ok"}}</tool_call>',
+    new Set(["file.write"]),
+  );
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].name, "file.write");
+  assert.strictEqual(calls[0].args.path, "index.html");
+  console.log("ok provider-style qwen tool names");
+}
+
 async function main() {
+  testProviderStyleToolRecovery();
   await testAskLoop();
   await testVerificationRepair();
   await testLiveFollowUp();
