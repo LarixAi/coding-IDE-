@@ -792,7 +792,7 @@ function renderComposer(nonce) {
         if (item.toolCalls && item.toolCalls.length) {
           lines.push("Structured tool calls: " + JSON.stringify(item.toolCalls, null, 2));
         }
-        if (item.text) lines.push("Text output:\n" + item.text);
+        if (item.text) lines.push("Text output:\\n" + item.text);
       }
 
       if (debug.recentTools && debug.recentTools.length) {
@@ -814,7 +814,7 @@ function renderComposer(nonce) {
         lines.push("Runtime diagnoses:");
         for (const item of debug.diagnoses) lines.push("- " + JSON.stringify(item));
       }
-      return lines.join("\n");
+      return lines.join("\\n");
     }
 
     function renderThread(items) {
