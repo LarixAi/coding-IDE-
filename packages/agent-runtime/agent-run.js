@@ -81,6 +81,9 @@ function createRun(options) {
     previewStartAttempted: false,
     serverFailureEvidenceCaptured: "",
     serverRuntimeRestartAttempted: false,
+    modelTimeoutRetryLimit: options.modelTimeoutRetryLimit ?? 1,
+    modelTimeoutRetriesUsed: 0,
+    timeoutRetryPending: false,
     maxRetries: options.maxRetries ?? 2,
     maxIdenticalActions: options.maxIdenticalActions ?? 4,
     actionCounts: {},
@@ -299,13 +302,18 @@ async function executeRun(run, options) {
     store.save(run);
 
     const recoveryEditTurn = Boolean(run.recoveryEditPending && !run.recoveryEditAttempted);
+    const timeoutRetryTurn = Boolean(run.timeoutRetryPending && !recoveryEditTurn);
     const offeredTools = toolsForRun(run, registry.definitions(), capabilityTools);
     const modelTools = recoveryEditTurn
       ? recoveryEditTools(offeredTools)
-      : focusTools(run.progress, offeredTools);
+      : timeoutRetryTurn
+        ? timeoutRetryTools(offeredTools, run)
+        : focusTools(run.progress, offeredTools);
     const modelMessages = recoveryEditTurn
       ? recoveryEditMessages(run)
-      : run.messages.map((message) => ({ ...message }));
+      : timeoutRetryTurn
+        ? timeoutRetryMessages(run)
+        : run.messages.map((message) => ({ ...message }));
 
     let decision;
     try {
@@ -320,10 +328,14 @@ async function executeRun(run, options) {
       if (cancelled(run, signal) || (error && error.code === "cancelled")) return finishCancelled(run, store);
       const code = error && error.code === "timeout" ? "timeout" : "model_disconnected";
       const message = error instanceof Error ? error.message : String(error);
+      if (code === "timeout" && maybeScheduleModelTimeoutRetry(run, store)) {
+        continue;
+      }
       return finishFailed(run, store, code, message);
     }
 
     run.inFlight = null;
+    if (timeoutRetryTurn) run.timeoutRetryPending = false;
     run.iteration += 1;
     const text = decision.text || "";
     const calls = decision.toolCalls || [];
@@ -3102,6 +3114,131 @@ function pathsFromDiff(diff) {
     if (match && !paths.includes(match[2])) paths.push(match[2]);
   }
   return paths;
+}
+
+function timeoutRetryTools(definitions, run) {
+  const tools = Array.isArray(definitions) ? definitions : [];
+  if (latestUnresolvedServerHttpFailure(run)) {
+    const allowed = new Set(["file.read", "file.patch", "file.write", "process.logs", "process.status"]);
+    return tools.filter((tool) => tool && allowed.has(tool.name));
+  }
+  const focused = focusTools(run && run.progress, tools);
+  return focused.length ? focused : tools;
+}
+
+function timeoutRetryMessages(run) {
+  const system = (run.messages || []).find((message) => message && message.role === "system");
+  const calls = (run && run.toolCalls) || [];
+
+  let failedBrowser = null;
+  let processLogs = null;
+  let research = null;
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (!failedBrowser && call && call.name === "browser.check" && call.result && call.result.ok === false) {
+      failedBrowser = call;
+    }
+    if (!processLogs && call && call.name === "process.logs" && call.result && call.result.ok) {
+      processLogs = call;
+    }
+    if (
+      !research
+      && call
+      && call.name === "capability.invoke"
+      && call.directedBy === "runtime"
+      && call.result
+      && call.result.ok
+    ) {
+      research = call;
+    }
+    if (failedBrowser && processLogs && research) break;
+  }
+
+  const reads = [];
+  const seen = new Set();
+  for (let index = calls.length - 1; index >= 0 && reads.length < 3; index -= 1) {
+    const call = calls[index];
+    if (!call || call.name !== "file.read" || !call.result || !call.result.ok) continue;
+    const file = String(call.args && call.args.path || "");
+    const contents = call.result.data && call.result.data.contents;
+    if (!file || typeof contents !== "string" || seen.has(file)) continue;
+    seen.add(file);
+    reads.push({ file, contents: clipText(contents, 2600) });
+  }
+  reads.reverse();
+
+  const evidence = research && research.result && research.result.data && Array.isArray(research.result.data.evidence)
+    ? research.result.data.evidence.slice(0, 4).map((item, index) => (
+      `E${index + 1} ${clipText(item && item.title, 100)}: ${clipText(item && item.excerpt, 360)}`
+    ))
+    : [];
+
+  const serverFailure = latestUnresolvedServerHttpFailure(run);
+  const body = [
+    "MODEL TIMEOUT RECOVERY TURN.",
+    "The previous model request timed out. Continue from the evidence below; do not restart the task from scratch.",
+    `Original goal: ${clipText(run && run.goal, 1000)}`,
+    run && run.verification && run.verification.summary
+      ? `Current verification issue: ${clipText(run.verification.summary, 700)}`
+      : "",
+    failedBrowser
+      ? `Latest browser failure: ${clipText(JSON.stringify(failedBrowser.result), 1400)}`
+      : "",
+    processLogs
+      ? `Owned process logs: ${clipText(JSON.stringify(processLogs.result), 2200)}`
+      : "",
+    evidence.length
+      ? `Research evidence: ${evidence.join(" | ")}`
+      : "",
+    reads.length
+      ? `Latest relevant files:\n${reads.map((item) => `--- ${item.file} ---\n${item.contents}`).join("\n")}`
+      : "",
+    serverFailure
+      ? "A reachable server returned HTTP 5xx. Repair the server-side cause indicated by the logs/current server file. Do not start another server and do not edit unrelated frontend styling. Return one concrete structured tool call."
+      : "Return one concrete structured tool call that advances the failed verification. Keep the response concise.",
+  ].filter(Boolean).join("\n\n");
+
+  return [
+    ...(system ? [{ role: "system", content: system.content }] : []),
+    { role: "user", content: body },
+  ];
+}
+
+function hasRepairEvidence(run) {
+  if (!run || run.mode !== "controlled") return false;
+  if (run.recoveryEditPending) return true;
+  if (latestUnresolvedServerHttpFailure(run)) return true;
+  if (run.verification && run.verification.status === "failed") return true;
+  return (run.diagnoses || []).some((item) => item && item.next === "repair");
+}
+
+function maybeScheduleModelTimeoutRetry(run, store) {
+  if (!hasRepairEvidence(run)) return false;
+  const limit = Math.max(0, Number(run.modelTimeoutRetryLimit || 0));
+  if (run.modelTimeoutRetriesUsed >= limit) return false;
+
+  run.modelTimeoutRetriesUsed += 1;
+  run.timeoutRetryPending = true;
+  run.inFlight = null;
+  if (run.progress) {
+    run.progress.focus = true;
+    run.progress.semanticStagnation = 0;
+    run.progress.stagnantTurns = 0;
+  }
+  if (!Array.isArray(run.events)) run.events = [];
+  run.events.push({
+    type: "model_timeout_retry",
+    attempt: run.modelTimeoutRetriesUsed,
+    limit,
+    iteration: run.iteration,
+    at: new Date().toISOString(),
+  });
+  run.messages.push({
+    role: "user",
+    content: "The previous model request timed out during an active repair. CodeMe will retry once with compact failure evidence instead of abandoning the run.",
+  });
+  store.save(run);
+  return true;
 }
 
 function recoveryEditTools(definitions) {
