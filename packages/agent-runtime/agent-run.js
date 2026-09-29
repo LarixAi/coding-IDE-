@@ -2570,7 +2570,7 @@ function defaultVerify(run, text) {
     }
     const htmlWrite = writes.some((call) => /\.(html?|css)$/i.test(String(call.args && call.args.path || "")));
     const lastWrite = writes[writes.length - 1];
-    const after = lastWrite ? (run.toolCalls || []).filter((call) => call.iteration > lastWrite.iteration) : [];
+    const after = lastWrite ? callsAfter(run, lastWrite) : [];
     const preview = after.find((call) => (
       (call.name === "browser.check" || call.name === "browser.interact")
       && call.result
