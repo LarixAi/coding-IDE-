@@ -11,6 +11,7 @@ const { RunStore } = require("../../packages/agent-runtime/run-store");
 const { ComposerSession, listOllamaModels } = require("./composer-session");
 const { ConversationStore } = require("./conversation-store");
 const { hasWorkspaceEditorInGroups } = require("./tab-policy");
+const { loadRuntimeEnv } = require("./runtime-config");
 
 let N8nCapabilityProvider;
 let N8nMcpProvider;
@@ -25,7 +26,13 @@ try {
 }
 
 function activate(context) {
-  console.log("CodeMe shell activated");
+  const runtimeEnv = loadRuntimeEnv();
+  console.log(
+    "CodeMe shell activated",
+    runtimeEnv.loaded
+      ? `(runtime config loaded: ${runtimeEnv.keys.length} values)`
+      : `(runtime config: ${runtimeEnv.reason || "not loaded"})`,
+  );
 
   const state = {
     grade: "chat_only",
