@@ -764,7 +764,7 @@ async function main() {
 
     assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
     assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "public/index.html" && call.directedBy === "runtime"));
-    assert.ok(provider.calls[0].messages.some((message) => String(message.content || "").includes("file.write is intentionally unavailable")));
+    assert.ok(provider.calls[0].messages.some((message) => String(message.content || "").includes("Prefer file.patch with the smallest exact oldText/newText replacement")));
     assert.strictEqual(provider.calls[0].tools.some((tool) => tool.name === "file.write"), true);
     assert.deepStrictEqual(provider.calls[0].tools.map((tool) => tool.name).sort(), ["file.patch", "file.write"]);
     assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.directedBy === "runtime" && call.args.path === "public/index.html"));
