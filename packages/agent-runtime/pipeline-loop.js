@@ -248,7 +248,8 @@ async function runPipeline(options) {
         role: "user",
         content:
           "VERIFICATION FAILED (repair round " + repairs + "/" + maxRepairRounds + "). " +
-          "Use the available tools to fix every failed item, then answer again.\n" +
+          "Use the available tools to fix every failed item, then answer again. " +
+          "Do not describe a future tool call in prose: if a file change, command, browser action, or external lookup is required, your next turn must issue the native tool call now.\n" +
           formatVerifyFailure(lastVerify),
       });
       continue;
