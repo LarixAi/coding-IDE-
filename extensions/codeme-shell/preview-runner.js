@@ -510,6 +510,14 @@ async function openPreview(vscode, url) {
   // This only opens the already-running site in the IDE. It never starts,
   // restarts, kills, or otherwise owns an application process.
   try {
+    // The CodeMe Start panel normally fills an empty editor group. Dispose it
+    // before Simple Browser opens so its tab-change listener cannot reveal Start
+    // back over the preview while the browser tab is materializing.
+    try {
+      await vscode.commands.executeCommand("codeme.hideStart");
+    } catch {
+      // Older shells may not expose the command; opening the browser should still work.
+    }
     await vscode.commands.executeCommand("simpleBrowser.show", url);
     return { opened: true, surface: "simpleBrowser" };
   } catch (error) {

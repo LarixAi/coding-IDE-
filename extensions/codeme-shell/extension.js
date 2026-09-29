@@ -11,6 +11,7 @@ const { ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("
 const { RunStore } = require("../../packages/agent-runtime/run-store");
 const { ComposerSession, listOllamaModels, modelLabel } = require("./composer-session");
 const { ConversationStore } = require("./conversation-store");
+const { hasWorkspaceEditorInGroups } = require("./tab-policy");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -39,9 +40,18 @@ function activate(context) {
   const welcome = new WelcomePanel(state);
   const emptyEditor = new EmptyEditorPanel();
   context.subscriptions.push(welcome, emptyEditor);
+  let tabSyncTimer = null;
+  const scheduleEmptyEditorSync = () => {
+    if (tabSyncTimer) clearTimeout(tabSyncTimer);
+    tabSyncTimer = setTimeout(() => {
+      tabSyncTimer = null;
+      emptyEditor.sync();
+    }, 75);
+  };
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => arrangeShell(welcome, emptyEditor)),
-    vscode.window.tabGroups.onDidChangeTabs(() => emptyEditor.sync()),
+    vscode.window.tabGroups.onDidChangeTabs(scheduleEmptyEditorSync),
+    { dispose: () => { if (tabSyncTimer) clearTimeout(tabSyncTimer); } },
   );
   applyPreferredSettings();
   arrangeShell(welcome, emptyEditor);
@@ -84,6 +94,7 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("codeme.ask", () => vscode.commands.executeCommand("codeme.agent.focus")),
     vscode.commands.registerCommand("codeme.attach", () => composer.pickFiles()),
+    vscode.commands.registerCommand("codeme.hideStart", () => emptyEditor.suppress(1500)),
   );
 }
 
@@ -239,9 +250,14 @@ class WelcomePanel {
 class EmptyEditorPanel {
   constructor() {
     this.panel = undefined;
+    this.suppressedUntil = 0;
   }
 
   sync() {
+    if (Date.now() < this.suppressedUntil) {
+      this.dispose();
+      return;
+    }
     if (!folderOpen()) {
       this.dispose();
       return;
@@ -297,27 +313,18 @@ class EmptyEditorPanel {
     if (message.action === "ask") await vscode.commands.executeCommand("codeme.agent.focus");
   }
 
+  suppress(durationMs = 1000) {
+    this.suppressedUntil = Math.max(this.suppressedUntil, Date.now() + Math.max(0, Number(durationMs) || 0));
+    this.dispose();
+  }
+
   dispose() {
     if (this.panel) this.panel.dispose();
   }
 }
 
-function isCodeMeSurface(tab) {
-  const viewType = String((tab.input && tab.input.viewType) || "");
-  const label = String(tab.label || "");
-  return viewType.includes("codeme.start")
-    || viewType.includes("codeme.welcome")
-    || label === "Start";
-}
-
 function hasWorkspaceEditor() {
-  for (const group of vscode.window.tabGroups.all) {
-    for (const tab of group.tabs) {
-      if (isCodeMeSurface(tab)) continue;
-      if (tab.input) return true;
-    }
-  }
-  return false;
+  return hasWorkspaceEditorInGroups(vscode.window.tabGroups.all);
 }
 
 async function listRecentProjects() {
