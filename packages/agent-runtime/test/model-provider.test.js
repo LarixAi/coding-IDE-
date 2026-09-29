@@ -18,6 +18,7 @@ function toolDefinition() {
 
 async function withServer(responses, run) {
   const queue = responses.slice();
+  const requests = [];
   const server = http.createServer((req, res) => {
     if (req.method !== "POST" || req.url !== "/api/chat") {
       res.writeHead(404);
@@ -30,7 +31,7 @@ async function withServer(responses, run) {
       body += chunk;
     });
     req.on("end", () => {
-      JSON.parse(body);
+      requests.push(JSON.parse(body));
       const next = queue.shift();
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(next));
@@ -40,7 +41,7 @@ async function withServer(responses, run) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   try {
-    await run(`http://127.0.0.1:${address.port}`);
+    await run(`http://127.0.0.1:${address.port}`, requests);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -294,6 +295,81 @@ CodeMe Test Heading
   });
 }
 
+async function runProseBareJsonFallback() {
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: 'I will read it now. {"name":"file_read","arguments":{"path":"server.js"}}',
+      },
+    },
+  ], async (baseUrl) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "fixture",
+      messages: [{ role: "user", content: "Read server.js" }],
+      tools: [toolDefinition()],
+    });
+
+    assert.deepStrictEqual(result.toolCalls, [
+      { name: "file.read", args: { path: "server.js" } },
+    ]);
+  });
+}
+
+async function runQwen25SystemToolMode() {
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: '<tool_call>{"name":"file_read","arguments":{"path":"server.js"}}</tool_call>',
+      },
+    },
+  ], async (baseUrl, requests) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "qwen2.5-coder:14b",
+      messages: [
+        { role: "system", content: "You are CodeMe." },
+        { role: "user", content: "Read server.js" },
+      ],
+      tools: [toolDefinition()],
+    });
+
+    assert.strictEqual(result.toolMode, "system");
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(requests[0], "tools"), false);
+    const system = requests[0].messages.find((message) => message.role === "system");
+    assert.ok(system.content.includes("CODEME TOOL PROTOCOL"));
+    assert.ok(system.content.includes("file_read"));
+    assert.deepStrictEqual(result.toolCalls, [
+      { name: "file.read", args: { path: "server.js" } },
+    ]);
+  });
+}
+
+async function runNativeModeStillUsesOllamaTools() {
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ function: { name: "file_read", arguments: { path: "server.js" } } }],
+      },
+    },
+  ], async (baseUrl, requests) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "qwen3-coder:30b",
+      messages: [{ role: "user", content: "Read server.js" }],
+      tools: [toolDefinition()],
+    });
+
+    assert.strictEqual(result.toolMode, "native");
+    assert.ok(Array.isArray(requests[0].tools));
+    assert.strictEqual(requests[0].tools[0].function.name, "file_read");
+  });
+}
+
 async function runRejectsUnofferedTool() {
   const raw = JSON.stringify({
     name: "terminal_run",
@@ -342,6 +418,9 @@ async function main() {
   await runMultipleFencedJsonFallback();
   await runXmlToolCallFallback();
   await runQwen3XmlToolCallFallback();
+  await runProseBareJsonFallback();
+  await runQwen25SystemToolMode();
+  await runNativeModeStillUsesOllamaTools();
   await runRejectsUnofferedTool();
   await runRejectsInvalidArguments();
   console.log("model provider tool-call compatibility passed");
