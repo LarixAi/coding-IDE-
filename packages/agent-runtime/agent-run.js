@@ -948,7 +948,7 @@ function expectedInteractionText(goal) {
   return "";
 }
 
-function interactionTargetText(goal) {
+function interactionTargetText(goal, run) {
   const text = String(goal || "");
   const patterns = [
     /(?:click|clicking|press|pressing|tap|tapping)\s+(?:the\s+)?(?:button\s+)?["“']([^"”']+)["”']/i,
@@ -964,7 +964,27 @@ function interactionTargetText(goal) {
     if (value && !quoted.includes(value)) quoted.push(value);
   }
   const expected = expectedInteractionText(goal);
-  return quoted.find((value) => value !== expected) || "";
+  const explicit = quoted.find((value) => value !== expected);
+  if (explicit) return explicit;
+
+  // If the user says "the button" without quoting its label, use the only
+  // visible button from the HTML that CodeMe already read.
+  if (run && /\b(button|click|tap|press)\b/i.test(text)) {
+    const htmlReads = (run.toolCalls || []).filter((call) => (
+      call.name === "file.read"
+      && call.result
+      && call.result.ok
+      && /\.html?$/i.test(String(call.args && call.args.path || ""))
+    ));
+    for (let index = htmlReads.length - 1; index >= 0; index -= 1) {
+      const contents = String(htmlReads[index].result.data && htmlReads[index].result.data.contents || "");
+      const buttons = [...contents.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/gi)]
+        .map((match) => String(match[1] || "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
+        .filter(Boolean);
+      if (buttons.length === 1) return buttons[0];
+    }
+  }
+  return "";
 }
 
 function latestSuccessfulBrowserCheck(run) {
@@ -990,7 +1010,7 @@ async function maybeAutoVerifyBrowserInteraction(run, registry, store) {
   const interactionAfterPreview = (run.toolCalls || []).slice(previewIndex + 1).find((call) => call.name === "browser.interact");
   if (interactionAfterPreview) return interactionAfterPreview;
 
-  const targetText = interactionTargetText(run.goal);
+  const targetText = interactionTargetText(run.goal, run);
   const expectedText = expectedInteractionText(run.goal);
   if (!targetText || !expectedText) return null;
 
