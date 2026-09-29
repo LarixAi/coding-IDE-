@@ -176,7 +176,12 @@ async function main() {
       assert.strictEqual(healthHits, 0);
       assert.strictEqual(run.lifecycle, "completed");
       assert.strictEqual(run.error, null);
-      assert.ok(run.observations[0].summary.includes("unknown_capability"));
+      const rejected = run.observations.find((item) => (
+        item.type === "capability"
+        && item.summary
+        && item.summary.includes("unknown_capability")
+      ));
+      assert.ok(rejected);
       assert.ok(!model.calls[0].tools.some((tool) => String(tool.description).includes("image.generate")));
       assert.ok(!model.calls[0].tools.some((tool) => String(tool.description).includes("not.a.capability")));
     } finally {
@@ -228,7 +233,12 @@ async function main() {
       assert.strictEqual(observation.trusted, false);
       assert.ok(observation.summary.includes(MARKER));
       assert.ok(!observation.summary.includes("webhook"));
-      const toolMessage = model.calls[1].messages.find((message) => message.role === "tool");
+      const toolMessage = model.calls[1].messages.find((message) => (
+        message.role === "tool"
+        && message.name === "capability.invoke"
+        && String(message.content || "").includes(MARKER)
+      ));
+      assert.ok(toolMessage);
       assert.ok(toolMessage.content.includes(MARKER));
       assert.ok(!toolMessage.content.includes("webhook"));
       assert.deepStrictEqual(run.filesChanged, []);
@@ -294,8 +304,13 @@ async function main() {
         }).done;
         assert.strictEqual(run.lifecycle, "completed", label);
         assert.strictEqual(run.error, null, label);
-        assert.ok(run.observations[0].summary.includes(code), label);
-        assert.strictEqual(run.observations[0].trusted, false, label);
+        const capabilityObservation = run.observations.find((item) => (
+          item.type === "capability"
+          && item.summary
+          && item.summary.includes(code)
+        ));
+        assert.ok(capabilityObservation, label);
+        assert.strictEqual(capabilityObservation.trusted, false, label);
       }
 
       const escalating = {
