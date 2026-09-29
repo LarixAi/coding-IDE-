@@ -370,6 +370,41 @@ async function runNativeModeStillUsesOllamaTools() {
   });
 }
 
+async function runRepairsInvalidHtmlEscapesInToolJson() {
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: String.raw`{"name":"file_write","arguments":{"path":"public/index.html","contents":"\<!doctype html>\n\<html>\n\<h1>CodeMe Test Heading\</h1>\n\</html>"}}`,
+      },
+    },
+  ], async (baseUrl) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "qwen2.5-coder:14b",
+      messages: [{ role: "user", content: "Change the heading" }],
+      tools: [{
+        name: "file.write",
+        description: "Write a workspace file",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+            contents: { type: "string" },
+          },
+          required: ["path", "contents"],
+        },
+      }],
+    });
+
+    assert.strictEqual(result.toolCalls.length, 1);
+    assert.strictEqual(result.toolCalls[0].name, "file.write");
+    assert.strictEqual(result.toolCalls[0].args.path, "public/index.html");
+    assert.ok(result.toolCalls[0].args.contents.includes("<!doctype html>"));
+    assert.ok(result.toolCalls[0].args.contents.includes("<h1>CodeMe Test Heading</h1>"));
+  });
+}
+
 async function runRejectsUnofferedTool() {
   const raw = JSON.stringify({
     name: "terminal_run",
@@ -421,6 +456,7 @@ async function main() {
   await runProseBareJsonFallback();
   await runQwen25SystemToolMode();
   await runNativeModeStillUsesOllamaTools();
+  await runRepairsInvalidHtmlEscapesInToolJson();
   await runRejectsUnofferedTool();
   await runRejectsInvalidArguments();
   console.log("model provider tool-call compatibility passed");
