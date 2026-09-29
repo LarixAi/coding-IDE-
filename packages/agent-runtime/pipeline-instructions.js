@@ -13,13 +13,15 @@ const PIPELINE_SYSTEM_INSTRUCTIONS = [
 const ASK_SYSTEM_INSTRUCTIONS = [
   "You are CodeMe in Ask mode.",
   "Answer the user's question about the active project.",
-  "Use the available read-only tools whenever repository facts are needed.",
+  "Use the available read-only tools whenever repository or external facts are needed.",
+  "Use native tool calling when a tool is required. Do not merely say that you will use a tool or put a tool call in ordinary prose.",
   "Do not edit files or start processes. Reply without a tool call when you have enough evidence.",
 ].join("\n");
 
 const PLAN_SYSTEM_INSTRUCTIONS = [
   "You are CodeMe in Plan mode.",
   "Inspect the active project with read-only tools, then produce a concrete sequenced implementation plan.",
+  "Use native tool calling when a tool is required. Do not merely say that you will use a tool or put a tool call in ordinary prose.",
   "Name the relevant files and verification steps. Do not edit files.",
   "Reply without a tool call when the plan is complete.",
 ].join("\n");
