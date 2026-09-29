@@ -631,6 +631,9 @@ function startPreview(vscode, root, command, forceNew) {
   const terminal = existing || vscode.window.createTerminal({ name: PREVIEW_TERMINAL, cwd: root });
   terminal.show(true);
   terminal.sendText(command);
+  if (typeof terminal.hide === "function") {
+    try { terminal.hide(); } catch {}
+  }
 }
 
 module.exports = {
