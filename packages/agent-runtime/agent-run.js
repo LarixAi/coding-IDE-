@@ -2604,8 +2604,10 @@ function defaultVerify(run, text) {
       }
     }
 
-    if (String(text || "").trim() && (listed || run.workspaceInspected)) {
-      const readAny = (run.toolCalls || []).some((call) => call.name === "file.read" && call.result && call.result.ok);
+    const readAny = (run.toolCalls || []).some((call) => (
+      call.name === "file.read" && call.result && call.result.ok
+    ));
+    if (String(text || "").trim() && (listed || run.workspaceInspected || readAny)) {
       const evidence = [];
       if (listed) evidence.push("dir.list");
       if (readAny) evidence.push("file.read");
