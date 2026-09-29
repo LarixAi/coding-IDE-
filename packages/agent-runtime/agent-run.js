@@ -1519,10 +1519,23 @@ async function maybeDiagnoseBrowserFailure(run, registry, store, record) {
   const definitions = registry && typeof registry.definitions === "function" ? registry.definitions() : [];
   const names = new Set(definitions.map((tool) => tool && tool.name).filter(Boolean));
 
+  const failureCode = String(record.result && record.result.error && record.result.error.code || "");
+  const failureStatus = Number(record.result && record.result.data && record.result.data.statusCode || 0);
   if (names.has("process.status")) {
     const statusResult = await runtimeInspectionCall(run, registry, store, "process.status", {});
     const data = statusResult && statusResult.data;
-    if (statusResult && statusResult.ok && data && data.status === "failed" && names.has("process.logs")) {
+    const shouldReadLogs = Boolean(
+      names.has("process.logs")
+      && statusResult
+      && statusResult.ok
+      && data
+      && (
+        data.status === "failed"
+        || failureCode === "page_status"
+        || failureStatus >= 500
+      )
+    );
+    if (shouldReadLogs) {
       await runtimeInspectionCall(run, registry, store, "process.logs", {});
     }
   }
@@ -1534,11 +1547,14 @@ async function maybeDiagnoseBrowserFailure(run, registry, store, record) {
 
   const pageStatus = record.result && record.result.data && record.result.data.statusCode;
   const reachable = Number(pageStatus) >= 200 && Number(pageStatus) < 400;
+  const serverError = Number(pageStatus) >= 500 || failureCode === "page_status";
   run.messages.push({
     role: "user",
-    content: reachable
-      ? "The browser reached the application server but verification failed on page/assets. Do not repeat browser.check unchanged. CodeMe has collected process/server evidence. Diagnose the preview route/static web root or repair the relevant server/client file before checking again."
-      : "Browser verification could not reach a valid application page. Do not repeat browser.check unchanged. Use the process/server evidence CodeMe just collected; start or repair the owned process only if that evidence shows it is needed.",
+    content: serverError
+      ? "The preview returned a server-side HTTP error. CodeMe has collected process status/logs and server-file evidence. Do not rewrite the already-correct page and do not repeat browser.check unchanged. Repair the server/runtime cause shown by that evidence, restart the owned process if the server file changes, then verify again."
+      : reachable
+        ? "The browser reached the application server but verification failed on page/assets. Do not repeat browser.check unchanged. CodeMe has collected process/server evidence. Diagnose the preview route/static web root or repair the relevant server/client file before checking again."
+        : "Browser verification could not reach a valid application page. Do not repeat browser.check unchanged. Use the process/server evidence CodeMe just collected; start or repair the owned process only if that evidence shows it is needed.",
   });
   if (run.progress) {
     run.progress.focus = true;
@@ -1625,6 +1641,14 @@ async function maybeVerifyBrowserEditAfterWrite(run, registry, store) {
   const writes = successfulWrites(run);
   if (!writes.length) return false;
   const lastWrite = writes[writes.length - 1];
+  const failedBrowser = latestFailedBrowserCheck(run);
+  if (
+    failedBrowser
+    && failedBrowser.index < (run.toolCalls || []).indexOf(lastWrite)
+    && !browserRepairActionIsRelevant(run, failedBrowser.call, lastWrite)
+  ) {
+    return false;
+  }
   const changed = uniqueWrittenPaths(writes);
   if (!changed.every((file) => wasReadAfterMutation(run, file))) return false;
   await maybeRestartServerRuntimeAfterEdit(run, registry, store, lastWrite);
@@ -2128,25 +2152,67 @@ function recordRuleDecision(run, decision, requestedCall) {
   run.events.push({ type: "rule_decision", ...record });
 }
 
-function browserFailureNeedsRepair(run) {
+function latestFailedBrowserCheck(run) {
   const calls = (run && run.toolCalls) || [];
-  let failedIndex = -1;
   for (let index = calls.length - 1; index >= 0; index -= 1) {
     const call = calls[index];
     if (call && call.name === "browser.check" && browserInfrastructureFailure(call)) {
-      failedIndex = index;
-      break;
+      return { call, index };
     }
-    if (call && (call.name === "file.patch" || call.name === "file.write") && call.result && call.result.ok) return false;
+    if (call && call.name === "browser.check" && call.result && call.result.ok) break;
   }
-  if (failedIndex < 0) return false;
-  return !calls.slice(failedIndex + 1).some((call) => (
-    call
-    && (
-      ((call.name === "file.patch" || call.name === "file.write") && call.result && call.result.ok)
-      || (call.name === "process.start" && call.result && call.result.ok)
-    )
-  ));
+  return null;
+}
+
+function failedAssetWorkspacePaths(run, failedCall) {
+  const result = failedCall && failedCall.result;
+  const data = result && result.data;
+  const assets = data && Array.isArray(data.assets) ? data.assets : [];
+  const paths = new Set();
+  for (const asset of assets) {
+    if (!asset || asset.ok !== false) continue;
+    const value = String(asset.path || "").replace(/^\//, "").replace(/\\/g, "/");
+    if (!value) continue;
+    paths.add(value);
+    if (run && run.explicitExistingFiles && run.explicitExistingFiles.some((file) => file.startsWith("public/"))) {
+      paths.add(`public/${value}`);
+    }
+  }
+  return paths;
+}
+
+function browserRepairActionIsRelevant(run, failedCall, call) {
+  if (!call || !call.result || call.result.ok !== true) return false;
+  if (call.name === "process.start") return true;
+  if ((call.name !== "file.patch" && call.name !== "file.write") || (call.result.data && call.result.data.noChange)) return false;
+
+  const filePath = String(call.args && call.args.path || "").replace(/\\/g, "/");
+  if (!filePath) return false;
+  if (isServerRuntimeFile(run, filePath) || /(^|\/)package\.json$/i.test(filePath)) return true;
+
+  const code = String(failedCall && failedCall.result && failedCall.result.error && failedCall.result.error.code || "");
+  const status = Number(failedCall && failedCall.result && failedCall.result.data && failedCall.result.data.statusCode || 0);
+
+  // A 5xx page is a server/runtime failure when the workspace has a server entry.
+  // Do not treat unrelated HTML rewrites as a repair and immediately retry the browser.
+  if ((code === "page_status" || status >= 500) && topLevelServerCandidate(run)) return false;
+
+  if (code === "asset_status" || code === "asset_unavailable" || code === "asset_mime") {
+    const failedAssets = failedAssetWorkspacePaths(run, failedCall);
+    if (failedAssets.has(filePath)) return true;
+    // The document itself can legitimately repair a bad <script>/<link> reference.
+    if (/\.html?$/i.test(filePath)) return true;
+    return false;
+  }
+
+  return true;
+}
+
+function browserFailureNeedsRepair(run) {
+  const failed = latestFailedBrowserCheck(run);
+  if (!failed) return false;
+  const calls = (run && run.toolCalls) || [];
+  return !calls.slice(failed.index + 1).some((call) => browserRepairActionIsRelevant(run, failed.call, call));
 }
 
 function toolsForRun(run, localTools, capabilityTools) {
