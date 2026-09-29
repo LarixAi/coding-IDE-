@@ -113,8 +113,16 @@ function isLocalFollowUp(goal) {
 
 function isReadAllFilesGoal(goal) {
   const text = String(goal || "").toLowerCase();
-  return /\b(read|review|inspect|look through|go through)\b/.test(text)
+  const explicitAllFiles = /\b(read|review|inspect|look through|go through)\b/.test(text)
     && /\b(all|every)\b[\s\S]{0,40}\bfiles?\b/.test(text);
+  if (explicitAllFiles) return true;
+
+  // "Read this project and tell me what it does" is a project-understanding
+  // request, not merely a directory listing. For small projects the runtime
+  // should gather file contents before asking the model to explain them.
+  return /\b(read|review|inspect|look through|go through|understand)\b/.test(text)
+    && /\b(this|the)\s+(project|repo|repository|codebase)\b/.test(text)
+    && /\b(what it does|how it works|understand|explain|tell me|overview|summari[sz]e)\b/.test(text);
 }
 
 function isWorkspaceInventory(goal) {
