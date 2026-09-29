@@ -152,6 +152,20 @@ function successfulCallAfter(run, startIndex, names) {
   return null;
 }
 
+function latestOwnedPreviewUrl(run) {
+  const calls = Array.isArray(run && run.toolCalls) ? run.toolCalls : [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (!call || !call.result || !call.result.ok) continue;
+    if (!["process.start", "process.status", "process.logs"].includes(call.name)) continue;
+    const data = call.result.data;
+    if (!data || typeof data !== "object") continue;
+    const url = data.url || (data.session && data.session.url) || data.origin || "";
+    if (typeof url === "string" && url.trim()) return url.trim();
+  }
+  return "";
+}
+
 function diagnosticsErrors(result) {
   const items = result && result.data && Array.isArray(result.data.items) ? result.data.items : [];
   return items.filter((item) => {
@@ -262,13 +276,16 @@ async function createVerifier(run, context) {
     if (webChanged && isWebGoal(run.goal) && latestMutation >= 0) {
       const required = isInteractiveGoal(run.goal) ? "browser.interact" : "browser.check";
       const observed = successfulCallAfter(run, latestMutation, new Set([required]));
+      const ownedPreviewUrl = latestOwnedPreviewUrl(run);
       items.push({
         id: "browser",
         label: required === "browser.interact" ? "Real browser interaction" : "Browser verification",
         ok: Boolean(observed),
         detail: observed
           ? "A successful " + required + " ran after the latest edit"
-          : "Run " + required + " after the latest edit. Start/reuse the owned preview with process.start and inspect process.logs if you need the real URL.",
+          : ownedPreviewUrl
+            ? "Run " + required + " after the latest edit using the CodeMe-owned preview at " + ownedPreviewUrl + ". Do not invent another port."
+            : "Run process.start first, then run " + required + ". The browser tool will automatically use the CodeMe-owned preview URL.",
       });
       if (observed) evidence.push(required);
     }
