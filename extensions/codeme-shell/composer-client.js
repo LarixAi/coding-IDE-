@@ -152,6 +152,7 @@ function visibleNarration(value) {
   if (!text) return "";
   if (/<tool_call>[\s\S]*<\/tool_call>/i.test(text)) return "";
   if (/^\s*\{[\s\S]*"(?:name|tool)"\s*:/i.test(text)) return "";
+  if (/\`\`\`(?:json)?[\s\S]*"(?:name|tool)"\s*:[\s\S]*"(?:arguments|args)"\s*:/i.test(text)) return "";
   return text.slice(0, 1000);
 }
 
