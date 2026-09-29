@@ -1921,6 +1921,13 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
       previewTarget: previewTargetFromRun(run),
       requireFailureBeforeEdit: requiresFailureBeforeEdit(run && run.goal),
       browserFailureObserved: browserFailureObserved(run),
+      serverHttp5xxFailure: Boolean(latestUnresolvedServerHttpFailure(run)),
+      serverHttp5xxFrontendTarget: Boolean(
+        requestedCall
+        && (requestedCall.name === "file.patch" || requestedCall.name === "file.write")
+        && /(^|\/)(public\/|src\/)?[^/]+\.(html?|css)$/i.test(String(requestedCall.args && requestedCall.args.path || "").replace(/\\/g, "/"))
+        && !isServerRuntimeFile(run, String(requestedCall.args && requestedCall.args.path || ""))
+      ),
       failedProcessNeedsLogs: failedProcessNeedsLogs(run),
       requireExternalEvidenceBeforeEdit: requiresExternalEvidenceForRun(run),
       endToEndRuntimeTask: requiresEndToEndVerification(run),
