@@ -52,7 +52,7 @@ function summarize(result) {
 
 function recordTool(run, call, result, directedBy) {
   const external = String(call && call.name || "").startsWith("capability.")
-    || String(call && call.name || "").startsWith("mcp_n8n_");
+    || Boolean(result && result.trusted === false);
   const record = {
     id: call.id || "call_" + crypto.randomBytes(4).toString("hex"),
     iteration: run.iteration,
