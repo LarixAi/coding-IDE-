@@ -160,7 +160,7 @@ async function testVerificationRepair() {
       text: "",
       toolCalls: [{
         name: "file.write",
-        args: { path: "index.html", contents: "<button>New</button>\n" },
+        args: { path: "index.html", contents: "<button id=\\\"demo\\\">Click Me</button>\n" },
       }],
     },
     { text: "Updated the button.", toolCalls: [] },
@@ -183,8 +183,8 @@ async function testVerificationRepair() {
   assert.strictEqual(run.lifecycle, "completed");
   assert.strictEqual(run.verification.status, "passed");
   assert.ok(run.repairs.some((item) => item.reason === "verification_failed"));
-  assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.result.ok));
-  assert.ok(run.verification.evidence.includes("browser.check"));
+  assert.ok(run.toolCalls.some((call) => call.name === "browser.interact" && call.result.ok));
+  assert.ok(run.verification.evidence.includes("browser.interact"));
   assert.ok(provider.calls.some((call) => call.messages.some((message) => /VERIFICATION FAILED/.test(String(message.content || "")))));
   for (const call of provider.calls) {
     const offered = new Set(call.tools.map((tool) => tool.name));
