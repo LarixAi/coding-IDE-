@@ -11,6 +11,16 @@ const { instructionsForMode } = require("./pipeline-instructions");
 const { runPipeline } = require("./pipeline-loop");
 
 const MUTATION_TOOLS = new Set(["file.write", "file.patch", "dir.create"]);
+const READ_ONLY_BLOCKED = new Set([
+  "file.write",
+  "file.patch",
+  "dir.create",
+  "terminal.run",
+  "sandbox.run",
+  "process.start",
+  "tests.run",
+  "browser.interact",
+]);
 const CODE_FILE = /\.(?:js|mjs|cjs|jsx|ts|tsx|py|go|rs|java|cs|rb|php|swift|dart|c|cc|cpp|h|hpp)$/i;
 const WEB_FILE = /\.(?:html?|css|js|jsx|ts|tsx)$/i;
 
@@ -324,7 +334,9 @@ async function executePipelineRun(run, options, followUpQueue) {
     if (listed.length) capabilityDefinitions = capabilityToolDefinitions(listed);
   }
 
-  const baseDefinitions = run.mode === "chat_only" ? [] : registry.definitions();
+  const baseDefinitions = run.mode === "chat_only"
+    ? []
+    : registry.definitions().filter((tool) => run.mode !== "read_only" || !READ_ONLY_BLOCKED.has(tool.name));
   const definitions = [...baseDefinitions, ...capabilityDefinitions];
   const context = buildModelContext({
     goal: run.goal,
@@ -362,7 +374,13 @@ async function executePipelineRun(run, options, followUpQueue) {
 
     let result;
     try {
-      if (name === "capability.list" || name === "capability.invoke") {
+      if (run.mode === "read_only" && READ_ONLY_BLOCKED.has(name)) {
+        result = {
+          ok: false,
+          tool: name,
+          error: { code: "mutation_blocked", message: name + " is not available in read-only mode." },
+        };
+      } else if (name === "capability.list" || name === "capability.invoke") {
         result = await dispatchCapability(options.capabilities, run, call, signal, capabilityRegistry);
       } else if (name === "process.start") {
         const status = await safeContextCall(registry, "process.status", {});
