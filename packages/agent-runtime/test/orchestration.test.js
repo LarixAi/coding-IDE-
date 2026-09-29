@@ -2213,7 +2213,7 @@ async function main() {
     });
     assert.strictEqual(resumed.lifecycle, "completed");
     assert.strictEqual(resumed.outcome.status, "completed");
-    assert.strictEqual(host.state.reads, 1);
+    assert.strictEqual(resumed.toolCalls.filter((call) => call.name === "file.read" && call.directedBy !== "runtime").length, 1);
     assert.strictEqual(resumed.filesChanged.length, 0);
     const callsBefore = provider.calls.length;
     const again = await resumeRun(resumed.id, { provider, registry, store });
