@@ -94,7 +94,7 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("codeme.ask", () => vscode.commands.executeCommand("codeme.agent.focus")),
     vscode.commands.registerCommand("codeme.attach", () => composer.pickFiles()),
-    vscode.commands.registerCommand("codeme.hideStart", () => emptyEditor.dispose()),
+    vscode.commands.registerCommand("codeme.hideStart", () => emptyEditor.suppress(1500)),
   );
 }
 
@@ -250,9 +250,14 @@ class WelcomePanel {
 class EmptyEditorPanel {
   constructor() {
     this.panel = undefined;
+    this.suppressedUntil = 0;
   }
 
   sync() {
+    if (Date.now() < this.suppressedUntil) {
+      this.dispose();
+      return;
+    }
     if (!folderOpen()) {
       this.dispose();
       return;
@@ -306,6 +311,11 @@ class EmptyEditorPanel {
       return;
     }
     if (message.action === "ask") await vscode.commands.executeCommand("codeme.agent.focus");
+  }
+
+  suppress(durationMs = 1000) {
+    this.suppressedUntil = Math.max(this.suppressedUntil, Date.now() + Math.max(0, Number(durationMs) || 0));
+    this.dispose();
   }
 
   dispose() {
