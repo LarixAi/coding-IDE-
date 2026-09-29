@@ -236,6 +236,11 @@ async function main() {
   assert.ok(html.includes("code-preview"));
   assert.ok(html.includes("tool-stats"));
   assert.ok(html.includes("project-decision"));
+  assert.ok(html.includes("composer:focus-within"));
+  assert.ok(html.includes("Loading model…"));
+  assert.ok(html.includes("No model connected"));
+  assert.ok(html.includes("#model { flex: 0 1 190px"));
+  assert.ok(html.includes("border: 1px solid #343b46"));
   assert.ok(html.includes("renderProjectDecision"));
   assert.ok(html.includes("No dependencies required"));
   assert.ok(html.includes("Created "));
