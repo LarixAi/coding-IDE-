@@ -72,21 +72,29 @@ function activate(context) {
     applyConnection(connection, state);
     applyHub(hubItem, state);
   };
-  refreshConnection(state).then(() => {
+  const refreshModels = () => composer.sync().then(() => {
     applyConnection(connection, state);
-    applyHub(hubItem, state);
-    composer.sync();
     welcome.render();
-    console.log(`CodeMe connection: ${state.grade}`);
+    console.log(`CodeMe model discovery: ${state.detail}`);
+  }).catch((error) => {
+    state.grade = "chat_only";
+    state.detail = `Model discovery failed: ${error instanceof Error ? error.message : String(error)}`;
+    applyConnection(connection, state);
   });
+  refreshModels();
+
   const refreshHub = () => probeHub().then((hub) => {
     state.hub = hub;
     applyHub(hubItem, state);
-    composer.sync();
   });
   refreshHub();
+
+  const modelTimer = setInterval(refreshModels, 15000);
   const hubTimer = setInterval(refreshHub, 15000);
-  context.subscriptions.push({ dispose: () => clearInterval(hubTimer) });
+  context.subscriptions.push(
+    { dispose: () => clearInterval(modelTimer) },
+    { dispose: () => clearInterval(hubTimer) },
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codeme.showConnection", () => {
@@ -388,6 +396,77 @@ async function probeHub() {
   return { connected: true, capabilities, detail };
 }
 
+async function discoverConfiguredModels() {
+  const localUrl = process.env.CODEME_LOCAL_OLLAMA_URL || process.env.CODEME_OLLAMA_URL || "http://127.0.0.1:11434";
+  const serverUrl = process.env.CODEME_SERVER_OLLAMA_URL || "";
+  const endpoints = [
+    { id: "local", label: "Local", provider: "ollama-local", url: localUrl, configured: true },
+    { id: "server", label: "Server", provider: "ollama-server", url: serverUrl, configured: Boolean(serverUrl) },
+  ];
+
+  const results = await Promise.all(endpoints.map(async (endpoint) => {
+    if (!endpoint.configured) {
+      return {
+        source: {
+          id: endpoint.id,
+          label: endpoint.label,
+          configured: false,
+          available: false,
+          count: 0,
+          message: "Not configured",
+        },
+        models: [],
+      };
+    }
+    try {
+      const models = await listOllamaModels(
+        endpoint.url,
+        endpoint.provider,
+        endpoint.label,
+        { strict: true },
+      );
+      return {
+        source: {
+          id: endpoint.id,
+          label: endpoint.label,
+          configured: true,
+          available: true,
+          count: models.length,
+          message: models.length ? `${models.length} model${models.length === 1 ? "" : "s"}` : "No models installed",
+        },
+        models,
+      };
+    } catch (error) {
+      return {
+        source: {
+          id: endpoint.id,
+          label: endpoint.label,
+          configured: true,
+          available: false,
+          count: 0,
+          message: error instanceof Error ? error.message : String(error),
+        },
+        models: [],
+      };
+    }
+  }));
+
+  return {
+    models: results.flatMap((item) => item.models),
+    sources: results.map((item) => item.source),
+  };
+}
+
+function modelDiscoveryDetail(snapshot) {
+  const sources = (snapshot && snapshot.modelSources) || [];
+  if (!sources.length) return "No model sources have been checked yet.";
+  return sources.map((source) => {
+    if (!source.configured) return `${source.label}: not configured`;
+    if (!source.available) return `${source.label}: unavailable`;
+    return `${source.label}: ${source.count} model${source.count === 1 ? "" : "s"}`;
+  }).join(" · ");
+}
+
 function applyConnection(item, state) {
   if (state.grade === "chat_only") {
     item.text = "$(sparkle) model offline";
@@ -527,17 +606,7 @@ class ComposerViewProvider {
         getMode: () => context.globalState.get("codeme.mode") || "read_only",
         setMode: (value) => context.globalState.update("codeme.mode", value),
       },
-      listModels: async () => {
-        const localUrl = process.env.CODEME_LOCAL_OLLAMA_URL || process.env.CODEME_OLLAMA_URL || "http://127.0.0.1:11434";
-        const serverUrl = process.env.CODEME_SERVER_OLLAMA_URL || "";
-        const [localResult, serverResult] = await Promise.allSettled([
-          listOllamaModels(localUrl, "ollama-local", "Local"),
-          serverUrl ? listOllamaModels(serverUrl, "ollama-server", "Server") : Promise.resolve([]),
-        ]);
-        const localModels = localResult.status === "fulfilled" ? localResult.value : [];
-        const serverModels = serverResult.status === "fulfilled" ? serverResult.value : [];
-        return localModels.concat(serverModels);
-      },
+      listModels: () => discoverConfiguredModels(),
       createProvider: (selection) => {
         if (!OllamaModelProvider) {
           throw Object.assign(new Error("Ollama provider is not connected"), { code: "unknown_provider" });
@@ -574,20 +643,31 @@ class ComposerViewProvider {
     await this.session.refreshModels();
   }
 
-  sync() {
-    if (!this.session) return;
+  async sync() {
+    if (!this.session) return null;
     this.session.setRoot(workspaceRoot());
-    this.session.refreshModels();
+    return this.session.refreshModels();
   }
 
   post(snapshot) {
-    if (!this.view) return;
     const selected = snapshot.selected;
+    const discovery = modelDiscoveryDetail(snapshot);
     if (selected) {
+      const recorded = readGrade();
+      this.state.grade = recorded === "read_only_qualified" || recorded === "limited_agent"
+        ? recorded
+        : "limited_agent";
       this.state.selectedLabel = selected.label;
-      this.state.detail = `${selected.label} is selected.`;
+      this.state.modelLabel = selected.label;
+      this.state.detail = `${selected.label} selected · ${discovery}`;
+    } else {
+      this.state.grade = "chat_only";
+      this.state.selectedLabel = "";
+      this.state.modelLabel = "";
+      this.state.detail = discovery;
     }
     if (this.refreshStatus) this.refreshStatus();
+    if (!this.view) return;
     this.view.webview.postMessage({ type: "state", readOnly: snapshot.mode !== "controlled", ...snapshot });
   }
 
@@ -625,6 +705,18 @@ class ComposerViewProvider {
     if (message.type === "select-model") {
       const result = this.session.selectModel(message.provider, message.id);
       if (!result.ok) this.view.webview.postMessage({ type: "rejected", code: result.code, message: result.message });
+      return;
+    }
+    if (message.type === "refresh-models") {
+      try {
+        await this.sync();
+      } catch (error) {
+        this.view.webview.postMessage({
+          type: "rejected",
+          code: "model_refresh_failed",
+          message: error instanceof Error ? error.message : "Could not refresh models.",
+        });
+      }
       return;
     }
     if (message.type === "select-mode") {
