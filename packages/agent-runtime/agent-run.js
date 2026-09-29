@@ -78,6 +78,9 @@ function createRun(options) {
     recoveryEditPending: false,
     recoveryEditAttempted: false,
     recoveryEditResearchIteration: null,
+    previewStartAttempted: false,
+    serverFailureEvidenceCaptured: "",
+    serverRuntimeRestartAttempted: false,
     maxRetries: options.maxRetries ?? 2,
     maxIdenticalActions: options.maxIdenticalActions ?? 4,
     actionCounts: {},
@@ -476,7 +479,7 @@ async function executeRun(run, options) {
             ruleDecision.action === "guard"
             && call.name === "process.start"
           )
-            ? await guardProcessStart(run, registry)
+            ? await guardProcessStart(run, registry, call)
             : null;
           if (processGuard) {
             result = processGuard;
@@ -611,7 +614,7 @@ async function executeRun(run, options) {
           role: "user",
           content: result.data.reused
             ? "A CodeMe preview process is already running. Do not call process.start again. Use browser.check to verify the current page."
-            : "Preview startup is managed by browser.check for this web repair. Do not call process.start again. Use browser.check now.",
+            : "The process guard suppressed this start. Use process.status/process.logs to resolve ownership before trying again.",
         });
       }
 
@@ -1450,7 +1453,7 @@ async function maybeRestartRepairedProcess(run, registry, store) {
       };
     } else {
       const processGuard = ruleDecision.action === "guard"
-        ? await guardProcessStart(run, registry)
+        ? await guardProcessStart(run, registry, call)
         : null;
       result = processGuard || await registry.call(call.name, call.args);
     }
@@ -1541,7 +1544,7 @@ async function maybeStartOwnedProcessForVerification(run, registry, store) {
       };
     } else {
       const processGuard = ruleDecision.action === "guard"
-        ? await guardProcessStart(run, registry)
+        ? await guardProcessStart(run, registry, call)
         : null;
       result = processGuard || await registry.call(call.name, call.args);
     }
@@ -1582,7 +1585,7 @@ async function maybeStartOwnedProcessForVerification(run, registry, store) {
   return true;
 }
 
-async function guardProcessStart(run, registry) {
+async function guardProcessStart(run, registry, requestedCall = null) {
   let evidence = latestProcessEvidence(run);
   let status = evidence.status;
   if (!status && registry && typeof registry.call === "function") {
@@ -1609,7 +1612,7 @@ async function guardProcessStart(run, registry) {
     }
   }
 
-  if (status && status.status === "running") {
+  if (status && status.status === "running" && !(requestedCall && requestedCall.args && requestedCall.args.restart === true)) {
     return {
       ok: true,
       tool: "process.start",
@@ -1636,20 +1639,6 @@ async function guardProcessStart(run, registry) {
         command: status.command || "",
         exitCode: status.exitCode,
         reason: "failed_process_requires_logs",
-      },
-    };
-  }
-
-  if (isBrowserEditTask(run) && !requiresOwnedProcess(run)) {
-    return {
-      ok: true,
-      tool: "process.start",
-      data: {
-        started: false,
-        suppressed: true,
-        reused: false,
-        status: status && status.status ? status.status : "unknown",
-        reason: "browser_check_owns_preview",
       },
     };
   }
@@ -2159,7 +2148,7 @@ function systemPrompt(options) {
       "Describing a file change or a capability call does not perform it. Use the matching tool.",
       "Use file.patch for a precise edit to an existing file and file.write for a new file or full replacement. Create folders with dir.create. Use process.start for a long-running preview server; do not use terminal.run for servers, mkdir, ls, or node -e.",
       "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
-      "For local website previews, do not start the server with terminal.run or background shell commands. Call browser.check on the HTML page; CodeMe owns preview startup and reuse. For user-visible interactions such as click/button/tap behaviour, browser.check is not enough: browser.interact must verify the real resulting text/state before finishing. For booking/form journeys, use one browser.interact action=sequence with fill steps, a submit click, and assertText for the confirmation; dependent form steps must stay in one sequence because each browser.interact call starts a fresh browser session.",
+      "For local website previews, never start the server with terminal.run or background shell commands. process.start is the only application/preview lifecycle owner; process.status and process.logs refer to that same session. browser.check is verification-only and will never start or restart a server. If browser.check reports preview_not_running, use process.start once, then retry browser.check. For user-visible interactions such as click/button/tap behaviour, browser.interact must verify the real result before finishing. For booking/form journeys, use one browser.interact action=sequence with fill steps, a submit click, and assertText for the confirmation; dependent form steps must stay in one sequence because each browser.interact call starts a fresh browser session.",
       runIsResearch(options)
         ? "This job is research and explanation. Do not edit files. Call the research capability at most once with input.problem, read the relevant workspace files, then answer."
         : isLayoutJob(options)
