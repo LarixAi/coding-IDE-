@@ -86,16 +86,20 @@ class FakeRegistry {
       return { ok: true, tool: name, data: { path: args.path, contents: this.files.get(args.path) } };
     }
     if (name === "file.write") {
+      const before = this.files.get(args.path);
+      const changed = before !== args.contents;
       this.files.set(args.path, args.contents);
-      return { ok: true, tool: name, data: { path: args.path, bytes: args.contents.length } };
+      return { ok: true, tool: name, data: { path: args.path, bytes: args.contents.length, changed, noOp: !changed } };
     }
     if (name === "file.patch") {
       const current = this.files.get(args.path);
       if (typeof current !== "string" || !current.includes(args.oldText)) {
         return { ok: false, tool: name, error: { code: "patch_not_found", message: "oldText not found" } };
       }
-      this.files.set(args.path, current.replace(args.oldText, args.newText));
-      return { ok: true, tool: name, data: { path: args.path } };
+      const after = current.replace(args.oldText, args.newText);
+      const changed = after !== current;
+      this.files.set(args.path, after);
+      return { ok: true, tool: name, data: { path: args.path, changed, noOp: !changed } };
     }
     if (name === "diagnostics.run") {
       return { ok: true, tool: name, data: { items: [] } };
@@ -196,6 +200,66 @@ async function testVerificationRepair() {
   }
 }
 
+
+async function testNoOpAfterBrowserDoesNotInvalidateVerification() {
+  const registry = new FakeRegistry();
+  const contents = "<button id=\"demo\">Click Me</button>\n";
+  const provider = new ScriptedProvider([
+    {
+      text: "",
+      toolCalls: [{ name: "file.write", args: { path: "index.html", contents } }],
+    },
+    {
+      text: "",
+      toolCalls: [{ name: "process.start", args: {} }],
+    },
+    {
+      text: "",
+      toolCalls: [{
+        name: "browser.interact",
+        args: {
+          url: "http://127.0.0.1:4173/",
+          action: "click",
+          targetText: "Click Me",
+          expectedText: "It works!",
+        },
+      }],
+    },
+    (input) => {
+      const all = input.messages.map((message) => String(message.content || "")).join("\n");
+      assert.match(all, /requested real-browser interaction has succeeded/i);
+      assert.match(all, /Do not make cosmetic, cleanup, or speculative changes/i);
+      return {
+        text: "",
+        toolCalls: [{ name: "file.write", args: { path: "index.html", contents } }],
+      };
+    },
+    { text: "The button interaction is working and verified.", toolCalls: [] },
+  ]);
+
+  const run = await startPipelineRun({
+    goal: "Fix the website button so clicking Click Me changes it to It works! and verify the real browser interaction.",
+    model: "fixture",
+    providerName: "fixture-local",
+    provider,
+    registry,
+    store: storeFor("noop-after-browser"),
+    mode: "controlled",
+    composerMode: "code",
+    maxIterations: 8,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  assert.strictEqual(run.verification.status, "passed");
+  const writes = run.toolCalls.filter((call) => call.name === "file.write");
+  assert.strictEqual(writes.length, 2);
+  assert.strictEqual(writes[0].result.data.changed, true);
+  assert.strictEqual(writes[1].result.data.changed, false);
+  const browserIndex = run.toolCalls.findIndex((call) => call.name === "browser.interact" && call.result.ok);
+  const noopIndex = run.toolCalls.findIndex((call, index) => index > browserIndex && call.name === "file.write");
+  assert.ok(browserIndex >= 0 && noopIndex > browserIndex);
+  assert.ok(run.verification.evidence.includes("browser.interact"));
+}
 
 async function testExternalToolsStayVisibleAndUntrusted() {
   const registry = new FakeRegistry();
@@ -298,6 +362,14 @@ function testProviderStyleToolRecovery() {
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].name, "file.write");
   assert.strictEqual(calls[0].args.path, "index.html");
+
+  const embedded = recoverTextToolCalls(
+    'First, let me check the file.\n{"name":"file_read","arguments":{"path":"README.md"}}\nThen I will continue.',
+    new Set(["file.read"]),
+  );
+  assert.strictEqual(embedded.length, 1);
+  assert.strictEqual(embedded[0].name, "file.read");
+  assert.strictEqual(embedded[0].args.path, "README.md");
   console.log("ok provider-style qwen tool names");
 }
 
@@ -305,6 +377,7 @@ async function main() {
   testProviderStyleToolRecovery();
   await testAskLoop();
   await testVerificationRepair();
+  await testNoOpAfterBrowserDoesNotInvalidateVerification();
   await testExternalToolsStayVisibleAndUntrusted();
   await testLiveFollowUp();
   console.log("ok pipeline v2 cursor-style loop");
