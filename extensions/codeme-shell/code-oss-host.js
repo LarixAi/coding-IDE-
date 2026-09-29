@@ -269,6 +269,9 @@ async function startProcess(command) {
   ]);
 
   const snapshot = processSnapshot(record, true);
+  if (typeof terminal.hide === "function") {
+    try { terminal.hide(); } catch {}
+  }
   if (record.status === "failed") {
     return {
       ...snapshot,
