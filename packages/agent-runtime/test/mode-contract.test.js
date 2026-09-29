@@ -153,6 +153,32 @@ async function runPlanContract() {
   assert.ok(model.calls[0].messages[0].content.includes("CodeMe canonical gate contract v1"));
 }
 
+async function runCodeGateContract() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-mode-code-contract-"));
+  const store = new RunStore(path.join(dir, "runs"));
+  const registry = new FakeRegistry();
+  const model = new CaptureModel([{ text: "The workspace is a JavaScript project.", toolCalls: [] }]);
+
+  const run = await startAgentRun({
+    goal: "Inspect this project and tell me what it is.",
+    model: "fixture",
+    providerName: "capture",
+    provider: model,
+    registry,
+    store,
+    mode: "controlled",
+    composerMode: "code",
+    taskClass: "inspect",
+    maxIterations: 2,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  assert.ok(model.calls[0].messages[0].content.includes("You are a CodeMe agent run with workspace-scoped tools."));
+  assert.ok(model.calls[0].messages[0].content.includes("CodeMe canonical gate contract v1"));
+  assert.ok(model.calls[0].messages[0].content.includes("G6 Controlled coding"));
+  assert.ok(model.calls[0].messages[0].content.includes("G11 Autonomous agent hardening"));
+}
+
 function runChatRule() {
   const decision = resolveRuleDecision({
     call: { name: "file.read", args: { path: "README.md" } },
@@ -167,6 +193,7 @@ async function main() {
   await runChatContract();
   await runAskContract();
   await runPlanContract();
+  await runCodeGateContract();
   runChatRule();
   console.log("mode contracts passed");
 }
