@@ -85,6 +85,8 @@ async function runChatContract() {
   assert.deepStrictEqual(registry.calls, [], "Chat must not auto-inspect or call workspace tools");
   assert.deepStrictEqual(model.calls[0].tools, [], "Chat must expose zero tools");
   assert.ok(model.calls[0].messages[0].content.includes("Chat mode"));
+  assert.ok(model.calls[0].messages[0].content.includes("CodeMe canonical gate contract v1"));
+  assert.ok(model.calls[0].messages[0].content.includes("G11 Autonomous agent hardening"));
   assert.strictEqual(run.filesChanged.length, 0);
 }
 
@@ -114,6 +116,8 @@ async function runAskContract() {
   assert.ok(!offered.has("file.write"));
   assert.ok(!offered.has("terminal.run"));
   assert.ok(!offered.has("browser.check"));
+  assert.ok(model.calls[0].messages[0].content.includes("CodeMe canonical gate contract v1"));
+  assert.ok(model.calls[0].messages[0].content.includes("CodeMe runtime owns workspace state"));
 }
 
 async function runPlanContract() {
@@ -146,6 +150,7 @@ async function runPlanContract() {
   assert.ok(!offered.has("terminal.run"));
   assert.ok(!offered.has("browser.check"));
   assert.strictEqual(run.filesChanged.length, 0);
+  assert.ok(model.calls[0].messages[0].content.includes("CodeMe canonical gate contract v1"));
 }
 
 function runChatRule() {
