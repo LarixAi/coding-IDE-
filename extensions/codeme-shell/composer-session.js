@@ -184,6 +184,7 @@ class ComposerSession {
     this.thread = [];
     this.verification = null;
     this.projectDecision = null;
+    this.debug = null;
     this.diff = "";
     this.runId = "";
     this.requestId = "";
@@ -210,6 +211,7 @@ class ComposerSession {
       thread: this.thread.map((item) => ({ ...item })),
       verification: this.verification,
       projectDecision: this.projectDecision ? { ...this.projectDecision } : null,
+      debug: this.debug ? { ...this.debug } : null,
       diff: this.diff,
       models: this.models.map((model) => ({ ...model })),
       selected: this.selected ? { ...this.selected } : null,
@@ -288,6 +290,7 @@ class ComposerSession {
     this.tools = [];
     this.verification = null;
     this.projectDecision = null;
+    this.debug = null;
     this.diff = "";
     this.runId = "";
     this.requestId = "";
@@ -387,6 +390,7 @@ class ComposerSession {
     this.tools = [];
     this.verification = null;
     this.projectDecision = null;
+    this.debug = null;
     this.diff = "";
     this.active = {
       requestId,
@@ -473,6 +477,7 @@ class ComposerSession {
 
     this.verification = run.verification || null;
     this.projectDecision = run.projectDecision ? { ...run.projectDecision } : null;
+    this.debug = buildDebugDetails(run);
     this.outcome = run.outcome || null;
     this.error = run.lifecycle === "failed" && run.error ? run.error.message : "";
     this.notice = this.composerMode === "ask" && looksLikeWorkspaceEdit(run.goal || "")
@@ -528,6 +533,72 @@ class ComposerSession {
     this.active = null;
     this.emit();
   }
+}
+
+function buildDebugDetails(run) {
+  if (!run || run.lifecycle !== "failed") return null;
+  const decisions = Array.isArray(run.decisions) ? run.decisions : [];
+  const latestDecision = decisions.length ? decisions[decisions.length - 1] : null;
+  const recentDecisions = decisions.slice(-4).map((item) => ({
+    iteration: item.iteration,
+    text: String(item.text || "").slice(0, 6000),
+    toolCalls: Array.isArray(item.toolCalls)
+      ? item.toolCalls.map((call) => ({
+        name: call && call.name ? String(call.name) : "",
+        args: compactDebugArgs(call && call.args),
+      }))
+      : [],
+  }));
+  const toolCalls = (run.toolCalls || []).slice(-8).map((call) => ({
+    iteration: call.iteration,
+    name: call.name,
+    args: compactDebugArgs(call.args),
+    routedFrom: call.routedFrom || null,
+    ok: Boolean(call.result && call.result.ok),
+    error: call.result && call.result.error
+      ? {
+        code: call.result.error.code || "",
+        message: String(call.result.error.message || "").slice(0, 2000),
+      }
+      : null,
+    rule: call.ruleDecision || null,
+  }));
+  const progress = run.progress || {};
+  return {
+    runId: run.id || "",
+    error: run.error ? { code: run.error.code || "", message: run.error.message || "" } : null,
+    outcome: run.outcome || null,
+    verification: run.verification || null,
+    model: run.effectiveModel || run.model || "",
+    provider: run.providerName || "",
+    mode: run.composerMode || run.mode || "",
+    taskClass: run.taskClass || "",
+    iteration: run.iteration || 0,
+    filesRead: Array.isArray(progress.filesRead) ? progress.filesRead.slice(-30) : [],
+    semanticStagnation: Number(progress.semanticStagnation) || 0,
+    stagnantTurns: Number(progress.stagnantTurns) || 0,
+    lastDecisionHadTools: Boolean(latestDecision && Array.isArray(latestDecision.toolCalls) && latestDecision.toolCalls.length),
+    recentDecisions,
+    recentTools: toolCalls,
+    diagnoses: Array.isArray(run.diagnoses) ? run.diagnoses.slice(-6) : [],
+  };
+}
+
+function compactDebugArgs(args) {
+  if (!args || typeof args !== "object") return {};
+  const result = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (key === "contents" && typeof value === "string") {
+      result[key] = `[${value.length} chars] ${value.slice(0, 500)}`;
+    } else if ((key === "oldText" || key === "newText") && typeof value === "string") {
+      result[key] = value.slice(0, 1000);
+    } else if (typeof value === "string") {
+      result[key] = value.slice(0, 1200);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 function conversationMessages(conversation) {
