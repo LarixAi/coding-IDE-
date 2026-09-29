@@ -65,8 +65,10 @@ class OllamaModelProvider extends ModelProvider {
     if (input.signal) signals.push(input.signal);
     const signal = AbortSignal.any(signals);
     try {
-      const response = await postJson(this.baseUrl, "/api/chat", chatBody(input), signal);
+      const toolMode = ollamaToolMode(input.model);
+      const response = await postJson(this.baseUrl, "/api/chat", chatBody(input, toolMode), signal);
       const decision = normalizeMessage(response.message || {}, input.tools || []);
+      decision.toolMode = toolMode;
       const promptTokens = typeof response.prompt_eval_count === "number" ? response.prompt_eval_count : null;
       const completionTokens = typeof response.eval_count === "number" ? response.eval_count : null;
       if (promptTokens !== null || completionTokens !== null) {
@@ -90,15 +92,62 @@ class OllamaModelProvider extends ModelProvider {
   }
 }
 
-function chatBody(input) {
-  return {
+function ollamaToolMode(model) {
+  const id = String(model || "").trim().toLowerCase();
+  // qwen2.5-coder frequently emits tool JSON in message.content rather than
+  // Ollama message.tool_calls. Give it one provider-independent system-tool
+  // protocol instead of relying on the native tool template.
+  if (/^qwen2\.5-coder(?::|$)/.test(id)) return "system";
+  return "native";
+}
+
+function systemToolProtocol(tools) {
+  const available = (tools || []).map((tool) => ({
+    name: PROVIDER_NAMES[tool.name] || tool.name,
+    description: tool.description || "",
+    parameters: tool.parameters || { type: "object", properties: {} },
+  }));
+  if (!available.length) return "";
+  return [
+    "CODEME TOOL PROTOCOL:",
+    "Use only the tools listed below. When an action is needed, do not describe or simulate it.",
+    "Return exactly one or more tool calls using this form and no prose:",
+    '<tool_call>{"name":"tool_name","arguments":{"key":"value"}}</tool_call>',
+    "Never invent a tool name. Never omit required arguments. Wait for the tool result before claiming success.",
+    "AVAILABLE TOOLS:",
+    JSON.stringify(available),
+  ].join("\n");
+}
+
+function messagesForToolMode(input, toolMode) {
+  const messages = (input.messages || []).map(toOllamaMessage);
+  if (toolMode !== "system" || !(input.tools || []).length) return messages;
+
+  const protocol = systemToolProtocol(input.tools || []);
+  const firstSystem = messages.findIndex((message) => message.role === "system");
+  if (firstSystem >= 0) {
+    messages[firstSystem] = {
+      ...messages[firstSystem],
+      content: `${messages[firstSystem].content || ""}\n\n${protocol}`,
+    };
+  } else {
+    messages.unshift({ role: "system", content: protocol });
+  }
+  return messages;
+}
+
+function chatBody(input, toolMode = ollamaToolMode(input.model)) {
+  const body = {
     model: input.model,
     stream: false,
     think: false,
-    messages: (input.messages || []).map(toOllamaMessage),
-    tools: (input.tools || []).map(toOllamaTool),
+    messages: messagesForToolMode(input, toolMode),
     options: { temperature: 0 },
   };
+  if (toolMode === "native" && (input.tools || []).length) {
+    body.tools = (input.tools || []).map(toOllamaTool);
+  }
+  return body;
 }
 
 function toOllamaMessage(message) {
@@ -180,6 +229,10 @@ function contentToolCalls(content, offeredTools) {
     if (candidate.startsWith("{") && candidate.endsWith("}")) candidates.push(candidate);
   }
 
+  for (const candidate of extractBalancedJsonObjects(text)) {
+    candidates.push(candidate);
+  }
+
   const calls = [];
   const seen = new Set();
   const rememberCall = (call) => {
@@ -201,6 +254,42 @@ function contentToolCalls(content, offeredTools) {
   }
 
   return calls;
+}
+
+function extractBalancedJsonObjects(text) {
+  const source = String(text || "");
+  const objects = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+      continue;
+    }
+    if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(source.slice(start, index + 1));
+        start = -1;
+      }
+    }
+  }
+  return objects;
 }
 
 function parseContentToolCall(text, offeredTools) {
