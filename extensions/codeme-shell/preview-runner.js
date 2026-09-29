@@ -316,7 +316,9 @@ function extractLocalAssets(html, pageUrl) {
   const linkPattern = /<link\b[^>]*>/gi;
   for (const match of String(html || "").matchAll(linkPattern)) {
     const tag = match[0];
-    if (!/\brel\s*=\s*(?:"[^"]*stylesheet[^"]*"|'[^']*stylesheet[^']*'|stylesheet)\b/i.test(tag)) continue;
+    const rel = (tag.match(/\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i) || []);
+    const relValue = rel[1] || rel[2] || rel[3] || "";
+    if (!/(^|\s)stylesheet(\s|$)/i.test(relValue.trim())) continue;
     const href = (tag.match(/\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i) || []);
     add("style", href[1] || href[2] || href[3] || "");
   }
