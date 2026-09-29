@@ -17,6 +17,7 @@ const STATIC_SCAFFOLD_TOOLS = new Set([
   "file.read",
   "browser.check",
   "browser.interact",
+  "process.start",
 ]);
 
 const READ_ONLY_BLOCKED_TOOLS = new Set([
@@ -198,6 +199,17 @@ function resolveRuleDecision(input = {}) {
         "strategy.static_site",
         "deny",
         "This project was classified as a dependency-free static website. Use only workspace file/folder tools and browser verification; do not use terminal, process, tests, npm, frameworks, or external capabilities.",
+        originalCall,
+      ));
+    } else if (
+      name === "process.start"
+      && String(originalCall.args && originalCall.args.command || "").trim()
+    ) {
+      candidates.push(candidate(
+        "strategy",
+        "strategy.static_site",
+        "deny",
+        "A dependency-free static site may use only CodeMe's commandless owned static preview session. Do not start npm or a custom server.",
         originalCall,
       ));
     } else if (
