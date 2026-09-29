@@ -182,14 +182,24 @@ function contentToolCalls(content, offeredTools) {
 
   const calls = [];
   const seen = new Set();
-  for (const candidate of candidates) {
-    const call = parseContentToolCall(candidate, offeredTools);
-    if (!call) continue;
+  const rememberCall = (call) => {
+    if (!call) return;
     const key = `${call.name}:${JSON.stringify(call.args || {})}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
     calls.push(call);
+  };
+
+  for (const candidate of candidates) {
+    rememberCall(parseContentToolCall(candidate, offeredTools));
   }
+
+  // Qwen3-Coder's native agent format may surface as raw content when the
+  // serving layer does not translate it into message.tool_calls.
+  for (const match of text.matchAll(/<tool_call>\s*<function=([^>\n]+)>\s*([\s\S]*?)<\/function>\s*<\/tool_call>/gi)) {
+    rememberCall(parseQwenXmlToolCall(match[1], match[2], offeredTools));
+  }
+
   return calls;
 }
 
@@ -221,6 +231,49 @@ function parseContentToolCall(text, offeredTools) {
   if (!validToolArguments(args, offered.parameters)) return null;
 
   return { name: offered.name, args };
+}
+
+function parseQwenXmlToolCall(providerName, body, offeredTools) {
+  const name = String(providerName || "").trim();
+  if (!name) return null;
+  const offered = (offeredTools || []).find((tool) => (
+    tool && (PROVIDER_NAMES[tool.name] || tool.name) === name
+  ));
+  if (!offered) return null;
+
+  const args = {};
+  for (const match of String(body || "").matchAll(/<parameter=([^>\n]+)>\s*([\s\S]*?)\s*<\/parameter>/gi)) {
+    const key = String(match[1] || "").trim();
+    if (!key) continue;
+    args[key] = coerceToolArgument(String(match[2] || "").trim(), offered.parameters, key);
+  }
+  if (!validToolArguments(args, offered.parameters)) return null;
+  return { name: offered.name, args };
+}
+
+function coerceToolArgument(value, schema, key) {
+  const properties = schema && schema.properties && typeof schema.properties === "object"
+    ? schema.properties
+    : {};
+  const rule = properties[key] || {};
+  const type = Array.isArray(rule.type) ? rule.type.find((item) => item !== "null") : rule.type;
+  if (type === "integer") {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : value;
+  }
+  if (type === "number") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : value;
+  }
+  if (type === "boolean") {
+    if (/^true$/i.test(value)) return true;
+    if (/^false$/i.test(value)) return false;
+    return value;
+  }
+  if (type === "array" || type === "object") {
+    try { return JSON.parse(value); } catch { return value; }
+  }
+  return value;
 }
 
 function validToolArguments(args, schema) {
