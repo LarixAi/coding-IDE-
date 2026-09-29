@@ -114,6 +114,9 @@ function renderComposer(nonce) {
     #attach { flex: 0 0 auto; }
     #mode { flex: 0 0 auto; max-width: 64px; color: #b8c0cb; }
     #model { min-width: 0; max-width: 118px; color: #b8c0cb; text-overflow: ellipsis; }
+    #model-refresh { flex: 0 0 auto; width: 22px; padding: 0; font-size: 13px; }
+    #model-refresh.loading { animation: codeme-spin 0.8s linear infinite; }
+    @keyframes codeme-spin { to { transform: rotate(360deg); } }
     #send { margin-left: auto; width: 24px; padding: 0; border-radius: 6px; background: #7fc9dd; color: #172027; font-size: 14px; font-weight: 700; }
     #send:hover { background: #91d7e8; color: #172027; }
     #send:disabled { opacity: 0.35; }
@@ -169,6 +172,7 @@ function renderComposer(nonce) {
             <option value="code">Code</option>
           </select>
           <select id="model" aria-label="Model"></select>
+          <button type="button" id="model-refresh" title="Refresh models" aria-label="Refresh models">↻</button>
           <span class="perm" id="perm"></span>
           <button type="button" id="stop" hidden title="Stop run" aria-label="Stop run">■</button>
           <button type="button" id="send" title="Send" aria-label="Send">↑</button>
@@ -184,6 +188,7 @@ function renderComposer(nonce) {
     const send = document.getElementById("send");
     const stop = document.getElementById("stop");
     const model = document.getElementById("model");
+    const modelRefresh = document.getElementById("model-refresh");
     const mode = document.getElementById("mode");
     const stage = document.getElementById("stage");
     const activity = document.getElementById("activity");
@@ -337,8 +342,17 @@ function renderComposer(nonce) {
     mic.addEventListener("click", startVoice);
     model.addEventListener("change", () => {
       const option = model.selectedOptions[0];
-      if (!option) return;
+      if (!option || !option.dataset.provider) return;
       vscode.postMessage({ type: "select-model", provider: option.dataset.provider, id: option.value });
+    });
+    modelRefresh.addEventListener("click", () => {
+      modelRefresh.classList.add("loading");
+      modelRefresh.disabled = true;
+      vscode.postMessage({ type: "refresh-models" });
+      setTimeout(() => {
+        modelRefresh.classList.remove("loading");
+        modelRefresh.disabled = false;
+      }, 1200);
     });
     mode.addEventListener("change", () => vscode.postMessage({ type: "select-mode", mode: mode.value }));
     const shell = document.querySelector(".shell");
@@ -410,21 +424,68 @@ function renderComposer(nonce) {
       send.setAttribute("aria-label", running ? "Add follow-up" : "Send");
       mode.disabled = running;
       model.disabled = running;
+      modelRefresh.disabled = false;
+      modelRefresh.classList.remove("loading");
       prompt.disabled = false;
       if (!sending) notice.textContent = state.notice || "";
       const picked = normalizeComposerMode(state.composerMode || state.mode);
       document.getElementById("perm").textContent = composerModeLabel(picked);
       mode.value = picked;
       model.innerHTML = "";
+      const sourceStates = Array.isArray(state.modelSources) ? state.modelSources : [];
+      const modelsBySource = new Map();
       for (const item of state.models || []) {
+        const source = item.source || (item.provider === "ollama-server" ? "Server" : item.provider === "ollama-local" ? "Local" : "Other");
+        if (!modelsBySource.has(source)) modelsBySource.set(source, []);
+        modelsBySource.get(source).push(item);
+      }
+
+      const renderedSources = new Set();
+      const addSourceGroup = (label, sourceState) => {
+        const items = modelsBySource.get(label) || [];
+        const group = document.createElement("optgroup");
+        group.label = label;
+        if (items.length) {
+          for (const item of items) {
+            const option = document.createElement("option");
+            option.value = item.id;
+            option.dataset.provider = item.provider;
+            option.dataset.source = item.source || label;
+            option.textContent = item.label;
+            option.selected = Boolean(state.selected && state.selected.id === item.id && state.selected.provider === item.provider);
+            group.appendChild(option);
+          }
+        } else {
+          const status = document.createElement("option");
+          status.disabled = true;
+          status.textContent = label + " · " + (
+            sourceState
+              ? (!sourceState.configured ? "not configured" : sourceState.available ? "no models installed" : "unavailable")
+              : "no models"
+          );
+          group.appendChild(status);
+        }
+        model.appendChild(group);
+        renderedSources.add(label);
+      };
+
+      for (const sourceState of sourceStates) addSourceGroup(sourceState.label, sourceState);
+      for (const [label] of modelsBySource) {
+        if (!renderedSources.has(label)) addSourceGroup(label, null);
+      }
+
+      if (!model.children.length) {
         const option = document.createElement("option");
-        option.value = item.id;
-        option.dataset.provider = item.provider;
-        option.dataset.source = "provider";
-        option.textContent = item.label;
-        option.selected = Boolean(state.selected && state.selected.id === item.id && state.selected.provider === item.provider);
+        option.disabled = true;
+        option.textContent = "No models available";
         model.appendChild(option);
       }
+
+      model.title = sourceStates.map((source) => {
+        if (!source.configured) return source.label + ": not configured";
+        if (!source.available) return source.label + ": unavailable";
+        return source.label + ": " + source.count + " model" + (source.count === 1 ? "" : "s");
+      }).join(" · ");
       chips.innerHTML = "";
       for (const item of state.attachments || []) {
         const chip = document.createElement("span");
