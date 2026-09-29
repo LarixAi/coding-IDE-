@@ -1,5 +1,7 @@
 # CodeMe IDE — Master Migration Blueprint
 
+> **Canonical current gate map:** the original blueprint numbering below is historical planning material. The implemented rebuild reused Gates 8–11 for n8n foundation, capability routing, research-assisted coding, and autonomous hardening. Use `docs/GATE_CONTRACT.md` as the authoritative current Gate 1–11 map.
+
 ## Mission
 
 Rebuild CodeMe on a clean **Code - OSS** foundation without losing what makes CodeMe CodeMe.
