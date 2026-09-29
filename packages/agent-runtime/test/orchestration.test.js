@@ -1798,8 +1798,7 @@ async function main() {
     const run = await handle.done;
     assert.strictEqual(run.lifecycle, "failed");
     assert.strictEqual(run.outcome.reason, "repeated_action");
-    assert.strictEqual(host.state.reads, 2);
-    assert.strictEqual(run.toolCalls.filter((call) => call.name === "file.read").length, 2);
+    assert.strictEqual(run.toolCalls.filter((call) => call.name === "file.read" && call.directedBy !== "runtime").length, 2);
     assert.strictEqual(run.filesChanged.length, 0);
   });
 
@@ -1821,7 +1820,7 @@ async function main() {
     });
     const run = await handle.done;
     assert.strictEqual(run.outcome.reason, "repeated_action");
-    assert.strictEqual(host.state.reads, 2);
+    assert.strictEqual(run.toolCalls.filter((call) => call.name === "file.read" && call.directedBy !== "runtime").length, 2);
   });
 
   await test("failed process logs must be read before a repair patch is allowed", async () => {
@@ -2127,8 +2126,9 @@ async function main() {
     const failedStart = startCalls.find((call) => call.result && call.result.ok === false);
     const logsIndex = run.toolCalls.findIndex((call) => call.name === "process.logs" && call.result && call.result.ok);
     const patchIndex = run.toolCalls.findIndex((call) => call.name === "file.patch" && call.result && call.result.ok);
-    const readBack = run.toolCalls.find((call) => (
-      call.name === "file.read"
+    const readBack = run.toolCalls.find((call, index) => (
+      index > patchIndex
+      && call.name === "file.read"
       && call.args
       && call.args.path === "server.js"
       && call.directedBy === "runtime"
@@ -2197,7 +2197,7 @@ async function main() {
     await assert.rejects(handle.done, (error) => error.code === "crash");
     const interrupted = store.load(handle.id);
     assert.strictEqual(interrupted.lifecycle, "interrupted");
-    assert.strictEqual(interrupted.toolCalls.filter((call) => call.name === "file.read").length, 1);
+    assert.strictEqual(interrupted.toolCalls.filter((call) => call.name === "file.read" && call.directedBy !== "runtime").length, 1);
     assert.strictEqual(interrupted.inFlight, null);
     const resumed = await resumeRun(handle.id, {
       provider,
