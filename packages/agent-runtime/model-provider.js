@@ -197,15 +197,26 @@ function parseContentToolCall(text, offeredTools) {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
 
-  const providerName = typeof parsed.name === "string" ? parsed.name.trim() : "";
+  // Small local models sometimes serialize a requested tool call into message
+  // content instead of Ollama's native tool_calls field. Accept only an offered
+  // tool and validate the normalized arguments against that tool's schema.
+  const providerName = typeof parsed.name === "string"
+    ? parsed.name.trim()
+    : typeof parsed.tool === "string"
+      ? parsed.tool.trim()
+      : "";
   if (!providerName) return null;
 
   const offered = (offeredTools || []).find((tool) => (
-    tool && (PROVIDER_NAMES[tool.name] || tool.name) === providerName
+    tool
+    && (
+      tool.name === providerName
+      || (PROVIDER_NAMES[tool.name] || tool.name) === providerName
+    )
   ));
   if (!offered) return null;
 
-  let args = parsed.arguments ?? parsed.args ?? {};
+  let args = parsed.arguments ?? parsed.args;
   if (typeof args === "string") {
     try {
       args = JSON.parse(args);
@@ -213,8 +224,30 @@ function parseContentToolCall(text, offeredTools) {
       return null;
     }
   }
-  if (!validToolArguments(args, offered.parameters)) return null;
 
+  if (args === undefined) {
+    args = {};
+    const properties = offered.parameters
+      && offered.parameters.properties
+      && typeof offered.parameters.properties === "object"
+      ? offered.parameters.properties
+      : {};
+    for (const key of Object.keys(properties)) {
+      if (Object.prototype.hasOwnProperty.call(parsed, key)) args[key] = parsed[key];
+    }
+
+    // Qwen commonly emits {"tool":"file.write","path":"...","content":"..."}
+    // even though CodeMe's canonical file.write field is "contents".
+    if (
+      offered.name === "file.write"
+      && !Object.prototype.hasOwnProperty.call(args, "contents")
+      && typeof parsed.content === "string"
+    ) {
+      args.contents = parsed.content;
+    }
+  }
+
+  if (!validToolArguments(args, offered.parameters)) return null;
   return { name: offered.name, args };
 }
 
