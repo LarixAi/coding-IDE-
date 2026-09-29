@@ -105,7 +105,9 @@ async function main() {
   fs.mkdirSync(path.join(publicRoot, "public"), { recursive: true });
   fs.writeFileSync(path.join(publicRoot, "public", "index.html"), "<title>Public</title><h1>CodeMe Final Test</h1>");
   fs.writeFileSync(path.join(publicRoot, "public", "style.css"), "body { font-family: sans-serif; }");
-  const publicFake = createFakeVscode(await freePort(), { value: 200 });
+  const publicPort = await freePort();
+  fs.writeFileSync(path.join(publicRoot, "README.md"), `Preview: http://127.0.0.1:${publicPort}\n`);
+  const publicFake = createFakeVscode(publicPort, { value: 200 });
   const publicSessions = createPreviewSessionManager(publicFake.vscode);
   const publicStart = await publicSessions.start(publicRoot, "");
   assert.strictEqual(publicStart.kind, "static");
