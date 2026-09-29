@@ -245,41 +245,30 @@ function resolveRuleDecision(input = {}) {
     && facts.browserEditTask
     && isPreviewStartCommand(originalCall.args && originalCall.args.command)
   ) {
-    if (facts.browserCheckAvailable !== false) {
-      const rewritten = {
-        name: "browser.check",
-        args: { url: facts.previewTarget || "index.html" },
-        routedFrom: {
-          name: "terminal.run",
-          command: String((originalCall.args && originalCall.args.command) || ""),
-        },
-      };
-      candidates.push(candidate(
-        "phase",
-        "phase.browser_preview_owner",
-        "rewrite",
-        "Browser-visible edits use browser.check for preview startup and verification instead of a terminal server command.",
-        rewritten,
-        { originalTool: "terminal.run" },
-      ));
-    } else {
-      candidates.push(candidate(
-        "phase",
-        "phase.browser_preview_unavailable",
-        "deny",
-        "This browser-visible edit requires browser.check, but that tool is unavailable.",
-        originalCall,
-        { code: "tool_unavailable" },
-      ));
-    }
+    const rewritten = {
+      name: "process.start",
+      args: { command: String((originalCall.args && originalCall.args.command) || "") },
+      routedFrom: {
+        name: "terminal.run",
+        command: String((originalCall.args && originalCall.args.command) || ""),
+      },
+    };
+    candidates.push(candidate(
+      "phase",
+      "phase.preview_session_owner",
+      "rewrite",
+      "Long-running browser-visible servers are owned by process.start; browser.check is verification-only.",
+      rewritten,
+      { originalTool: "terminal.run" },
+    ));
   }
 
   if (name === "process.start" && facts.browserEditTask) {
     candidates.push(candidate(
       "phase",
-      "phase.browser_preview_owner",
+      "phase.preview_session_owner",
       "guard",
-      "Browser-visible edits delegate process reuse/start decisions to the process guard; browser.check owns preview verification.",
+      "Browser-visible edits delegate all application server lifecycle decisions to the single process session; browser.check is verification-only.",
       originalCall,
     ));
   }
