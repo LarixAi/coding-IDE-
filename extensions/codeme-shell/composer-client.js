@@ -147,12 +147,36 @@ function compactTools(run) {
   return items.slice(-40);
 }
 
-function visibleNarration(value) {
+function isToolProtocolJsonLine(value) {
   const text = String(value || "").trim();
+  if (!text || !text.startsWith("{") || !text.endsWith("}")) return false;
+  try {
+    const parsed = JSON.parse(text);
+    return Boolean(
+      parsed
+      && typeof parsed === "object"
+      && !Array.isArray(parsed)
+      && (parsed.name || parsed.tool)
+      && (parsed.arguments !== undefined || parsed.args !== undefined)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function visibleNarration(value) {
+  let text = String(value || "").trim();
   if (!text) return "";
-  if (/<tool_call>[\s\S]*<\/tool_call>/i.test(text)) return "";
-  if (/^\s*\{[\s\S]*"(?:name|tool)"\s*:/i.test(text)) return "";
-  if (/\`\`\`(?:json)?[\s\S]*"(?:name|tool)"\s*:[\s\S]*"(?:arguments|args)"\s*:/i.test(text)) return "";
+  text = text.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
+  text = text.replace(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/gi, (whole, body) => {
+    return /"(?:name|tool)"\s*:/.test(body) && /"(?:arguments|args)"\s*:/.test(body) ? "" : whole;
+  });
+  text = text
+    .split(/\r?\n/)
+    .filter((line) => !isToolProtocolJsonLine(line))
+    .join("\n")
+    .trim();
+  if (!text || isToolProtocolJsonLine(text)) return "";
   return text.slice(0, 1000);
 }
 
