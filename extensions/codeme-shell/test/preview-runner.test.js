@@ -97,6 +97,10 @@ async function main() {
   const staticResult = await createPreviewRunner(staticMock.vscode).check(staticRoot, `http://127.0.0.1:${staticPreview.port}/`);
   assert.strictEqual(staticResult.available, true);
   assert.strictEqual(staticMock.terminalStarts, 0);
+  assert.deepStrictEqual(staticCommands.map((item) => item.name), [
+    "codeme.hideStart",
+    "simpleBrowser.show",
+  ]);
   await new Promise((resolve) => staticPreview.server.close(resolve));
 
   const assetsLive = await listen((req, res) => {
@@ -122,6 +126,10 @@ async function main() {
   assert.strictEqual(assetResult.assets.length, 2);
   assert.ok(assetResult.assets.every((item) => item.ok));
   assert.strictEqual(assetMock.terminalStarts, 0);
+  assert.deepStrictEqual(assetCommands.map((item) => item.name), [
+    "codeme.hideStart",
+    "simpleBrowser.show",
+  ]);
   await new Promise((resolve) => assetsLive.server.close(resolve));
 
   // HTTP 500 means a server answered. Verification must return that evidence and
