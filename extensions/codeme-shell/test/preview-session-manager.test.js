@@ -5,7 +5,7 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 const { createPreviewSessionManager } = require("../preview-session-manager");
-const { createPreviewRunner } = require("../preview-runner");
+const { createPreviewRunner, resolveOwnedPreviewUrl } = require("../preview-runner");
 
 async function freePort() {
   const server = net.createServer();
@@ -111,6 +111,11 @@ async function main() {
   assert.strictEqual(publicStart.kind, "static");
   assert.ok(publicStart.url.endsWith("/public/"), publicStart.url);
   assert.strictEqual(publicSessions.status(publicRoot).url, publicStart.url);
+  assert.strictEqual(
+    resolveOwnedPreviewUrl(publicSessions.status(publicRoot), "http://127.0.0.1:8080/"),
+    publicStart.url,
+    "model-invented localhost ports must resolve to the owned preview URL",
+  );
   const publicPreview = await createPreviewRunner(publicFake.vscode).check(publicRoot, publicStart.url);
   assert.strictEqual(publicPreview.available, true, JSON.stringify(publicPreview));
   assert.strictEqual(publicPreview.statusCode, 200);
