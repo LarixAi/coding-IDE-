@@ -13,12 +13,14 @@ const { ConversationStore } = require("./conversation-store");
 const { hasWorkspaceEditorInGroups } = require("./tab-policy");
 
 let N8nCapabilityProvider;
+let N8nMcpProvider;
 let OllamaModelProvider;
 try {
-  ({ N8nCapabilityProvider } = require("../../packages/n8n-capability"));
+  ({ N8nCapabilityProvider, N8nMcpProvider } = require("../../packages/n8n-capability"));
   ({ OllamaModelProvider } = require("../../packages/agent-runtime/model-provider"));
 } catch {
   N8nCapabilityProvider = null;
+  N8nMcpProvider = null;
   OllamaModelProvider = null;
 }
 
@@ -82,7 +84,7 @@ function activate(context) {
   });
   refreshModels();
 
-  const refreshHub = () => probeHub().then((hub) => {
+  const refreshHub = () => probeHub(composer.capabilities, composer.externalTools).then((hub) => {
     state.hub = hub;
     applyHub(hubItem, state);
   });
@@ -378,21 +380,48 @@ async function createProject() {
   await vscode.commands.executeCommand("vscode.openFolder", selected[0]);
 }
 
-async function probeHub() {
-  if (!N8nCapabilityProvider) {
-    return { connected: false, capabilities: [], detail: "Intelligence hub client is missing." };
+async function probeHub(capabilityProvider, mcpProvider) {
+  const details = [];
+  const capabilities = [];
+  let connected = false;
+
+  if (mcpProvider && typeof mcpProvider.connectionStatus === "function") {
+    const mcp = await mcpProvider.connectionStatus();
+    if (mcp.connected) {
+      connected = true;
+      const count = Number(mcp.toolCount || 0);
+      details.push("n8n MCP connected: " + count + " tool" + (count === 1 ? "" : "s"));
+      for (const name of mcp.tools || []) capabilities.push(name);
+    } else {
+      const code = mcp.error && mcp.error.code;
+      details.push(code === "auth_required"
+        ? "n8n MCP is reachable but needs an MCP bearer token"
+        : "n8n MCP unavailable");
+    }
+  } else {
+    details.push("n8n MCP client unavailable");
   }
-  const provider = new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 });
-  const status = await provider.connectionStatus();
-  if (!status.connected) {
-    return { connected: false, capabilities: [], detail: "Intelligence hub is not reachable. Explorer, editor, and terminal still work." };
+
+  if (capabilityProvider && typeof capabilityProvider.connectionStatus === "function") {
+    const status = await capabilityProvider.connectionStatus();
+    if (status.connected) {
+      connected = true;
+      const listed = await capabilityProvider.listCapabilities();
+      const names = listed.map((item) => item.name).filter((name) => typeof name === "string");
+      for (const name of names) capabilities.push(name);
+      details.push(names.length
+        ? "Webhook hub: " + names.length + " capabilit" + (names.length === 1 ? "y" : "ies")
+        : "Webhook hub reachable, no published capabilities");
+    } else {
+      details.push("Webhook hub unavailable");
+    }
   }
-  const listed = await provider.listCapabilities();
-  const capabilities = listed.map((item) => item.name).filter((name) => typeof name === "string");
-  const detail = capabilities.length
-    ? `Intelligence hub connected: ${capabilities.join(", ")}.`
-    : "Intelligence hub is up, but no capabilities are published.";
-  return { connected: true, capabilities, detail };
+
+  return {
+    connected,
+    capabilities: [...new Set(capabilities)],
+    detail: details.join(" · ") || "Intelligence hub is not configured.",
+  };
 }
 
 async function discoverConfiguredModels() {
@@ -544,6 +573,8 @@ class ComposerViewProvider {
     this.context = context;
     this.state = state;
     this.view = undefined;
+    this.capabilities = N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null;
+    this.externalTools = N8nMcpProvider ? new N8nMcpProvider() : null;
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
       historyStore: new ConversationStore(path.join(context.globalStorageUri.fsPath, "composer-history")),
@@ -574,7 +605,8 @@ class ComposerViewProvider {
       createRegistry: (mode) => new ToolRegistry(
         mode === "controlled" ? new ControlledToolProvider(host) : new ReadOnlyToolProvider(host),
       ),
-      capabilities: N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null,
+      capabilities: this.capabilities,
+      externalTools: this.externalTools,
       root: workspaceRoot(),
       onChange: (snapshot) => this.post(snapshot),
     });
