@@ -141,7 +141,13 @@ async function main() {
       capabilities: liveHub(state),
       composerMode: "ask",
     }).done;
-    assert.strictEqual(run.lifecycle, "completed");
+    assert.strictEqual(run.lifecycle, "completed", JSON.stringify({
+      error: run.error,
+      outcome: run.outcome,
+      taskClass: run.taskClass,
+      tools: run.toolCalls.map((call) => ({ name: call.name, ok: call.result && call.result.ok, code: call.result && call.result.error && call.result.error.code })),
+      verification: run.verification,
+    }, null, 2));
     const invoked = run.toolCalls.filter((call) => call.name === "capability.invoke");
     assert.strictEqual(invoked.length, 1);
     assert.strictEqual(invoked[0].args.capability, "research.problem");
@@ -200,7 +206,7 @@ async function main() {
     assert.strictEqual(run.taskClass, "build");
     assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
     assert.deepStrictEqual(state.invocations, ["research.problem"]);
-    const directed = run.toolCalls.find((call) => call.directedBy === "runtime");
+    const directed = run.toolCalls.find((call) => call.name === "capability.invoke" && call.directedBy === "runtime");
     assert.ok(directed);
     assert.strictEqual(directed.iteration, 0);
     assert.strictEqual(directed.args.input.problem, goal);
@@ -220,7 +226,13 @@ async function main() {
       capabilities: liveHub(state),
       composerMode: "ask",
     }).done;
-    assert.strictEqual(run.lifecycle, "completed");
+    assert.strictEqual(run.lifecycle, "completed", JSON.stringify({
+      error: run.error,
+      outcome: run.outcome,
+      taskClass: run.taskClass,
+      tools: run.toolCalls.map((call) => ({ name: call.name, ok: call.result && call.result.ok, code: call.result && call.result.error && call.result.error.code })),
+      verification: run.verification,
+    }, null, 2));
     const invoked = run.toolCalls.find((call) => call.name === "capability.invoke" && call.args && call.args.capability === "task.decompose");
     assert.ok(invoked);
     assert.strictEqual(invoked.directedBy, "runtime");
@@ -244,7 +256,13 @@ async function main() {
         },
       },
     }).done;
-    assert.strictEqual(run.lifecycle, "completed");
+    assert.strictEqual(run.lifecycle, "completed", JSON.stringify({
+      error: run.error,
+      outcome: run.outcome,
+      taskClass: run.taskClass,
+      tools: run.toolCalls.map((call) => ({ name: call.name, ok: call.result && call.result.ok, code: call.result && call.result.error && call.result.error.code })),
+      verification: run.verification,
+    }, null, 2));
     assert.ok(run.toolCalls.every((call) => call.name !== "capability.invoke" && call.name !== "capability.list"));
     assert.deepStrictEqual(state.invocations, []);
     const names = provider.calls[0].tools.map((tool) => tool.name);

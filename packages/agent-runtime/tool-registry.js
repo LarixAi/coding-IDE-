@@ -26,8 +26,16 @@ const DEFINITIONS = {
     parameters: { type: "object", properties: {}, required: [] },
   },
   "browser.check": {
-    description: "Start the workspace preview if needed and check a local page. Use the site URL from the project, or a workspace HTML path.",
-    parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+    description: "Verify an already-running local page with HTTP readiness plus a real Chromium observation. This tool never starts, restarts, or kills the application process. Optionally provide selector/expectedText to assert rendered text.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        selector: { type: "string" },
+        expectedText: { type: "string" },
+      },
+      required: ["url"],
+    },
   },
   "browser.interact": {
     description: "Drive a real installed Chromium browser against the local preview. Supports click, fill, assertText, and sequence. Use sequence for a form journey so field values, submit click, navigation, and confirmation assertion happen in one browser session. The tool fails on unmet expectations or browser runtime/console errors.",
@@ -104,10 +112,13 @@ const DEFINITIONS = {
     },
   },
   "process.start": {
-    description: "Start or restart a long-running workspace process. After a failed CodeMe-owned process has been diagnosed and repaired, call this to rerun it. For ordinary website preview checks, browser.check can own startup and reuse.",
+    description: "Start or restart the single CodeMe-owned application/preview session. With no command, CodeMe chooses the workspace start script or a static preview server. process.status, process.logs, and browser.check all refer to this same session. restart=true is reserved for evidence-based restart of the same owned session after a server repair.",
     parameters: {
       type: "object",
-      properties: { command: { type: "string" } },
+      properties: {
+        command: { type: "string" },
+        restart: { type: "boolean" },
+      },
       required: [],
     },
   },

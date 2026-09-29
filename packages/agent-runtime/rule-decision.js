@@ -17,6 +17,7 @@ const STATIC_SCAFFOLD_TOOLS = new Set([
   "file.read",
   "browser.check",
   "browser.interact",
+  "process.start",
 ]);
 
 const READ_ONLY_BLOCKED_TOOLS = new Set([
@@ -201,6 +202,17 @@ function resolveRuleDecision(input = {}) {
         originalCall,
       ));
     } else if (
+      name === "process.start"
+      && String(originalCall.args && originalCall.args.command || "").trim()
+    ) {
+      candidates.push(candidate(
+        "strategy",
+        "strategy.static_site",
+        "deny",
+        "A dependency-free static site may use only CodeMe's commandless owned static preview session. Do not start npm or a custom server.",
+        originalCall,
+      ));
+    } else if (
       (name === "file.write" || name === "dir.create")
       && forbiddenStaticPath(originalCall.args && originalCall.args.path)
     ) {
@@ -245,41 +257,30 @@ function resolveRuleDecision(input = {}) {
     && facts.browserEditTask
     && isPreviewStartCommand(originalCall.args && originalCall.args.command)
   ) {
-    if (facts.browserCheckAvailable !== false) {
-      const rewritten = {
-        name: "browser.check",
-        args: { url: facts.previewTarget || "index.html" },
-        routedFrom: {
-          name: "terminal.run",
-          command: String((originalCall.args && originalCall.args.command) || ""),
-        },
-      };
-      candidates.push(candidate(
-        "phase",
-        "phase.browser_preview_owner",
-        "rewrite",
-        "Browser-visible edits use browser.check for preview startup and verification instead of a terminal server command.",
-        rewritten,
-        { originalTool: "terminal.run" },
-      ));
-    } else {
-      candidates.push(candidate(
-        "phase",
-        "phase.browser_preview_unavailable",
-        "deny",
-        "This browser-visible edit requires browser.check, but that tool is unavailable.",
-        originalCall,
-        { code: "tool_unavailable" },
-      ));
-    }
+    const rewritten = {
+      name: "process.start",
+      args: { command: String((originalCall.args && originalCall.args.command) || "") },
+      routedFrom: {
+        name: "terminal.run",
+        command: String((originalCall.args && originalCall.args.command) || ""),
+      },
+    };
+    candidates.push(candidate(
+      "phase",
+      "phase.preview_session_owner",
+      "rewrite",
+      "Long-running browser-visible servers are owned by process.start; browser.check is verification-only.",
+      rewritten,
+      { originalTool: "terminal.run" },
+    ));
   }
 
   if (name === "process.start" && facts.browserEditTask) {
     candidates.push(candidate(
       "phase",
-      "phase.browser_preview_owner",
+      "phase.preview_session_owner",
       "guard",
-      "Browser-visible edits delegate process reuse/start decisions to the process guard; browser.check owns preview verification.",
+      "Browser-visible edits delegate all application server lifecycle decisions to the single process session; browser.check is verification-only.",
       originalCall,
     ));
   }
@@ -370,6 +371,21 @@ function resolveRuleDecision(input = {}) {
         originalCall,
       ));
     }
+  }
+
+  if (
+    facts.serverHttp5xxFailure
+    && facts.serverHttp5xxFrontendTarget
+    && (name === "file.patch" || name === "file.write")
+  ) {
+    candidates.push(candidate(
+      "recovery",
+      "recovery.server_5xx_scope",
+      "deny",
+      "The browser received HTTP 5xx from a reachable server. Do not rewrite HTML/CSS as a server repair; inspect the owned process logs and repair the server runtime or directly implicated server module.",
+      originalCall,
+      { code: "server_repair_scope" },
+    ));
   }
 
   if (name === "process.start") {

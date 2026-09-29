@@ -488,7 +488,7 @@ async function main() {
     assert.strictEqual(staleStart.result.data.suppressed, true);
     assert.strictEqual(staleStart.result.data.reused, true);
     assert.strictEqual(staleStart.result.data.reason, "already_running");
-    assert.strictEqual(staleStart.ruleDecision.rule, "phase.browser_preview_owner");
+    assert.strictEqual(staleStart.ruleDecision.rule, "phase.preview_session_owner");
     assert.strictEqual(staleStart.ruleDecision.tier, "phase");
     assert.strictEqual(staleStart.ruleDecision.action, "guard");
     assert.ok(!run.toolCalls.some((call) => (
@@ -800,7 +800,7 @@ async function main() {
           { name: "file.read", args: { path: "script.js" } },
         ],
       },
-      { toolCalls: [{ name: "terminal.run", args: { command: "node server.js &" } }] },
+      { toolCalls: [{ name: "browser.check", args: { url: "index.html" } }] },
       { text: "This should never be needed because CodeMe should auto-verify the click." },
     ]);
 
@@ -822,13 +822,12 @@ async function main() {
     assert.ok(/already satisfied|real browser/i.test(run.verification.summary));
     assert.strictEqual(provider.calls.length, 2);
     assert.ok(!run.toolCalls.some((call) => call.name === "terminal.run"));
+    assert.ok(!run.toolCalls.some((call) => call.name === "process.start"));
     assert.ok(run.toolCalls.some((call) => (
       call.name === "browser.check"
       && call.result
       && call.result.ok
-      && call.routedFrom
-      && call.routedFrom.name === "terminal.run"
-      && call.routedFrom.command === "node server.js &"
+      && !call.routedFrom
     )));
     assert.ok(run.toolCalls.some((call) => (
       call.name === "browser.interact"
@@ -1726,7 +1725,8 @@ async function main() {
     assert.strictEqual(run.lifecycle, "failed");
     assert.strictEqual(run.outcome.reason, "repeated_action");
     assert.strictEqual(host.state.reads, 2);
-    assert.strictEqual(run.toolCalls.length, 2);
+    assert.strictEqual(run.toolCalls.filter((item) => item.name === "file.read").length, 2);
+    assert.ok(run.toolCalls.some((item) => item.name === "dir.list" && item.directedBy === "runtime"));
     assert.strictEqual(run.filesChanged.length, 0);
   });
 
@@ -2124,7 +2124,8 @@ async function main() {
     await assert.rejects(handle.done, (error) => error.code === "crash");
     const interrupted = store.load(handle.id);
     assert.strictEqual(interrupted.lifecycle, "interrupted");
-    assert.strictEqual(interrupted.toolCalls.length, 1);
+    assert.strictEqual(interrupted.toolCalls.filter((item) => item.name === "file.read").length, 1);
+    assert.ok(interrupted.toolCalls.some((item) => item.name === "dir.list" && item.directedBy === "runtime"));
     assert.strictEqual(interrupted.inFlight, null);
     const resumed = await resumeRun(handle.id, {
       provider,

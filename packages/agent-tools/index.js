@@ -149,7 +149,7 @@ async function dispatch(host, tool, args) {
     case "sandbox.run":
       return host.runSandbox(args);
     case "process.start":
-      return host.startProcess(args.command || "npm start");
+      return host.startProcess(args.command || "");
     case "process.status":
       return host.processStatus();
     case "process.logs":
@@ -163,7 +163,7 @@ async function dispatch(host, tool, args) {
     case "tests.run":
       return host.runTests(args.command);
     case "browser.check":
-      return host.browserCheck(args.url);
+      return host.browserCheck(args.url, args);
     case "browser.interact":
       return host.browserInteract(args);
     case "dir.create":
@@ -179,7 +179,8 @@ const READ_ONLY_TOOLS = ["workspace.inspect", "file.read", "repo.search", "proce
 const CONTROLLED_TOOLS = ["workspace.inspect", "file.read", "file.write", "file.patch", "repo.search", "terminal.run", "sandbox.run", "process.start", "process.status", "process.logs", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "browser.interact", "dir.create", "dir.list"];
 
 function validateProcessCommand(command) {
-  const text = typeof command === "string" && command.trim() ? command.trim() : "npm start";
+  const text = typeof command === "string" ? command.trim() : "";
+  if (!text) return null;
   const hasNull = Array.from(text).some((char) => char.charCodeAt(0) === 0);
   const hasShellSyntax = /[\n\r;&|$<>\\"\']/.test(text) || text.includes("`") || text.includes("(") || text.includes(")");
   if (hasNull || hasShellSyntax) {
@@ -299,7 +300,7 @@ async function executeControlled(host, tool, args) {
     }
   }
   if (tool === "process.start") {
-    const commandError = validateProcessCommand(input.command || "npm start");
+    const commandError = validateProcessCommand(input.command);
     if (commandError) return failure(tool, commandError.code, commandError.message);
   }
   return execute(host, tool, args);

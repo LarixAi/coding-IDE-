@@ -95,6 +95,19 @@ async function main() {
 
   {
     const decision = resolve(
+      { name: "process.start", args: {} },
+      {
+        mode: "controlled",
+        dependencyFreeStatic: true,
+        browserEditTask: true,
+      },
+    );
+    assert.notStrictEqual(decision.rule, "strategy.static_site");
+    assert.strictEqual(decision.action, "guard");
+  }
+
+  {
+    const decision = resolve(
       { name: "terminal.run", args: { command: "npm start" } },
       {
         mode: "controlled",
@@ -103,11 +116,11 @@ async function main() {
         previewTarget: "index.html",
       },
     );
-    assert.strictEqual(decision.rule, "phase.browser_preview_owner");
+    assert.strictEqual(decision.rule, "phase.preview_session_owner");
     assert.strictEqual(decision.priority, RULE_PRIORITY.phase);
     assert.strictEqual(decision.action, "rewrite");
-    assert.strictEqual(decision.call.name, "browser.check");
-    assert.strictEqual(decision.call.args.url, "index.html");
+    assert.strictEqual(decision.call.name, "process.start");
+    assert.strictEqual(decision.call.args.command, "npm start");
     assert.strictEqual(decision.call.routedFrom.name, "terminal.run");
   }
 
@@ -119,7 +132,7 @@ async function main() {
         browserEditTask: true,
       },
     );
-    assert.strictEqual(decision.rule, "phase.browser_preview_owner");
+    assert.strictEqual(decision.rule, "phase.preview_session_owner");
     assert.strictEqual(decision.priority, RULE_PRIORITY.phase);
     assert.strictEqual(decision.action, "guard");
   }

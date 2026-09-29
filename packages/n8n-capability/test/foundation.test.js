@@ -188,14 +188,19 @@ async function main() {
     assert.strictEqual(hub.calls[0].protocolVersion, 1);
     assert.ok(!run.goal.includes(MARKER));
     const followUp = model.calls[1];
-    const toolMessage = followUp.messages.find((message) => message.role === "tool");
+    const toolMessage = followUp.messages.find((message) => (
+      message.role === "tool"
+      && message.name === "capability.invoke"
+      && String(message.content || "").includes(MARKER)
+    ));
+    assert.ok(toolMessage);
     assert.ok(toolMessage.content.includes(MARKER));
     assert.ok(toolMessage.content.includes('"trusted":false'));
     assert.strictEqual(toolMessage.name, "capability.invoke");
     assert.strictEqual(run.lifecycle, "completed");
     assert.strictEqual(run.error, null);
     assert.deepStrictEqual(run.filesChanged, []);
-    const native = run.observations.find((item) => item.type === "tool");
+    const native = run.observations.find((item) => item.type === "tool" && item.directedBy !== "runtime");
     assert.strictEqual(native, undefined);
   });
 
@@ -231,9 +236,10 @@ async function main() {
         const { run } = await runWith(model, null, hub);
         assert.strictEqual(run.lifecycle, "completed", label);
         assert.strictEqual(run.error, null, label);
-        assert.strictEqual(run.observations[0].type, "capability", label);
-        assert.strictEqual(run.observations[0].trusted, false, label);
-        assert.strictEqual(run.observations[0].ok, false, label);
+        const capabilityObservation = run.observations.find((item) => item.type === "capability");
+        assert.ok(capabilityObservation, label);
+        assert.strictEqual(capabilityObservation.trusted, false, label);
+        assert.strictEqual(capabilityObservation.ok, false, label);
         const code = seen[0].error && seen[0].error.code;
         if (label === "malformed") assert.strictEqual(code, "malformed_response");
         if (label === "timeout") assert.strictEqual(code, "timeout");
@@ -292,7 +298,9 @@ async function main() {
     assert.deepStrictEqual(run.filesChanged, []);
     assert.strictEqual(run.lifecycle, "completed");
     assert.ok(run.toolCalls.every((call) => call.name !== "file.write"));
-    assert.strictEqual(run.observations[0].trusted, false);
+    const capabilityObservation = run.observations.find((item) => item.type === "capability");
+    assert.ok(capabilityObservation);
+    assert.strictEqual(capabilityObservation.trusted, false);
     assert.ok(!fs.existsSync(path.join(directory, "note.txt")));
   });
 
