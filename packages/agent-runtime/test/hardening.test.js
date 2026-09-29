@@ -405,6 +405,87 @@ async function main() {
     assert.strictEqual(run.verification.status, "passed");
   });
 
+  await test("a model timeout during active repair retries once with compact evidence", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-timeout-repair-"));
+    fs.writeFileSync(path.join(workspace, "README.md"), "repair context\n", "utf8");
+
+    const provider = new ScriptedModelProvider([]);
+    let callNumber = 0;
+    provider.complete = async function complete(input) {
+      this.calls.push(input);
+      callNumber += 1;
+      if (callNumber === 1) return { text: "not verified yet", toolCalls: [] };
+      if (callNumber === 2) throw Object.assign(new Error("model request timed out"), { code: "timeout" });
+      if (callNumber === 3) {
+        return {
+          text: "continuing from compact evidence",
+          toolCalls: [{ name: "file.read", args: { path: "README.md" } }],
+        };
+      }
+      return { text: "repair verified", toolCalls: [] };
+    };
+
+    const run = await start({
+      workspace,
+      provider,
+      mode: "controlled",
+      goal: "Fix the project and verify it.",
+      verify(runState, text) {
+        const read = runState.toolCalls.some((call) => (
+          call.name === "file.read"
+          && call.args
+          && call.args.path === "README.md"
+          && call.result
+          && call.result.ok
+        ));
+        return read && text.includes("repair verified")
+          ? { status: "passed", summary: "repair recovered after timeout", evidence: ["file.read"] }
+          : { status: "failed", summary: "repair evidence is still missing", evidence: [] };
+      },
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed");
+    assert.strictEqual(run.modelTimeoutRetriesUsed, 1);
+    assert.strictEqual(run.timeoutRetryPending, false);
+    assert.ok(run.events.some((event) => event.type === "model_timeout_retry" && event.attempt === 1));
+    assert.strictEqual(provider.calls.length, 4);
+    const retryCall = provider.calls[2];
+    const retryText = retryCall.messages.map((message) => String(message.content || "")).join("\n");
+    assert.ok(retryText.includes("MODEL TIMEOUT RECOVERY TURN"));
+    assert.ok(retryText.includes("repair evidence is still missing"));
+    assert.ok(retryText.length < 12000);
+  });
+
+  await test("a second model timeout after the bounded repair retry fails cleanly", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-timeout-stop-"));
+    fs.writeFileSync(path.join(workspace, "README.md"), "repair context\n", "utf8");
+
+    const provider = new ScriptedModelProvider([]);
+    let callNumber = 0;
+    provider.complete = async function complete(input) {
+      this.calls.push(input);
+      callNumber += 1;
+      if (callNumber === 1) return { text: "not verified yet", toolCalls: [] };
+      throw Object.assign(new Error("model request timed out"), { code: "timeout" });
+    };
+
+    const run = await start({
+      workspace,
+      provider,
+      mode: "controlled",
+      goal: "Fix the project and verify it.",
+      verify() {
+        return { status: "failed", summary: "repair evidence is still missing", evidence: [] };
+      },
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "failed");
+    assert.strictEqual(run.error.code, "timeout");
+    assert.strictEqual(run.modelTimeoutRetriesUsed, 1);
+    assert.strictEqual(provider.calls.length, 3);
+    assert.strictEqual(run.events.filter((event) => event.type === "model_timeout_retry").length, 1);
+  });
+
   await test("missing credentials pause the run instead of inventing a secret", async () => {
     const host = createWorkspaceHost(FIXTURE);
     const tools = new ControlledToolProvider(host);
