@@ -666,6 +666,11 @@ async function executeRun(run, options) {
 
       store.save(run);
 
+      if (call.name === "process.start" && !result.ok) {
+        const reused = await maybeReuseAddressInUsePreview(run, registry, store, result);
+        if (reused && reused.lifecycle) return reused;
+      }
+
       if (call.name === "browser.check" && result.ok) {
         await maybeAutoVerifyBrowserInteraction(run, registry, store);
       }
@@ -686,6 +691,11 @@ async function executeRun(run, options) {
     if (done) return done;
 
     await maybeReadBackRepairedFiles(run, registry, store);
+    const browserChanged = await maybeVerifyBrowserEditAfterWrite(run, registry, store);
+    if (browserChanged) {
+      const verifiedNow = maybeFinishVerifiedWork(run, store, text);
+      if (verifiedNow) return verifiedNow;
+    }
     const processChanged = await maybeRestartRepairedProcess(run, registry, store)
       || await maybeStartOwnedProcessForVerification(run, registry, store);
     if (processChanged) {
@@ -1371,7 +1381,9 @@ function isWebVisibleWrite(run, writes) {
 
 async function maybeReadBackRepairedFiles(run, registry, store) {
   if (!run || run.mode !== "controlled") return false;
-  if (!hadFailedOwnedProcess(run) || failedProcessNeedsLogs(run)) return false;
+  const browserEdit = isBrowserEditTask(run) && !hadFailedOwnedProcess(run);
+  const processRepair = hadFailedOwnedProcess(run) && !failedProcessNeedsLogs(run);
+  if (!browserEdit && !processRepair) return false;
   const writes = successfulWrites(run);
   if (!writes.length) return false;
   if (!registry || typeof registry.call !== "function") return false;
@@ -1416,6 +1428,102 @@ async function maybeReadBackRepairedFiles(run, registry, store) {
     if (result.ok) readAny = true;
   }
   return readAny;
+}
+
+async function maybeVerifyBrowserEditAfterWrite(run, registry, store) {
+  if (!run || run.mode !== "controlled" || !isBrowserEditTask(run) || hadFailedOwnedProcess(run)) return false;
+  const writes = successfulWrites(run);
+  if (!writes.length) return false;
+  const lastWrite = writes[writes.length - 1];
+  const changed = uniqueWrittenPaths(writes);
+  if (!changed.every((file) => wasReadAfterMutation(run, file))) return false;
+  const after = callsAfter(run, lastWrite);
+  if (after.some((call) => call.name === "browser.check" && call.result && call.result.ok)) return false;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  if (!registry.definitions().some((tool) => tool.name === "browser.check")) return false;
+
+  const target = previewTargetFromRun(run);
+  const call = { name: "browser.check", args: { url: target } };
+  touch(run, "executing_tool", call.name);
+  run.inFlight = { kind: "tool", name: call.name, args: call.args, key: actionKey(call), directedBy: "runtime" };
+  store.save(run);
+
+  let result;
+  try {
+    result = await registry.call(call.name, call.args);
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: call.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  const observation = observe(call, result);
+  observation.directedBy = "runtime";
+  run.observations.push(observation);
+  pushObservation(run, call, result);
+  run.inFlight = null;
+  store.save(run);
+
+  if (result.ok) await maybeAutoVerifyBrowserInteraction(run, registry, store);
+  return true;
+}
+
+function addressInUsePort(result) {
+  const data = result && result.data;
+  const output = String(
+    (data && data.output)
+    || (result && result.error && result.error.message)
+    || ""
+  );
+  if (!/EADDRINUSE|address already in use/i.test(output)) return 0;
+  const matches = [...output.matchAll(/(?::|port\s+)(\d{2,5})\b/gi)];
+  if (!matches.length) return 0;
+  const port = Number(matches[matches.length - 1][1]);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : 0;
+}
+
+async function maybeReuseAddressInUsePreview(run, registry, store, processResult) {
+  if (!isRunOnlyBrowserGoal(run)) return null;
+  const port = addressInUsePort(processResult);
+  if (!port || !registry || typeof registry.call !== "function") return null;
+  const call = { name: "browser.check", args: { url: `http://127.0.0.1:${port}/` } };
+  const result = await registry.call(call.name, call.args);
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  const observation = observe(call, result);
+  observation.directedBy = "runtime";
+  run.observations.push(observation);
+  pushObservation(run, call, result);
+  if (result && result.ok) {
+    run.verification = {
+      status: "passed",
+      summary: `The site was already reachable on port ${port}; CodeMe reused the existing preview instead of editing the server port.`,
+      evidence: ["process.start", "browser.check"],
+    };
+    run.verificationHistory.push({ ...run.verification, at: new Date().toISOString() });
+    store.save(run);
+    return finishCompleted(run, store, run.verification.summary);
+  }
+  store.save(run);
+  return null;
 }
 
 async function maybeRestartRepairedProcess(run, registry, store) {
@@ -1749,6 +1857,10 @@ function toolsForRun(run, localTools, capabilityTools) {
     local = local.filter((tool) => READ_ONLY_COMPOSER_TOOLS.has(tool.name));
   }
   if (run && run.noEdit) local = local.filter((tool) => !READ_ONLY_BLOCKED_TOOLS.has(tool.name));
+  if (isRunOnlyBrowserGoal(run)) {
+    const previewTools = new Set(["process.status", "process.start", "process.logs", "browser.check"]);
+    local = local.filter((tool) => previewTools.has(tool.name));
+  }
   if (preferPatchForExplicitExistingEdit(run)) {
     local = local.filter((tool) => tool.name !== "file.write");
   }
@@ -2068,6 +2180,15 @@ function unresolvedBrowserFailure(run) {
   return null;
 }
 
+function isRunOnlyBrowserGoal(run) {
+  if (!run || run.mode !== "controlled") return false;
+  const text = stripNegatedEditing(run.goal).toLowerCase();
+  const wantsRun = /\b(start|run|launch|serve|open|preview)\b/.test(text)
+    && /\b(website|site|web app|page|browser|preview)\b/.test(text);
+  const wantsEdit = /\b(change|edit|fix|repair|add|remove|update|implement|build|create|patch|rewrite)\b/.test(text);
+  return wantsRun && !wantsEdit;
+}
+
 function isBrowserEditTask(run) {
   if (!run || !run.workspace || run.workspace.state === "empty") return false;
   if (isResearchRun(run)) return false;
@@ -2167,7 +2288,9 @@ function systemPrompt(options) {
       "Use file.patch for a precise edit to an existing file and file.write for a new file or full replacement. Create folders with dir.create. Use process.start for a long-running preview server; do not use terminal.run for servers, mkdir, ls, or node -e.",
       "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
       "For local website previews, do not start the server with terminal.run or background shell commands. Call browser.check on the HTML page; CodeMe owns preview startup and reuse. For user-visible interactions such as click/button/tap behaviour, browser.check is not enough: browser.interact must verify the real resulting text/state before finishing. For booking/form journeys, use one browser.interact action=sequence with fill steps, a submit click, and assertText for the confirmation; dependent form steps must stay in one sequence because each browser.interact call starts a fresh browser session.",
-      runIsResearch(options)
+      isRunOnlyBrowserGoal(options)
+        ? "This is a run/preview-only request. Do not edit any file or change ports in source code. Use process.status/process.start/process.logs only for the existing start script, then use browser.check. If the port is already in use, treat that as a possible already-running preview; do not patch the server port."
+        : runIsResearch(options)
         ? "This job is research and explanation. Do not edit files. Call the research capability at most once with input.problem, read the relevant workspace files, then answer."
         : isLayoutJob(options)
         ? "This is a layout job. After the HTML and CSS are read, use file.patch for a precise existing-file edit or file.write for a full replacement, then browser.check. Do not wait for tests or git."
