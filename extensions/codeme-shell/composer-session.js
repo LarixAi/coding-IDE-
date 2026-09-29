@@ -697,6 +697,23 @@ function lastMeaningfulDecision(run) {
   return "";
 }
 
+function isToolProtocolJson(value) {
+  const text = String(value || "").trim();
+  if (!text || !text.startsWith("{") || !text.endsWith("}")) return false;
+  try {
+    const parsed = JSON.parse(text);
+    return Boolean(
+      parsed
+      && typeof parsed === "object"
+      && !Array.isArray(parsed)
+      && (parsed.name || parsed.tool)
+      && (parsed.arguments !== undefined || parsed.args !== undefined)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function stripToolProtocolText(value) {
   let text = String(value || "");
   text = text.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
@@ -704,14 +721,13 @@ function stripToolProtocolText(value) {
     const toolLike = /"(?:name|tool)"\s*:/.test(body) && /"(?:arguments|args)"\s*:/.test(body);
     return toolLike ? "" : whole;
   });
+  text = text
+    .split(/\r?\n/)
+    .filter((line) => !isToolProtocolJson(line))
+    .join("\n");
   const trimmed = text.trim();
-  if (/^\{[\s\S]*\}$/.test(trimmed)) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && (parsed.name || parsed.tool)) return "";
-    } catch {}
-  }
-  return text.trim();
+  if (isToolProtocolJson(trimmed)) return "";
+  return trimmed;
 }
 
 function cleanAssistantText(value) {
