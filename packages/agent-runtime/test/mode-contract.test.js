@@ -120,6 +120,14 @@ async function runAskContract() {
   assert.ok(model.calls[0].messages[0].content.includes("CodeMe runtime owns workspace state"));
 }
 
+async function runProjectUnderstandingContract() {
+  const { isReadAllFilesGoal } = require("../strategy");
+  assert.strictEqual(
+    isReadAllFilesGoal("Read this project and tell me what it does. Do not change anything."),
+    true,
+  );
+}
+
 async function runPlanContract() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-mode-plan-"));
   const store = new RunStore(path.join(dir, "runs"));
@@ -192,6 +200,7 @@ function runChatRule() {
 async function main() {
   await runChatContract();
   await runAskContract();
+  await runProjectUnderstandingContract();
   await runPlanContract();
   await runCodeGateContract();
   runChatRule();
