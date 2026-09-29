@@ -481,6 +481,10 @@ function fileFromUri(uri) {
   };
 }
 
+function shellQuote(value) {
+  return "'" + String(value || "").replace(/'/g, "'\\''") + "'";
+}
+
 function fileType(name) {
   const ext = path.extname(name).slice(1).toLowerCase();
   const known = {
@@ -511,8 +515,9 @@ class ComposerViewProvider {
     this.context = context;
     this.state = state;
     this.view = undefined;
+    this.runDirectory = path.join(context.globalStorageUri.fsPath, "composer-runs");
     this.session = new ComposerSession({
-      store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
+      store: new RunStore(this.runDirectory),
       historyStore: new ConversationStore(path.join(context.globalStorageUri.fsPath, "composer-history")),
       selectionStore: {
         get: () => context.globalState.get("codeme.model"),
@@ -649,6 +654,30 @@ class ComposerViewProvider {
         if (file && file.contents) this.session.attach(file);
         else this.session.attach(fileFromUri(file.path || file));
       }
+      return;
+    }
+    if (message.type === "copy-debug") {
+      await vscode.env.clipboard.writeText(String(message.text || ""));
+      this.session.notice = "Error details copied";
+      this.session.emit();
+      return;
+    }
+    if (message.type === "open-run-log") {
+      const runId = String(message.runId || "");
+      if (!/^run_[A-Za-z0-9_-]+$/.test(runId)) {
+        this.session.notice = "Run log is unavailable.";
+        this.session.emit();
+        return;
+      }
+      const file = path.join(this.runDirectory, `${runId}.json`);
+      if (!fs.existsSync(file)) {
+        this.session.notice = "Run log file was not found.";
+        this.session.emit();
+        return;
+      }
+      const terminal = vscode.window.createTerminal({ name: "CodeMe Debug", cwd: workspaceRoot() || undefined });
+      terminal.show(true);
+      terminal.sendText(`printf '\\n=== CodeMe run ${runId} ===\\n'; cat -- ${shellQuote(file)}`, true);
       return;
     }
     if (message.type === "pick") await this.pickFiles();
