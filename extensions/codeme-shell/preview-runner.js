@@ -175,6 +175,29 @@ function resolvePreviewUrl(root, requestedUrl, origin) {
   };
 }
 
+function resolveOwnedPreviewUrl(session, requestedUrl) {
+  const requested = String(requestedUrl || "").trim();
+  const owned = session && session.status === "running"
+    ? String(session.url || session.origin || "")
+    : "";
+  if (!owned) return requested;
+  if (!requested) return owned;
+
+  try {
+    const parsed = new URL(requested);
+    if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(parsed.hostname)) return requested;
+    const pathname = parsed.pathname || "/";
+    if (pathname === "/" || pathname === "/index.html") return owned;
+    const target = new URL(owned);
+    target.pathname = pathname;
+    target.search = parsed.search;
+    target.hash = parsed.hash;
+    return target.toString();
+  } catch {
+    return owned;
+  }
+}
+
 function workspaceFilePath(root, candidate) {
   let value = String(candidate || "");
   if (value.startsWith("file:")) {
@@ -564,6 +587,7 @@ module.exports = {
   previewPlan,
   staticPreviewPath,
   resolvePreviewUrl,
+  resolveOwnedPreviewUrl,
   isPreviewAssetPath,
   portFromText,
   entryPointFromStartScript,
