@@ -161,6 +161,16 @@ function successfulCallAfter(run, startIndex, names) {
   return null;
 }
 
+function latestSuccessfulCallBefore(run, endIndex, name) {
+  const calls = Array.isArray(run && run.toolCalls) ? run.toolCalls : [];
+  const last = Math.min(Number(endIndex), calls.length - 1);
+  for (let index = last; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call && call.name === name && call.result && call.result.ok) return call;
+  }
+  return null;
+}
+
 function latestOwnedPreviewUrl(run) {
   const calls = Array.isArray(run && run.toolCalls) ? run.toolCalls : [];
   for (let index = calls.length - 1; index >= 0; index -= 1) {
@@ -284,17 +294,31 @@ async function createVerifier(run, context) {
     const webChanged = run.filesChanged.some((path) => WEB_FILE.test(path));
     if (webChanged && isWebGoal(run.goal) && latestMutation >= 0) {
       const required = isInteractiveGoal(run.goal) ? "browser.interact" : "browser.check";
-      const observed = successfulCallAfter(run, latestMutation, new Set([required]));
+      let observed = successfulCallAfter(run, latestMutation, new Set([required]));
+      let replayed = null;
+      if (!observed && definitions.has(required)) {
+        const prior = latestSuccessfulCallBefore(run, latestMutation - 1, required);
+        if (prior) {
+          replayed = await callTool(required, { ...(prior.args || {}) }, "verification");
+          if (replayed && replayed.ok) {
+            observed = { name: required, args: prior.args || {}, result: replayed, directedBy: "verification" };
+          }
+        }
+      }
       const ownedPreviewUrl = latestOwnedPreviewUrl(run);
       items.push({
         id: "browser",
         label: required === "browser.interact" ? "Real browser interaction" : "Browser verification",
         ok: Boolean(observed),
         detail: observed
-          ? "A successful " + required + " ran after the latest edit"
-          : ownedPreviewUrl
-            ? "Run " + required + " after the latest edit using the CodeMe-owned preview at " + ownedPreviewUrl + ". Do not invent another port."
-            : "Run process.start first, then run " + required + ". The browser tool will automatically use the CodeMe-owned preview URL.",
+          ? replayed
+            ? "CodeMe replayed the last successful " + required + " after the latest edit"
+            : "A successful " + required + " ran after the latest edit"
+          : replayed
+            ? summarize(replayed)
+            : ownedPreviewUrl
+              ? "Run " + required + " after the latest edit using the CodeMe-owned preview at " + ownedPreviewUrl + ". Do not invent another port."
+              : "Run process.start first, then run " + required + ". The browser tool will automatically use the CodeMe-owned preview URL.",
       });
       if (observed) evidence.push(required);
     }
