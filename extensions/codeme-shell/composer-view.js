@@ -588,14 +588,14 @@ function renderComposer(nonce) {
         row.appendChild(summary);
 
         const detailParts = [];
-        if (item.command) detailParts.push("Command\n" + item.command);
+        if (item.command) detailParts.push("Command\\n" + item.command);
         if (item.targetText || item.expectedText || item.beforeText || item.afterText) {
           const interaction = [];
           if (item.targetText) interaction.push("Target: " + item.targetText);
           if (item.beforeText) interaction.push("Before: " + item.beforeText);
           if (item.afterText) interaction.push("After: " + item.afterText);
           if (item.expectedText) interaction.push("Expected: " + item.expectedText);
-          if (interaction.length) detailParts.push(interaction.join("\n"));
+          if (interaction.length) detailParts.push(interaction.join("\\n"));
         }
         if (item.name === "sandbox.run") {
           const sandboxInfo = [];
@@ -606,12 +606,12 @@ function renderComposer(nonce) {
           if (item.changedPaths && item.changedPaths.length) sandboxInfo.push("Temporary changes: " + item.changedPaths.join(", "));
           if (sandboxInfo.length) detailParts.push(sandboxInfo.join("\n"));
         }
-        if (item.error) detailParts.push("Error\n" + item.error);
-        if (item.output) detailParts.push("Output\n" + item.output);
+        if (item.error) detailParts.push("Error\\n" + item.error);
+        if (item.output) detailParts.push("Output\\n" + item.output);
         if (detailParts.length) {
           const detail = document.createElement("pre");
           detail.className = "tool-detail";
-          detail.textContent = detailParts.join("\n\n");
+          detail.textContent = detailParts.join("\\n\\n");
           row.appendChild(detail);
         }
 
@@ -692,7 +692,7 @@ function renderComposer(nonce) {
     function diffCounts(diff) {
       let additions = 0;
       let removals = 0;
-      for (const line of String(diff || "").split("\n")) {
+      for (const line of String(diff || "").split("\\n")) {
         if (line.startsWith("+++") || line.startsWith("---")) continue;
         if (line.startsWith("+")) additions += 1;
         else if (line.startsWith("-")) removals += 1;
