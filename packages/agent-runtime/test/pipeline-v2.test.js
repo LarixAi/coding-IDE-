@@ -187,12 +187,80 @@ async function testVerificationRepair() {
   assert.ok(run.toolCalls.some((call) => call.name === "browser.interact" && call.result.ok));
   assert.ok(run.verification.evidence.includes("browser.interact"));
   assert.ok(provider.calls.some((call) => call.messages.some((message) => /VERIFICATION FAILED/.test(String(message.content || "")))));
+  assert.ok(provider.calls.some((call) => call.messages.some((message) => /next turn must issue the native tool call now/i.test(String(message.content || "")))));
   for (const call of provider.calls) {
     const offered = new Set(call.tools.map((tool) => tool.name));
     assert.ok(offered.has("file.write"), "write tool should remain offered");
     assert.ok(offered.has("process.logs"), "process logs should remain offered");
     assert.ok(offered.has("browser.interact"), "browser interaction should remain offered");
   }
+}
+
+
+async function testExternalToolsStayVisibleAndUntrusted() {
+  const registry = new FakeRegistry();
+  const externalTools = {
+    calls: [],
+    async listTools() {
+      return [{
+        name: "external_lookup",
+        description: "Read-only external evidence",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+        },
+      }];
+    },
+    async call(name, args) {
+      this.calls.push({ name, args });
+      return {
+        ok: true,
+        tool: name,
+        trusted: false,
+        data: { output: "external answer for " + args.query },
+      };
+    },
+  };
+  const provider = new ScriptedProvider([
+    (input) => {
+      const system = input.messages.map((message) => String(message.content || "")).join("\n");
+      assert.match(system, /Do not merely say that you will use a tool/i);
+      assert.ok(input.tools.some((tool) => tool.name === "external_lookup"));
+      return {
+        text: "",
+        toolCalls: [{ name: "external_lookup", args: { query: "current docs" } }],
+      };
+    },
+    (input) => {
+      assert.ok(input.messages.some((message) => (
+        message.role === "tool"
+        && message.name === "external_lookup"
+        && String(message.content || "").includes("external answer for current docs")
+      )));
+      return { text: "I checked the external evidence.", toolCalls: [] };
+    },
+  ]);
+
+  const run = await startPipelineRun({
+    goal: "Check the external docs and report back.",
+    model: "fixture",
+    providerName: "fixture-local",
+    provider,
+    registry,
+    externalTools,
+    store: storeFor("external-tools"),
+    mode: "read_only",
+    composerMode: "ask",
+    maxIterations: 5,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  assert.strictEqual(externalTools.calls.length, 1);
+  const observation = run.observations.find((item) => item.tool === "external_lookup");
+  assert.ok(observation);
+  assert.strictEqual(observation.trusted, false);
+  assert.deepStrictEqual(run.filesChanged, []);
 }
 
 async function testLiveFollowUp() {
@@ -237,6 +305,7 @@ async function main() {
   testProviderStyleToolRecovery();
   await testAskLoop();
   await testVerificationRepair();
+  await testExternalToolsStayVisibleAndUntrusted();
   await testLiveFollowUp();
   console.log("ok pipeline v2 cursor-style loop");
 }
