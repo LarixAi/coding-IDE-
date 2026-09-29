@@ -97,6 +97,8 @@ async function applyPreferredSettings() {
   const config = vscode.workspace.getConfiguration();
   const pairs = [
     ["chat.disableAIFeatures", true],
+    ["chat.agent.enabled", false],
+    ["chat.commandCenter.enabled", false],
     ["chat.titleBar.signIn.enabled", false],
     ["chat.titleBar.openInAgentsWindow.enabled", false],
     ["workbench.secondarySideBar.defaultVisibility", "visible"],
