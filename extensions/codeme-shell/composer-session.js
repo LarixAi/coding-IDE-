@@ -9,15 +9,20 @@ const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const INBOX = ".codeme/inbox";
 
-async function listOllamaModels(baseUrl = "http://127.0.0.1:11434", provider = "ollama", sourceLabel = "") {
+async function listOllamaModels(baseUrl = "http://127.0.0.1:11434", provider = "ollama", sourceLabel = "", options = {}) {
   const { OllamaModelProvider } = require("../../packages/agent-runtime/model-provider");
-  const listed = await new OllamaModelProvider({ baseUrl }).listModels();
+  const listed = await new OllamaModelProvider({ baseUrl }).listModels(options);
   return listed.map((model) => modelRecord(provider || model.provider || "ollama", model.id, sourceLabel));
 }
 
 function modelRecord(provider, id, sourceLabel = "") {
   const label = modelLabel(id);
-  return { provider, id, label: sourceLabel ? `${sourceLabel} · ${label}` : label };
+  return {
+    provider,
+    id,
+    source: sourceLabel || "",
+    label: sourceLabel ? `${sourceLabel} · ${label}` : label,
+  };
 }
 
 function modelLabel(id) {
@@ -168,6 +173,7 @@ class ComposerSession {
     this.root = options.root || "";
     this.attachments = [];
     this.models = [];
+    this.modelSources = [];
     this.selected = null;
     this.composerMode = normalizeComposerMode(this.selectionStore.getMode ? this.selectionStore.getMode() : "ask");
     this.mode = agentModeFor(this.composerMode);
@@ -214,6 +220,7 @@ class ComposerSession {
       projectDecision: this.projectDecision ? { ...this.projectDecision } : null,
       diff: this.diff,
       models: this.models.map((model) => ({ ...model })),
+      modelSources: this.modelSources.map((source) => ({ ...source })),
       selected: this.selected ? { ...this.selected } : null,
       mode: this.mode,
       composerMode: this.composerMode,
@@ -297,11 +304,44 @@ class ComposerSession {
   }
 
   async refreshModels() {
-    this.models = await this.listModels();
+    let discovered;
+    try {
+      discovered = await this.listModels();
+    } catch (error) {
+      discovered = {
+        models: [],
+        sources: [{
+          id: "models",
+          label: "Models",
+          configured: true,
+          available: false,
+          count: 0,
+          message: error instanceof Error ? error.message : String(error),
+        }],
+      };
+    }
+
+    const nextModels = Array.isArray(discovered)
+      ? discovered
+      : Array.isArray(discovered && discovered.models) ? discovered.models : [];
+    const nextSources = Array.isArray(discovered && discovered.sources) ? discovered.sources : [];
+
     const saved = this.selectionStore.get();
-    const match = saved && this.models.find((model) => model.provider === saved.provider && model.id === saved.id);
-    this.selected = match || this.models[0] || null;
-    if (this.selected) this.selectionStore.set({ provider: this.selected.provider, id: this.selected.id });
+    const savedMatch = saved && nextModels.find((model) => model.provider === saved.provider && model.id === saved.id);
+    const currentMatch = this.selected && nextModels.find((model) => (
+      model.provider === this.selected.provider && model.id === this.selected.id
+    ));
+
+    this.models = nextModels;
+    this.modelSources = nextSources;
+    this.selected = savedMatch || currentMatch || nextModels[0] || null;
+
+    // Only overwrite the persisted preference when it still exists, or when
+    // there was no previous preference. A temporarily offline remote server
+    // must not silently replace the user's chosen Server model with Local.
+    if (this.selected && (savedMatch || !saved)) {
+      this.selectionStore.set({ provider: this.selected.provider, id: this.selected.id });
+    }
     this.emit();
     return this.selected;
   }
