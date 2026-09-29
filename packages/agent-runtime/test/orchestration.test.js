@@ -1752,6 +1752,102 @@ async function main() {
     assert.strictEqual(run.verification.status, "passed", quoteRun(run));
   });
 
+  await test("HTTP 500 preview reads process logs and ignores unrelated page rewrites as repair", async () => {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, "public"), { recursive: true });
+    fs.writeFileSync(path.join(root, "public", "index.html"), '<h1>CodeMe Test Heading</h1>', "utf8");
+    fs.writeFileSync(path.join(root, "server.js"), "server.listen(3000);", "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }), "utf8");
+
+    let browserChecks = 0;
+    let logReads = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 3,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["html", "javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: [
+            { path: "public", type: "directory" },
+            { path: "server.js", type: "file" },
+            { path: "package.json", type: "file" },
+          ],
+        };
+      },
+      async readFile(filePath) { return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") }; },
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile(filePath, contents) {
+        fs.writeFileSync(path.join(root, filePath), contents, "utf8");
+        return { path: filePath, bytes: Buffer.byteLength(contents) };
+      },
+      async processStatus() { return { found: true, status: "running", command: "npm start", exitCode: null }; },
+      async processLogs() {
+        logReads += 1;
+        return { found: true, status: "running", command: "npm start", exitCode: null, output: "TypeError: bad server route at server.js:12" };
+      },
+      async startProcess() { return { started: true, restarted: true, status: "running", command: "npm start" }; },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) {
+        browserChecks += 1;
+        return {
+          available: false,
+          code: "page_status",
+          message: "Preview page returned HTTP 500",
+          url,
+          statusCode: 500,
+          assets: [],
+        };
+      },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "browser.check", args: { url: "public/index.html" } }] },
+      {
+        toolCalls: [{
+          name: "file.write",
+          args: {
+            path: "public/index.html",
+            contents: "<h1>CodeMe Test Heading</h1>",
+          },
+        }],
+      },
+      { text: "Waiting on server-runtime repair evidence.", toolCalls: [] },
+    ]);
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'In public/index.html, change the main page heading to "CodeMe Test Heading". Make the change and verify it in the browser.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 3,
+    }).done;
+
+    assert.strictEqual(logReads >= 1, true, quoteRun(run));
+    assert.strictEqual(browserChecks, 1, quoteRun(run));
+    assert.ok(run.toolCalls.some((call) => call.name === "process.logs" && call.directedBy === "runtime"), quoteRun(run));
+    assert.ok(run.messages.some((message) => String(message.content || "").includes("server-side HTTP error")), quoteRun(run));
+  });
+
   await test("asset 404 diagnosis blocks repeated browser checks and inspects the server runtime", async () => {
     const root = tempDir();
     fs.mkdirSync(path.join(root, "public"), { recursive: true });
