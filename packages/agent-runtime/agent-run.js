@@ -1862,7 +1862,10 @@ function toolsForRun(run, localTools, capabilityTools) {
     local = local.filter((tool) => previewTools.has(tool.name));
   }
   if (preferPatchForExplicitExistingEdit(run)) {
-    local = local.filter((tool) => tool.name !== "file.write");
+    const hasWrite = successfulWrites(run).length > 0;
+    local = hasWrite
+      ? local.filter((tool) => tool.name !== "file.write")
+      : local.filter((tool) => tool.name === "file.patch");
   }
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
