@@ -45,6 +45,7 @@ function createPreviewSessionManager(vscode, options = {}) {
       exitCode: record.exitCode,
       startedAt: record.startedAt,
       endedAt: record.endedAt,
+      restartCount: Number(record.restartCount || 0),
       output: includeOutput ? record.output : undefined,
     };
   }
@@ -89,7 +90,7 @@ function createPreviewSessionManager(vscode, options = {}) {
       const staticPreview = await ensureStaticPreview(workspace, plan.port || 4173);
       const now = new Date().toISOString();
       const record = {
-        id: `preview_${++sequence}`,
+        id: old ? old.id : `preview_${++sequence}`,
         workspace,
         kind: "static",
         command: "static-preview",
@@ -104,6 +105,7 @@ function createPreviewSessionManager(vscode, options = {}) {
         startedAt: now,
         updatedAt: now,
         endedAt: null,
+        restartCount: old ? Number(old.restartCount || 0) + 1 : 0,
       };
       sessions.set(workspace, record);
       if (record.server && typeof record.server.once === "function") {
@@ -142,7 +144,7 @@ function createPreviewSessionManager(vscode, options = {}) {
     const ended = new Promise((resolve) => { resolveEnded = resolve; });
     const now = new Date().toISOString();
     const record = {
-      id: `preview_${++sequence}`,
+      id: old ? old.id : `preview_${++sequence}`,
       workspace,
       kind: "process",
       command,
@@ -157,6 +159,7 @@ function createPreviewSessionManager(vscode, options = {}) {
       updatedAt: now,
       endedAt: null,
       ended,
+      restartCount: old ? Number(old.restartCount || 0) + 1 : 0,
     };
     sessions.set(workspace, record);
 
