@@ -97,7 +97,7 @@ const DEFINITIONS = {
     },
   },
   "terminal.run": {
-    description: "Run one short Node command or npm test and wait for it to finish. Never use this to start a website/dev server or append &: use browser.check for web previews.",
+    description: "Run one short Node command or npm test and wait for it to finish. Never use this to start a website/dev server or append &: use process.start for the owned preview process, process.logs for its output, and browser.check/browser.interact to verify it.",
     parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
   },
   "sandbox.run": {
