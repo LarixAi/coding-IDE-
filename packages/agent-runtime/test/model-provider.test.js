@@ -241,6 +241,59 @@ async function runXmlToolCallFallback() {
   });
 }
 
+async function runQwen3XmlToolCallFallback() {
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: `I will patch the heading now.
+<tool_call>
+<function=file_patch>
+<parameter=path>
+public/index.html
+</parameter>
+<parameter=oldText>
+Old Heading
+</parameter>
+<parameter=newText>
+CodeMe Test Heading
+</parameter>
+</function>
+</tool_call>`,
+      },
+    },
+  ], async (baseUrl) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "fixture",
+      messages: [{ role: "user", content: "Change the heading" }],
+      tools: [{
+        name: "file.patch",
+        description: "Patch a file",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+            oldText: { type: "string" },
+            newText: { type: "string" },
+          },
+          required: ["path", "oldText", "newText"],
+        },
+      }],
+    });
+
+    assert.strictEqual(result.text, "");
+    assert.deepStrictEqual(result.toolCalls, [{
+      name: "file.patch",
+      args: {
+        path: "public/index.html",
+        oldText: "Old Heading",
+        newText: "CodeMe Test Heading",
+      },
+    }]);
+  });
+}
+
 async function runRejectsUnofferedTool() {
   const raw = JSON.stringify({
     name: "terminal_run",
@@ -288,6 +341,7 @@ async function main() {
   await runProseWrappedFencedJsonFallback();
   await runMultipleFencedJsonFallback();
   await runXmlToolCallFallback();
+  await runQwen3XmlToolCallFallback();
   await runRejectsUnofferedTool();
   await runRejectsInvalidArguments();
   console.log("model provider tool-call compatibility passed");
