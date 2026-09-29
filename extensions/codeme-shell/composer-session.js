@@ -170,6 +170,7 @@ class ComposerSession {
     this.createProvider = options.createProvider;
     this.createRegistry = options.createRegistry;
     this.capabilities = options.capabilities || null;
+    this.externalTools = options.externalTools || null;
     this.root = options.root || "";
     this.attachments = [];
     this.models = [];
@@ -485,6 +486,7 @@ class ComposerSession {
         registry,
         store: publishing,
         capabilities: this.capabilities,
+        externalTools: this.externalTools,
         mode: this.mode,
         composerMode: this.composerMode,
         taskClass: taskClassFor(this.composerMode) || undefined,
