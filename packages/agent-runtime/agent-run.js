@@ -399,10 +399,11 @@ async function executeRun(run, options) {
       continue;
     }
 
-    for (const requestedCall of calls) {
+    for (const modelRequestedCall of calls) {
+      const requestedCall = normalizeExplicitExistingEditCall(run, modelRequestedCall);
       const ruleDecision = resolveRequestedToolDecision(run, requestedCall, registry, capabilityTools);
       const call = ruleDecision.call || requestedCall;
-      recordRuleDecision(run, ruleDecision, requestedCall);
+      recordRuleDecision(run, ruleDecision, modelRequestedCall);
       if (cancelled(run, signal)) return finishCancelled(run, store);
       const key = actionKey(call);
       if ((run.failureCounts[key] || 0) >= run.maxRetries) {
@@ -1802,6 +1803,53 @@ function browserFailureObserved(run) {
   ));
 }
 
+function minimalReplacement(before, after) {
+  const left = String(before || "");
+  const right = String(after || "");
+  if (left === right) return null;
+
+  let prefix = 0;
+  const maxPrefix = Math.min(left.length, right.length);
+  while (prefix < maxPrefix && left[prefix] === right[prefix]) prefix += 1;
+
+  let suffix = 0;
+  const maxSuffix = Math.min(left.length - prefix, right.length - prefix);
+  while (
+    suffix < maxSuffix
+    && left[left.length - 1 - suffix] === right[right.length - 1 - suffix]
+  ) suffix += 1;
+
+  const oldText = left.slice(prefix, left.length - suffix);
+  const newText = right.slice(prefix, right.length - suffix);
+  if (!oldText || !newText) return null;
+  return { oldText, newText };
+}
+
+function normalizeExplicitExistingEditCall(run, requestedCall) {
+  if (
+    !preferPatchForExplicitExistingEdit(run)
+    || !requestedCall
+    || requestedCall.name !== "file.write"
+    || !requestedCall.args
+  ) return requestedCall;
+
+  const filePath = String(requestedCall.args.path || "").replace(/\\/g, "/");
+  const contents = requestedCall.args.contents;
+  if (!filePath || typeof contents !== "string") return requestedCall;
+  if (!run.explicitExistingFiles.includes(filePath)) return requestedCall;
+
+  const before = latestReadContents(run, filePath);
+  if (!before) return requestedCall;
+  const patch = minimalReplacement(before, contents);
+  if (!patch) return requestedCall;
+
+  return {
+    name: "file.patch",
+    args: { path: filePath, oldText: patch.oldText, newText: patch.newText },
+    routedFrom: "file.write",
+  };
+}
+
 function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTools) {
   const localDefinitions = registry && typeof registry.definitions === "function"
     ? registry.definitions()
@@ -1885,7 +1933,7 @@ function toolsForRun(run, localTools, capabilityTools) {
     const hasWrite = successfulWrites(run).length > 0;
     local = hasWrite
       ? local.filter((tool) => tool.name !== "file.write")
-      : local.filter((tool) => tool.name === "file.patch");
+      : local.filter((tool) => tool.name === "file.patch" || tool.name === "file.write");
   }
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
@@ -2618,8 +2666,8 @@ function defaultVerify(run, text) {
     return {
       status: "failed",
       summary: htmlWrite
-        ? "The layout write is not complete until browser.check succeeds"
-        : "Apply the layout with file.write on the HTML or CSS, then call browser.check",
+        ? "The layout edit is not complete until browser.check succeeds"
+        : "Apply the layout with file.patch or file.write on the HTML or CSS, then call browser.check",
       evidence: htmlWrite ? ["file.write"] : [],
     };
   }
