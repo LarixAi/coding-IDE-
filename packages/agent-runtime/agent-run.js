@@ -675,6 +675,8 @@ async function executeRun(run, options) {
 
       if (call.name === "browser.check" && result.ok) {
         await maybeAutoVerifyBrowserInteraction(run, registry, store);
+      } else if (call.name === "browser.check" && !result.ok) {
+        await maybeDiagnoseBrowserFailure(run, registry, store, record);
       }
 
       if ((call.name === "browser.check" || call.name === "browser.interact") && result.ok) {
@@ -1452,6 +1454,64 @@ async function maybeReadBackRepairedFiles(run, registry, store) {
   return readAny;
 }
 
+function browserInfrastructureFailure(record) {
+  const code = record && record.result && record.result.error && record.result.error.code;
+  return ["asset_unavailable", "asset_status", "asset_mime", "page_status", "preview_not_html", "connection_refused", "timeout"].includes(String(code || ""));
+}
+
+function topLevelServerCandidate(run) {
+  const entry = serverEntryFromWorkspace(run);
+  if (entry) return entry;
+  for (const call of (run && run.toolCalls) || []) {
+    if (!call || call.name !== "dir.list" || !call.result || !call.result.ok) continue;
+    const entries = call.result.data && Array.isArray(call.result.data.entries) ? call.result.data.entries : [];
+    const candidate = entries
+      .map((item) => String(item && item.path || "").replace(/\\/g, "/"))
+      .find((file) => /(^|\/)(server|backend|api)\.(js|mjs|cjs|ts)$/i.test(file));
+    if (candidate) return candidate;
+  }
+  return "";
+}
+
+async function maybeDiagnoseBrowserFailure(run, registry, store, record) {
+  if (!run || !record || record.name !== "browser.check" || !browserInfrastructureFailure(record)) return false;
+  if (run.browserFailureDiagnosedCallId === record.id) return false;
+  run.browserFailureDiagnosedCallId = record.id;
+
+  const definitions = registry && typeof registry.definitions === "function" ? registry.definitions() : [];
+  const names = new Set(definitions.map((tool) => tool && tool.name).filter(Boolean));
+
+  if (names.has("process.status")) {
+    const statusResult = await runtimeInspectionCall(run, registry, store, "process.status", {});
+    const data = statusResult && statusResult.data;
+    if (statusResult && statusResult.ok && data && data.status === "failed" && names.has("process.logs")) {
+      await runtimeInspectionCall(run, registry, store, "process.logs", {});
+    }
+  }
+
+  const serverFile = topLevelServerCandidate(run);
+  if (serverFile && names.has("file.read") && !latestReadContents(run, serverFile)) {
+    await runtimeInspectionCall(run, registry, store, "file.read", { path: serverFile });
+  }
+
+  const pageStatus = record.result && record.result.data && record.result.data.statusCode;
+  const reachable = Number(pageStatus) >= 200 && Number(pageStatus) < 400;
+  run.messages.push({
+    role: "user",
+    content: reachable
+      ? "The browser reached the application server but verification failed on page/assets. Do not repeat browser.check unchanged. CodeMe has collected process/server evidence. Diagnose the preview route/static web root or repair the relevant server/client file before checking again."
+      : "Browser verification could not reach a valid application page. Do not repeat browser.check unchanged. Use the process/server evidence CodeMe just collected; start or repair the owned process only if that evidence shows it is needed.",
+  });
+  if (run.progress) {
+    run.progress.focus = true;
+    run.progress.writeNow = false;
+    run.progress.semanticStagnation = 0;
+    run.progress.stagnantTurns = 0;
+  }
+  store.save(run);
+  return true;
+}
+
 async function maybeVerifyBrowserEditAfterWrite(run, registry, store) {
   if (!run || run.mode !== "controlled" || !isBrowserEditTask(run) || hadFailedOwnedProcess(run)) return false;
   const writes = successfulWrites(run);
@@ -1914,6 +1974,27 @@ function recordRuleDecision(run, decision, requestedCall) {
   run.events.push({ type: "rule_decision", ...record });
 }
 
+function browserFailureNeedsRepair(run) {
+  const calls = (run && run.toolCalls) || [];
+  let failedIndex = -1;
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call && call.name === "browser.check" && browserInfrastructureFailure(call)) {
+      failedIndex = index;
+      break;
+    }
+    if (call && (call.name === "file.patch" || call.name === "file.write") && call.result && call.result.ok) return false;
+  }
+  if (failedIndex < 0) return false;
+  return !calls.slice(failedIndex + 1).some((call) => (
+    call
+    && (
+      ((call.name === "file.patch" || call.name === "file.write") && call.result && call.result.ok)
+      || (call.name === "process.start" && call.result && call.result.ok)
+    )
+  ));
+}
+
 function toolsForRun(run, localTools, capabilityTools) {
   if (run && run.mode === "chat_only") return [];
 
@@ -1935,6 +2016,10 @@ function toolsForRun(run, localTools, capabilityTools) {
     local = hasWrite
       ? local.filter((tool) => tool.name !== "file.write")
       : local.filter((tool) => tool.name === "file.patch" || tool.name === "file.write");
+  }
+  if (browserFailureNeedsRepair(run)) {
+    const recovery = new Set(["file.read", "file.patch", "file.write", "process.status", "process.logs", "process.start"]);
+    local = local.filter((tool) => recovery.has(tool.name));
   }
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
