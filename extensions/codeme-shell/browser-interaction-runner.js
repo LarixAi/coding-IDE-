@@ -147,13 +147,7 @@ function createBrowserInteractionRunner(options = {}) {
         });
 
         const endpoint = await waitForDevTools(profile, child, CDP_WAIT_MS);
-        const targets = await getJson(`http://127.0.0.1:${endpoint.port}/json/list`);
-        const target = (targets || []).find((item) => (
-          item
-          && item.type === "page"
-          && item.webSocketDebuggerUrl
-          && /^http:\/\/127\.0\.0\.1|^http:\/\/localhost/.test(String(item.url || ""))
-        )) || (targets || []).find((item) => item && item.type === "page" && item.webSocketDebuggerUrl);
+        const target = await waitForPageTarget(endpoint.port, child, checked.url, CDP_WAIT_MS);
 
         if (!target) {
           return {
@@ -604,6 +598,38 @@ async function waitForDevTools(profile, child, timeoutMs) {
   throw Object.assign(new Error("Timed out waiting for the browser automation endpoint."), { code: "browser_driver_timeout" });
 }
 
+function selectPageTarget(targets, expectedUrl) {
+  const list = Array.isArray(targets) ? targets : [];
+  let expectedOrigin = "";
+  try { expectedOrigin = new URL(expectedUrl).origin; } catch {}
+  return list.find((item) => {
+    if (!item || item.type !== "page" || !item.webSocketDebuggerUrl) return false;
+    if (!expectedOrigin) return false;
+    try { return new URL(String(item.url || "")).origin === expectedOrigin; } catch { return false; }
+  }) || list.find((item) => (
+    item
+    && item.type === "page"
+    && item.webSocketDebuggerUrl
+    && /^http:\/\/(?:127\.0\.0\.1|localhost)/.test(String(item.url || ""))
+  )) || list.find((item) => item && item.type === "page" && item.webSocketDebuggerUrl) || null;
+}
+
+async function waitForPageTarget(port, child, expectedUrl, timeoutMs) {
+  const deadline = Date.now() + Math.max(500, Number(timeoutMs || 0));
+  while (Date.now() < deadline) {
+    if (child && child.exitCode !== null) return null;
+    try {
+      const targets = await getJson(`http://127.0.0.1:${port}/json/list`);
+      const target = selectPageTarget(targets, expectedUrl);
+      if (target) return target;
+    } catch {
+      // DevTools can become reachable before the first page target exists.
+    }
+    await delay(80);
+  }
+  return null;
+}
+
 function getJson(url) {
   return new Promise((resolve, reject) => {
     const req = http.get(url, { timeout: 2500 }, (res) => {
@@ -754,6 +780,8 @@ module.exports = {
   prepareInteractionSteps,
   collectBrowserEvidence,
   collectBrowserError,
+  selectPageTarget,
+  waitForPageTarget,
   waitForObservedResult,
   waitForTextResult,
   createBrowserInteractionRunner,
