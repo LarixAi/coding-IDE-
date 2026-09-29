@@ -8,6 +8,7 @@ const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
 const { RULE_PRIORITY, resolveRuleDecision, isStaticScaffoldTool, READ_ONLY_BLOCKED_TOOLS } = require("./rule-decision");
 const { hasNoEditDirective, stripNegatedEditing } = require("./intent");
+const { gateContractPrompt } = require("./gate-contract");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 const STOPPED = new Set(["completed", "cancelled", "failed", "awaiting_user"]);
@@ -2343,6 +2344,7 @@ function systemPrompt(options) {
       "Do not promise that you changed, checked, ran, created, fixed, or verified anything in the workspace.",
       "Answer conversationally from the visible conversation and general model knowledge.",
       "If the user asks you to inspect, read, search, test, or change workspace files, explain that Chat mode has no workspace access and tell them to use Ask for read-only inspection, Plan for planning, or Code for edits.",
+      gateContractPrompt(),
     ].join(" ");
   }
   if (options.mode === "controlled") {
@@ -2374,6 +2376,7 @@ function systemPrompt(options) {
               : "Verify with the checks that actually exist in the inspected workspace. Do not call tests.run when there is no test script, and do not call Git tools when the workspace is not a Git repository. For browser-visible changes, read the changed file back and use browser.check. For click/button/tap interactions, you must also use browser.interact; source inspection alone is not proof. For a form or booking flow, use one browser.interact sequence to fill the fields, click submit, and assert the resulting confirmation text. If a CodeMe-owned process failed, read process.logs, repair the file, restart it with process.start, and confirm it is running before finishing.",
       "A claim of success is not evidence.",
       strategyGuidance(options.strategyRecord),
+      gateContractPrompt(),
       hub,
     ].join(" ");
   }
@@ -2392,6 +2395,7 @@ function systemPrompt(options) {
       : "",
     "Do not start or interact with the workspace application in Ask or Plan mode.",
     "Inspect once, then write the answer. Do not reread the same files.",
+    gateContractPrompt(),
     options.taskClass === "plan" || (options.strategyRecord && options.strategyRecord.taskClass === "plan")
       ? "Plan mode is plan-only. Finish with a sequenced implementation plan that names the relevant files, ordered steps, verification steps, and risks. Do not perform the plan."
       : "Ask mode is answer-only. Explain the findings and recommended changes, but do not perform them.",
