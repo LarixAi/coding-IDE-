@@ -202,12 +202,46 @@ async function diagnostics() {
   return { items };
 }
 
+function ownedPreviewUrl(root, requestedUrl) {
+  const requested = String(requestedUrl || "").trim();
+  const session = previewSessions.status(root);
+  const owned = session && session.status === "running"
+    ? String(session.url || session.origin || "")
+    : "";
+  if (!owned) return requested;
+  if (!requested) return owned;
+
+  try {
+    const parsed = new URL(requested);
+    if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(parsed.hostname)) return requested;
+    const pathname = parsed.pathname || "/";
+    if (pathname === "/" || pathname === "/index.html") return owned;
+    const target = new URL(owned);
+    target.pathname = pathname;
+    target.search = parsed.search;
+    target.hash = parsed.hash;
+    return target.toString();
+  } catch {
+    return owned;
+  }
+}
+
 async function browserCheck(url, input = {}) {
   const root = workspaceFolder().uri.fsPath;
   const requestedUrl = String(url || "");
+  const effectiveUrl = ownedPreviewUrl(root, requestedUrl);
   const args = input && typeof input === "object" ? input : {};
+  if (!effectiveUrl) {
+    return {
+      available: false,
+      code: "preview_not_running",
+      message: "No CodeMe-owned preview is running. Call process.start first.",
+      url: "",
+      session: previewSessions.status(root),
+    };
+  }
   try {
-    const checked = await preview.check(root, requestedUrl);
+    const checked = await preview.check(root, effectiveUrl);
     const session = previewSessions.status(root);
     if (!checked || checked.available === false) {
       return {
@@ -274,8 +308,18 @@ async function browserInteract(input) {
   const args = input && typeof input === "object" ? input : {};
   const requestedUrl = String(args.url || "");
   const root = workspaceFolder().uri.fsPath;
+  const effectiveUrl = ownedPreviewUrl(root, requestedUrl);
+  if (!effectiveUrl) {
+    return {
+      available: false,
+      code: "preview_not_running",
+      message: "No CodeMe-owned preview is running. Call process.start first.",
+      url: "",
+      session: previewSessions.status(root),
+    };
+  }
   try {
-    const checked = await preview.check(root, requestedUrl);
+    const checked = await preview.check(root, effectiveUrl);
     if (!checked || checked.available === false) {
       return {
         ...checked,
