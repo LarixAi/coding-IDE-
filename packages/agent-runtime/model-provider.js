@@ -104,6 +104,7 @@ function ollamaToolMode(model) {
 function systemToolProtocol(tools) {
   const available = (tools || []).map((tool) => ({
     name: PROVIDER_NAMES[tool.name] || tool.name,
+    contractName: tool.name,
     description: tool.description || "",
     parameters: tool.parameters || { type: "object", properties: {} },
   }));
@@ -113,7 +114,7 @@ function systemToolProtocol(tools) {
     "Use only the tools listed below. When an action is needed, do not describe or simulate it.",
     "Return exactly one or more tool calls using this form and no prose:",
     '<tool_call>{"name":"tool_name","arguments":{"key":"value"}}</tool_call>',
-    "Never invent a tool name. Never omit required arguments. Wait for the tool result before claiming success.",
+    "Use the listed name exactly when possible. CodeMe also accepts the matching contractName for compatibility. Never invent any other tool name. Never omit required arguments. Wait for the tool result before claiming success.",
     "AVAILABLE TOOLS:",
     JSON.stringify(available),
   ].join("\n");
@@ -292,6 +293,17 @@ function extractBalancedJsonObjects(text) {
   return objects;
 }
 
+function offeredToolForName(name, offeredTools) {
+  const candidate = String(name || "").trim();
+  if (!candidate) return null;
+  return (offeredTools || []).find((tool) => {
+    if (!tool || !tool.name) return false;
+    const contractName = String(tool.name);
+    const providerName = String(PROVIDER_NAMES[contractName] || contractName);
+    return candidate === contractName || candidate === providerName;
+  }) || null;
+}
+
 function parseContentToolCall(text, offeredTools) {
   let parsed;
   try {
@@ -308,9 +320,7 @@ function parseContentToolCall(text, offeredTools) {
   const providerName = typeof parsed.name === "string" ? parsed.name.trim() : "";
   if (!providerName) return null;
 
-  const offered = (offeredTools || []).find((tool) => (
-    tool && (PROVIDER_NAMES[tool.name] || tool.name) === providerName
-  ));
+  const offered = offeredToolForName(providerName, offeredTools);
   if (!offered) return null;
 
   let args = parsed.arguments ?? parsed.args ?? {};
@@ -369,9 +379,7 @@ function repairInvalidJsonEscapes(text) {
 function parseQwenXmlToolCall(providerName, body, offeredTools) {
   const name = String(providerName || "").trim();
   if (!name) return null;
-  const offered = (offeredTools || []).find((tool) => (
-    tool && (PROVIDER_NAMES[tool.name] || tool.name) === name
-  ));
+  const offered = offeredToolForName(name, offeredTools);
   if (!offered) return null;
 
   const args = {};
