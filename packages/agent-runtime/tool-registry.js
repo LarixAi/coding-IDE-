@@ -112,10 +112,13 @@ const DEFINITIONS = {
     },
   },
   "process.start": {
-    description: "Start or restart the single CodeMe-owned application/preview session. With no command, CodeMe chooses the workspace start script or a static preview server. process.status, process.logs, and browser.check all refer to this same session.",
+    description: "Start or restart the single CodeMe-owned application/preview session. With no command, CodeMe chooses the workspace start script or a static preview server. process.status, process.logs, and browser.check all refer to this same session. restart=true is reserved for evidence-based restart of the same owned session after a server repair.",
     parameters: {
       type: "object",
-      properties: { command: { type: "string" } },
+      properties: {
+        command: { type: "string" },
+        restart: { type: "boolean" },
+      },
       required: [],
     },
   },
