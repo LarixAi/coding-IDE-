@@ -437,7 +437,7 @@ async function waitForPage(url, timeoutMs) {
   };
 }
 
-function recoverFlagSocket(vscode, root) {
+function recoverFlagSocket(root) {
   const candidate = path.join(root, "--port");
   let stat;
   try {
@@ -446,12 +446,6 @@ function recoverFlagSocket(vscode, root) {
     return false;
   }
   if (!stat.isSocket()) return false;
-
-  for (const terminal of vscode.window.terminals || []) {
-    if (terminal && terminal.name === PREVIEW_TERMINAL && typeof terminal.dispose === "function") {
-      try { terminal.dispose(); } catch {}
-    }
-  }
   try {
     fs.unlinkSync(candidate);
   } catch {}
@@ -461,14 +455,6 @@ function recoverFlagSocket(vscode, root) {
 function createPreviewRunner(vscode) {
   return {
     async check(root, requestedUrl) {
-      if (recoverFlagSocket(vscode, root)) {
-        return {
-          available: false,
-          code: "invalid_port_binding",
-          message: "The server treated --port as a Unix socket path. Fix server.js so server.listen() receives a numeric port such as 4173, then retry the preview.",
-          url: requestedUrl,
-        };
-      }
       const plan = previewPlan(root, requestedUrl);
       if (!plan.ok) {
         return {
@@ -478,65 +464,27 @@ function createPreviewRunner(vscode) {
           url: requestedUrl,
         };
       }
-      if (plan.shouldStart) {
-        if (!plan.command) {
-          try {
-            const staticPreview = await ensureStaticPreview(root, plan.port);
-            const parsed = new URL(plan.url);
-            parsed.hostname = "127.0.0.1";
-            parsed.port = String(staticPreview.port);
-            const staticUrl = parsed.toString();
-            await openPreview(vscode, staticUrl);
-            return await waitForPage(staticUrl, 5000);
-          } catch (error) {
-            return {
-              available: false,
-              code: error && error.code ? String(error.code) : "preview_unavailable",
-              message: error instanceof Error ? error.message : String(error),
-              url: plan.url,
-            };
-          }
-        }
 
-        const running = await probe(plan.url);
-        if (!running.available) {
-          if (isAssetFailure(running) && hasOwnedPreviewTerminal(vscode)) {
-            stopOwnedPreviewTerminals(vscode);
-            const stopped = await waitForPreviewToStop(plan.url, 4000);
-            if (!stopped) {
-              return {
-                available: false,
-                code: "preview_restart_failed",
-                message: "CodeMe could not stop its previous preview process on this port. Stop the CodeMe preview terminal and retry.",
-                url: plan.url,
-              };
-            }
-            startPreview(vscode, root, plan.command, true);
-            await openPreview(vscode, plan.url);
-            return await waitForPage(plan.url, 45000);
-          }
-          if (isAssetFailure(running)) {
-            return running;
-          }
-          startPreview(vscode, root, plan.command);
-          await openPreview(vscode, plan.url);
-          return await waitForPage(plan.url, 45000);
-        }
-        await openPreview(vscode, plan.url);
-        return running;
-      }
+      let page;
       try {
-        const page = await fetchPage(plan.url);
-        await openPreview(vscode, plan.url);
-        return page;
+        page = await fetchPage(plan.url);
       } catch (error) {
         return {
           available: false,
-          code: error.code || "connection_refused",
-          message: error.message || "The preview is not reachable",
+          code: "preview_not_running",
+          cause: error && error.code ? String(error.code) : "connection_refused",
+          message: error && error.message ? String(error.message) : "The preview is not reachable",
           url: plan.url,
+          statusCode: null,
         };
       }
+
+      // browser.check is verification only. An HTTP response, including 4xx/5xx,
+      // proves a server answered and must never trigger a hidden start/restart here.
+      if (!page.available) return page;
+
+      await openPreview(vscode, plan.url);
+      return page;
     },
   };
 }
@@ -545,13 +493,20 @@ async function probe(url) {
   try {
     return await fetchPage(url);
   } catch (error) {
-    return { available: false, code: error.code || "connection_refused", message: error.message, url };
+    return {
+      available: false,
+      code: "preview_not_running",
+      cause: error && error.code ? String(error.code) : "connection_refused",
+      message: error && error.message ? String(error.message) : "The preview is not reachable",
+      url,
+      statusCode: null,
+    };
   }
 }
 
 async function openPreview(vscode, url) {
-  // Keep CodeMe previews inside the IDE. The built-in Simple Browser renders
-  // localhost pages in an editor tab and avoids launching the system browser.
+  // This only opens the already-running site in the IDE. It never starts,
+  // restarts, kills, or otherwise owns an application process.
   try {
     await vscode.commands.executeCommand("simpleBrowser.show", url);
     return { opened: true, surface: "simpleBrowser" };
@@ -569,39 +524,6 @@ function isAssetFailure(result) {
   return Boolean(result && ["asset_unavailable", "asset_status", "asset_mime"].includes(result.code));
 }
 
-function ownedPreviewTerminals(vscode) {
-  return (vscode.window.terminals || []).filter((item) => (
-    item && (item.name === PREVIEW_TERMINAL || item.name === "CodeMe Process")
-  ));
-}
-
-function hasOwnedPreviewTerminal(vscode) {
-  return ownedPreviewTerminals(vscode).length > 0;
-}
-
-function stopOwnedPreviewTerminals(vscode) {
-  for (const terminal of ownedPreviewTerminals(vscode)) {
-    if (typeof terminal.dispose !== "function") continue;
-    try { terminal.dispose(); } catch {}
-  }
-}
-
-async function waitForPreviewToStop(url, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const current = await probe(url);
-    if (!current.available && !isAssetFailure(current)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-  return false;
-}
-
-function startPreview(vscode, root, command, forceNew) {
-  const existing = forceNew ? null : vscode.window.terminals.find((item) => item.name === PREVIEW_TERMINAL);
-  const terminal = existing || vscode.window.createTerminal({ name: PREVIEW_TERMINAL, cwd: root });
-  terminal.show(true);
-  terminal.sendText(command);
-}
 
 module.exports = {
   PREVIEW_TERMINAL,
@@ -614,8 +536,8 @@ module.exports = {
   extractLocalAssets,
   recoverFlagSocket,
   ensureStaticPreview,
+  fetchPage,
+  probe,
   isAssetFailure,
-  hasOwnedPreviewTerminal,
-  stopOwnedPreviewTerminals,
   createPreviewRunner,
 };
