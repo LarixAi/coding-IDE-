@@ -354,6 +354,7 @@ class ComposerSession {
 
     const visibleText = String(text || "").trim() || goal;
     if (this.running) {
+      if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
       if (!this.active || !this.active.handle || typeof this.active.handle.followUp !== "function") {
         return reject("busy", "The active run cannot accept a follow-up.");
       }
