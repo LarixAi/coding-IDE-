@@ -180,6 +180,9 @@ async function createVerifier(run, context) {
       }
       if (run.workspaceInspected) evidence.push("workspace.inspect");
       const ok = items.every((item) => item.ok);
+      if (ok) {
+        for (const requirement of run.requirements || []) requirement.status = "verified";
+      }
       return { ok, items, evidence, summary: ok ? "Read-only answer grounded in workspace context" : "Read-only verification failed" };
     }
 
