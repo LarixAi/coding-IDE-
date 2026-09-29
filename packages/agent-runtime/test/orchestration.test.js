@@ -1696,8 +1696,8 @@ async function main() {
 
     assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
     assert.strictEqual(run.verification.status, "passed");
-    assert.strictEqual(run.repairReserveUsed, 4);
-    assert.ok(run.events.some((event) => event.type === "repair_reserve" && event.granted === 4));
+    assert.strictEqual(run.repairReserveUsed, 0);
+    assert.ok(!run.events.some((event) => event.type === "repair_reserve"), "runtime verification should finish without spending repair reserve");
     assert.strictEqual(previewCalls, 2);
     assert.strictEqual(processCalls, 0);
     assert.ok(run.filesChanged.includes("server.js"));
