@@ -7,8 +7,13 @@
   "engines": {
     "vscode": "^1.139.0"
   },
-  "categories": ["Other", "Themes"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other",
+    "Themes"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
   "contributes": {
     "themes": [
@@ -65,7 +70,8 @@
       "chat.titleBar.openInAgentsWindow.enabled": false,
       "workbench.secondarySideBar.defaultVisibility": "visible",
       "workbench.tips.enabled": false,
-      "workbench.editor.empty.hint": "hidden"
+      "workbench.editor.empty.hint": "hidden",
+      "chat.agent.enabled": false
     }
   }
 }
