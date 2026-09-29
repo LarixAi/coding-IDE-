@@ -4,7 +4,7 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const net = require("net");
-const { createPreviewRunner, portFromText, previewPlan, resolvePreviewUrl, recoverFlagSocket, ensureStaticPreview, entryPointFromStartScript, portFromSourceText, extractLocalAssets, isAssetFailure, hasOwnedPreviewTerminal, stopOwnedPreviewTerminals } = require("../preview-runner");
+const { createPreviewRunner, portFromText, previewPlan, previewWebRoot, workspacePathToPreviewPath, resolvePreviewUrl, recoverFlagSocket, ensureStaticPreview, entryPointFromStartScript, portFromSourceText, extractLocalAssets, isAssetFailure, hasOwnedPreviewTerminal, stopOwnedPreviewTerminals } = require("../preview-runner");
 
 function mockVscode(commands) {
   const sent = [];
@@ -104,6 +104,33 @@ async function main() {
   const blocked = previewPlan(root, "https://example.com");
   assert.strictEqual(blocked.ok, false);
   assert.strictEqual(blocked.code, "invalid_url");
+
+  const publicRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-public-preview-"));
+  fs.mkdirSync(path.join(publicRoot, "public"));
+  fs.writeFileSync(path.join(publicRoot, "public", "index.html"), '<title>Public App</title><script src="/app.js"></script>');
+  fs.writeFileSync(path.join(publicRoot, "public", "app.js"), "window.ready = true;");
+  fs.writeFileSync(path.join(publicRoot, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }));
+  fs.writeFileSync(path.join(publicRoot, "server.js"), "server.listen(3000);");
+  assert.strictEqual(previewWebRoot(publicRoot), path.join(publicRoot, "public"));
+  assert.strictEqual(workspacePathToPreviewPath(publicRoot, "public/index.html"), "index.html");
+  const publicPlan = previewPlan(publicRoot, "public/index.html");
+  assert.strictEqual(publicPlan.url, "http://127.0.0.1:3000/");
+  assert.strictEqual(publicPlan.canonicalizedFromPublic, "public/index.html");
+  const publicAbsolute = resolvePreviewUrl(publicRoot, "http://127.0.0.1:3000/public/index.html", "http://127.0.0.1:3000");
+  assert.strictEqual(publicAbsolute.url, "http://127.0.0.1:3000/");
+  assert.strictEqual(publicAbsolute.canonicalizedFromPublic, "http://127.0.0.1:3000/public/index.html");
+
+  const publicStaticRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-public-static-preview-"));
+  fs.mkdirSync(path.join(publicStaticRoot, "public"));
+  fs.writeFileSync(path.join(publicStaticRoot, "public", "index.html"), '<title>Public Static</title><script src="/app.js"></script>');
+  fs.writeFileSync(path.join(publicStaticRoot, "public", "app.js"), "window.ready = true;");
+  const publicStaticRunner = createPreviewRunner(mockVscode([]).vscode);
+  const publicStaticPage = await publicStaticRunner.check(publicStaticRoot, "public/index.html");
+  assert.strictEqual(publicStaticPage.available, true);
+  assert.strictEqual(publicStaticPage.title, "Public Static");
+  assert.ok(publicStaticPage.assets.some((item) => item.path === "app.js" && item.ok));
+  const publicStaticServer = await ensureStaticPreview(publicStaticRoot, 4173);
+  if (publicStaticServer && publicStaticServer.server) await new Promise((resolve) => publicStaticServer.server.close(resolve));
 
   const nodeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-node-preview-"));
   fs.writeFileSync(path.join(nodeRoot, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }));
