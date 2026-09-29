@@ -14,9 +14,15 @@ function mockVscode(commands) {
     external,
     vscode: {
       Uri: { parse: (value) => ({ toString: () => value, fsPath: value }) },
+      ViewColumn: { Active: 1, Beside: -2 },
       commands: {
-        executeCommand: async (name, value) => {
-          commands.push({ name, value: value && value.toString ? value.toString() : value });
+        getCommands: async () => ["workbench.action.browser.open"],
+        executeCommand: async (name, value, options) => {
+          commands.push({
+            name,
+            value: value && value.toString ? value.toString() : value,
+            options,
+          });
         },
       },
       env: {
@@ -218,7 +224,12 @@ async function main() {
   assert.strictEqual(page.statusCode, 200);
   assert.strictEqual(page.title, "Live Preview");
   assert.deepStrictEqual(mock.sent, []);
-  assert.ok(commands.some((item) => item.name === "simpleBrowser.show" && item.value === live.url));
+  assert.ok(commands.some((item) => (
+    item.name === "workbench.action.browser.open"
+    && item.value
+    && item.value.url === live.url
+    && item.value.openToSide === true
+  )));
   assert.deepStrictEqual(mock.external, [], "Preview must not launch the system browser");
   live.server.close();
 
