@@ -1,7 +1,7 @@
 const vscode = require("vscode");
 const cp = require("child_process");
 const { execute, executeReadOnly } = require("../../packages/agent-tools");
-const { createPreviewRunner } = require("./preview-runner");
+const { createPreviewRunner, resolveOwnedPreviewUrl } = require("./preview-runner");
 const { createPreviewSessionManager } = require("./preview-session-manager");
 const { createBrowserInteractionRunner } = require("./browser-interaction-runner");
 const { createSandboxRunner } = require("./sandbox-runner");
@@ -202,34 +202,10 @@ async function diagnostics() {
   return { items };
 }
 
-function ownedPreviewUrl(root, requestedUrl) {
-  const requested = String(requestedUrl || "").trim();
-  const session = previewSessions.status(root);
-  const owned = session && session.status === "running"
-    ? String(session.url || session.origin || "")
-    : "";
-  if (!owned) return requested;
-  if (!requested) return owned;
-
-  try {
-    const parsed = new URL(requested);
-    if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(parsed.hostname)) return requested;
-    const pathname = parsed.pathname || "/";
-    if (pathname === "/" || pathname === "/index.html") return owned;
-    const target = new URL(owned);
-    target.pathname = pathname;
-    target.search = parsed.search;
-    target.hash = parsed.hash;
-    return target.toString();
-  } catch {
-    return owned;
-  }
-}
-
 async function browserCheck(url, input = {}) {
   const root = workspaceFolder().uri.fsPath;
   const requestedUrl = String(url || "");
-  const effectiveUrl = ownedPreviewUrl(root, requestedUrl);
+  const effectiveUrl = resolveOwnedPreviewUrl(previewSessions.status(root), requestedUrl);
   const args = input && typeof input === "object" ? input : {};
   if (!effectiveUrl) {
     return {
@@ -308,7 +284,7 @@ async function browserInteract(input) {
   const args = input && typeof input === "object" ? input : {};
   const requestedUrl = String(args.url || "");
   const root = workspaceFolder().uri.fsPath;
-  const effectiveUrl = ownedPreviewUrl(root, requestedUrl);
+  const effectiveUrl = resolveOwnedPreviewUrl(previewSessions.status(root), requestedUrl);
   if (!effectiveUrl) {
     return {
       available: false,
