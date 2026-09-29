@@ -7,6 +7,7 @@ const {
   RunStore,
   startPipelineRun,
 } = require("..");
+const { recoverTextToolCalls } = require("../pipeline-loop");
 
 class ScriptedProvider extends ModelProvider {
   constructor(steps) {
