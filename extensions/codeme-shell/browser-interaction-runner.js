@@ -81,11 +81,11 @@ function createBrowserInteractionRunner(options = {}) {
   return {
     async interact(input) {
       const action = canonicalBrowserAction(input && input.action);
-      if (!["click", "fill", "assertText", "sequence"].includes(action)) {
+      if (!["click", "fill", "assertText", "sequence", "observe"].includes(action)) {
         return {
           available: false,
           code: "unsupported_browser_action",
-          message: "browser.interact supports click, fill, assertText, or sequence.",
+          message: "browser.interact supports click, fill, assertText, sequence, or internal observe.",
         };
       }
 
@@ -167,11 +167,18 @@ function createBrowserInteractionRunner(options = {}) {
         client = new CdpClient(target.webSocketDebuggerUrl);
         await client.connect();
         const consoleErrors = [];
-        client.onEvent((message) => collectBrowserError(message, consoleErrors));
+        const pageErrors = [];
+        const failedRequests = [];
+        const httpErrors = [];
+        client.onEvent((message) => {
+          collectBrowserError(message, consoleErrors);
+          collectBrowserEvidence(message, { pageErrors, failedRequests, httpErrors });
+        });
 
         await client.send("Runtime.enable");
         await client.send("Log.enable");
         await client.send("Page.enable");
+        await client.send("Network.enable");
         await client.send("Page.navigate", { url: checked.url });
         await waitForDocumentReady(client, CDP_WAIT_MS);
 
@@ -191,19 +198,26 @@ function createBrowserInteractionRunner(options = {}) {
               failedStep: index + 1,
               steps: stepResults,
               consoleErrors,
+              pageErrors,
+              failedRequests,
+              httpErrors,
             };
           }
         }
 
-        if (consoleErrors.length) {
+        if (consoleErrors.length || pageErrors.length || failedRequests.length || httpErrors.length) {
+          const code = consoleErrors.length || pageErrors.length ? "browser_runtime_error" : "browser_network_error";
           return {
             available: false,
-            code: "browser_console_error",
-            message: `The interaction completed, but the browser reported ${consoleErrors.length} runtime/console error${consoleErrors.length === 1 ? "" : "s"}.`,
+            code,
+            message: `The browser reported verification errors (console=${consoleErrors.length}, page=${pageErrors.length}, failedRequests=${failedRequests.length}, httpErrors=${httpErrors.length}).`,
             url: checked.url,
             action,
             steps: stepResults,
             consoleErrors,
+            pageErrors,
+            failedRequests,
+            httpErrors,
           };
         }
 
@@ -223,6 +237,9 @@ function createBrowserInteractionRunner(options = {}) {
           matched: last.matched !== false,
           steps: stepResults,
           consoleErrors,
+          pageErrors,
+          failedRequests,
+          httpErrors,
         };
       } catch (error) {
         return {
@@ -290,12 +307,42 @@ function prepareInteractionSteps(input) {
       steps.push({ action: stepAction, selector, expectedText });
       continue;
     }
+    if (stepAction === "observe") {
+      steps.push({ action: stepAction, selector: selector || "body", expectedText });
+      continue;
+    }
     return { ok: false, code: "unsupported_browser_action", message: `browser.interact step ${index + 1} has an unsupported action.` };
   }
   return { ok: true, steps };
 }
 
 async function performInteractionStep(client, step) {
+  if (step.action === "observe") {
+    const observed = await waitForTextResult(client, step.selector || "body", step.expectedText || "", 2500);
+    if (!observed || !observed.ok || (step.expectedText && !observed.matched)) {
+      return {
+        ok: false,
+        code: observed && observed.code ? observed.code : "browser_expectation_failed",
+        message: step.expectedText
+          ? `The rendered browser text did not contain "${step.expectedText}".`
+          : "The rendered browser body could not be observed.",
+        action: step.action,
+        selector: step.selector || "body",
+        expectedText: step.expectedText || "",
+        afterText: observed && observed.afterText || "",
+        matched: false,
+      };
+    }
+    return {
+      ok: true,
+      action: step.action,
+      selector: step.selector || "body",
+      expectedText: step.expectedText || "",
+      afterText: observed.afterText || "",
+      matched: step.expectedText ? Boolean(observed.matched) : true,
+    };
+  }
+
   if (step.action === "fill") {
     return client.evaluate(fillExpression(step.selector, step.value));
   }
@@ -492,6 +539,30 @@ async function waitForTextResult(client, selector, expectedText, timeoutMs) {
   return observed || { ok: false, afterText: "", matched: false };
 }
 
+function collectBrowserEvidence(message, evidence) {
+  if (!message || !message.method || !evidence) return;
+  if (message.method === "Runtime.exceptionThrown") {
+    const details = message.params && message.params.exceptionDetails;
+    const text = String(details && (details.text || (details.exception && details.exception.description)) || "Uncaught page exception").trim();
+    if (text && !evidence.pageErrors.includes(text)) evidence.pageErrors.push(text.slice(0, 2000));
+    return;
+  }
+  if (message.method === "Network.loadingFailed") {
+    const params = message.params || {};
+    const text = String(params.errorText || params.blockedReason || "Request failed").trim();
+    if (text && !evidence.failedRequests.includes(text)) evidence.failedRequests.push(text.slice(0, 1000));
+    return;
+  }
+  if (message.method === "Network.responseReceived") {
+    const response = message.params && message.params.response;
+    if (!response || Number(response.status) < 400) return;
+    const url = String(response.url || "");
+    if (/favicon\.ico(?:\?|$)/i.test(url)) return;
+    const item = `${Number(response.status)} ${url}`.trim();
+    if (!evidence.httpErrors.includes(item)) evidence.httpErrors.push(item.slice(0, 1500));
+  }
+}
+
 function collectBrowserError(message, errors) {
   if (!message || !message.method) return;
   let text = "";
@@ -677,6 +748,7 @@ module.exports = {
   fillExpression,
   textObservationExpression,
   prepareInteractionSteps,
+  collectBrowserEvidence,
   collectBrowserError,
   waitForObservedResult,
   waitForTextResult,
