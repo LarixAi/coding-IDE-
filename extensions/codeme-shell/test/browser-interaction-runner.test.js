@@ -52,6 +52,18 @@ async function main() {
   assert.ok(assertText.includes("#confirmation"));
   assert.ok(assertText.includes("Booking confirmed"));
 
+  const observeStep = prepareInteractionSteps({
+    action: "observe",
+    selector: "h1",
+    expectedText: "CodeMe Test Heading",
+  });
+  assert.strictEqual(observeStep.ok, true);
+  assert.deepStrictEqual(observeStep.steps, [{
+    action: "observe",
+    selector: "h1",
+    expectedText: "CodeMe Test Heading",
+  }]);
+
   const sequence = prepareInteractionSteps({
     action: "sequence",
     steps: [
@@ -128,6 +140,20 @@ async function main() {
     assert.strictEqual(form.steps[3].matched, true);
     assert.ok(form.steps[3].afterText.includes("Booking confirmed for Larone"));
     assert.deepStrictEqual(form.consoleErrors, []);
+
+    const observed = await createBrowserInteractionRunner().interact({
+      url: page.url,
+      action: "observe",
+      selector: "body",
+      expectedText: "Click Me",
+    });
+    assert.strictEqual(observed.available, true, JSON.stringify(observed));
+    assert.strictEqual(observed.matched, true);
+    assert.ok(observed.afterText.includes("Click Me"));
+    assert.deepStrictEqual(observed.consoleErrors, []);
+    assert.deepStrictEqual(observed.pageErrors, []);
+    assert.deepStrictEqual(observed.failedRequests, []);
+    assert.deepStrictEqual(observed.httpErrors, []);
   } finally {
     await new Promise((resolve) => page.server.close(resolve));
   }
