@@ -697,8 +697,25 @@ function lastMeaningfulDecision(run) {
   return "";
 }
 
+function stripToolProtocolText(value) {
+  let text = String(value || "");
+  text = text.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
+  text = text.replace(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/gi, (whole, body) => {
+    const toolLike = /"(?:name|tool)"\s*:/.test(body) && /"(?:arguments|args)"\s*:/.test(body);
+    return toolLike ? "" : whole;
+  });
+  const trimmed = text.trim();
+  if (/^\{[\s\S]*\}$/.test(trimmed)) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && (parsed.name || parsed.tool)) return "";
+    } catch {}
+  }
+  return text.trim();
+}
+
 function cleanAssistantText(value) {
-  const text = String(value || "").trim();
+  const text = stripToolProtocolText(value);
   if (!text) return "";
   const paragraphs = text.split(/\n\s*\n/).map((item) => item.trim()).filter(Boolean);
   const seen = new Set();
