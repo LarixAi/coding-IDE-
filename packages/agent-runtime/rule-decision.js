@@ -361,6 +361,21 @@ function resolveRuleDecision(input = {}) {
     }
   }
 
+  if (
+    facts.serverHttp5xxFailure
+    && facts.serverHttp5xxFrontendTarget
+    && (name === "file.patch" || name === "file.write")
+  ) {
+    candidates.push(candidate(
+      "recovery",
+      "recovery.server_5xx_scope",
+      "deny",
+      "The browser received HTTP 5xx from a reachable server. Do not rewrite HTML/CSS as a server repair; inspect the owned process logs and repair the server runtime or directly implicated server module.",
+      originalCall,
+      { code: "server_repair_scope" },
+    ));
+  }
+
   if (name === "process.start") {
     candidates.push(candidate(
       "recovery",
