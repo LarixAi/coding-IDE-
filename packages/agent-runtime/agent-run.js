@@ -22,6 +22,13 @@ const READ_ONLY_COMPOSER_TOOLS = new Set([
   "diagnostics.run",
 ]);
 
+function looksLikeRejectedToolText(text) {
+  const value = String(text || "");
+  if (!value) return false;
+  return /["']name["']\s*:\s*["'][a-z0-9_.-]+["']/i.test(value)
+    && /["'](?:arguments|args)["']\s*:/i.test(value);
+}
+
 function createRun(options) {
   const lock = options.modelLock || lockModel(options);
   const requestedMode = options.mode || "read_only";
@@ -366,6 +373,20 @@ async function executeRun(run, options) {
     store.save(run);
 
     if (calls.length === 0) {
+      if (looksLikeRejectedToolText(text)) {
+        const offeredNames = modelTools.map((tool) => tool && tool.name).filter(Boolean);
+        run.messages.push({
+          role: "user",
+          content: `Your response contained tool-call JSON text, but it did not match an available structured tool call. Do not print tool JSON as prose. Call one of the tools currently offered by CodeMe: ${offeredNames.join(", ") || "none"}.`,
+        });
+        if (run.progress) {
+          run.progress.focus = true;
+          run.progress.semanticStagnation = 0;
+          run.progress.stagnantTurns = 0;
+        }
+        store.save(run);
+        continue;
+      }
       touch(run, "verifying");
       setPlan(run, "verify", "in_progress");
       let verification = verify ? verify(run, text) : defaultVerify(run, text);
@@ -478,13 +499,17 @@ async function executeRun(run, options) {
             },
           };
         } else {
+          const noOpMutation = noOpMutationResult(run, call);
           const processGuard = (
-            ruleDecision.action === "guard"
+            !noOpMutation
+            && ruleDecision.action === "guard"
             && call.name === "process.start"
           )
             ? await guardProcessStart(run, registry)
             : null;
-          if (processGuard) {
+          if (noOpMutation) {
+            result = noOpMutation;
+          } else if (processGuard) {
             result = processGuard;
           } else if (call.name === "capability.list" || call.name === "capability.invoke") {
             result = await dispatchCapability(options.capabilities, run, call, signal, capabilityRegistry);
@@ -577,6 +602,19 @@ async function executeRun(run, options) {
       }
       run.inFlight = null;
       pushObservation(run, call, result);
+
+      if (result.ok && result.data && result.data.noChange) {
+        run.messages.push({
+          role: "user",
+          content: "That mutation made no change because the requested file state is already present. Do not rewrite the same contents again. Continue with verification; if verification fails, diagnose that failure instead of repeating this edit.",
+        });
+        if (run.progress) {
+          run.progress.writeNow = false;
+          run.progress.focus = true;
+          run.progress.semanticStagnation = 0;
+          run.progress.stagnantTurns = 0;
+        }
+      }
 
       if (!result.ok && (run.failureCounts[key] || 0) >= run.maxRetries) {
         await maybeResetRepeatedMutationStrategy(run, call, registry, store);
@@ -1557,7 +1595,11 @@ async function maybeVerifyBrowserEditAfterWrite(run, registry, store) {
   run.inFlight = null;
   store.save(run);
 
-  if (result.ok) await maybeAutoVerifyBrowserInteraction(run, registry, store);
+  if (result.ok) {
+    await maybeAutoVerifyBrowserInteraction(run, registry, store);
+  } else {
+    await maybeDiagnoseBrowserFailure(run, registry, store, record);
+  }
   return true;
 }
 
@@ -1886,6 +1928,47 @@ function minimalReplacement(before, after) {
   return { oldText, newText };
 }
 
+function noOpMutationResult(run, call) {
+  if (!run || !call || !call.args) return null;
+  const filePath = String(call.args.path || "").replace(/\\/g, "/");
+  if (!filePath) return null;
+
+  if (call.name === "file.patch") {
+    const oldText = call.args.oldText;
+    const newText = call.args.newText;
+    if (typeof oldText === "string" && typeof newText === "string" && oldText === newText) {
+      return {
+        ok: true,
+        tool: call.name,
+        data: {
+          path: filePath,
+          replacements: 0,
+          noChange: true,
+          reason: "identical_patch",
+        },
+      };
+    }
+  }
+
+  if (call.name === "file.write" && typeof call.args.contents === "string") {
+    const current = latestReadContents(run, filePath);
+    if (current && current === call.args.contents) {
+      return {
+        ok: true,
+        tool: call.name,
+        data: {
+          path: filePath,
+          bytes: Buffer.byteLength(call.args.contents),
+          noChange: true,
+          reason: "contents_already_match",
+        },
+      };
+    }
+  }
+
+  return null;
+}
+
 function normalizeExplicitExistingEditCall(run, requestedCall) {
   if (
     !preferPatchForExplicitExistingEdit(run)
@@ -2011,7 +2094,7 @@ function toolsForRun(run, localTools, capabilityTools) {
     const previewTools = new Set(["process.status", "process.start", "process.logs", "browser.check"]);
     local = local.filter((tool) => previewTools.has(tool.name));
   }
-  if (preferPatchForExplicitExistingEdit(run)) {
+  if (preferPatchForExplicitExistingEdit(run) && !browserFailureNeedsRepair(run)) {
     const hasWrite = successfulWrites(run).length > 0;
     local = hasWrite
       ? local.filter((tool) => tool.name !== "file.write")
@@ -3095,7 +3178,7 @@ function touch(run, lifecycle, detail) {
 }
 
 function recordChange(run, call, result) {
-  if (result.ok && (call.name === "file.write" || call.name === "file.patch") && call.args && call.args.path) {
+  if (result.ok && !(result.data && result.data.noChange) && (call.name === "file.write" || call.name === "file.patch") && call.args && call.args.path) {
     if (run.progress) run.progress.writeNow = false;
     addChanged(run, call.args.path);
     setPlan(run, "edit", "in_progress");
