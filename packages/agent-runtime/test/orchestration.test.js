@@ -765,8 +765,8 @@ async function main() {
     assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
     assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "public/index.html" && call.directedBy === "runtime"));
     assert.ok(provider.calls[0].messages.some((message) => String(message.content || "").includes("file.write is intentionally unavailable")));
-    assert.strictEqual(provider.calls[0].tools.some((tool) => tool.name === "file.write"), false);
-    assert.deepStrictEqual(provider.calls[0].tools.map((tool) => tool.name), ["file.patch"]);
+    assert.strictEqual(provider.calls[0].tools.some((tool) => tool.name === "file.write"), true);
+    assert.deepStrictEqual(provider.calls[0].tools.map((tool) => tool.name).sort(), ["file.patch", "file.write"]);
     assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.directedBy === "runtime" && call.args.path === "public/index.html"));
     assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.directedBy === "runtime" && call.result && call.result.ok));
     assert.ok(fs.readFileSync(path.join(root, "public/index.html"), "utf8").includes("CodeMe Test Heading"));
@@ -837,9 +837,10 @@ async function main() {
     assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
     assert.strictEqual(writes.length, 0, "weak-model full file.write must not be executed");
     assert.strictEqual(patches.length, 1);
-    assert.strictEqual(patches[0].oldText, "Old Heading");
-    assert.strictEqual(patches[0].newText, "CodeMe Test Heading");
+    assert.ok(patches[0].oldText.length < original.length, "runtime should derive a bounded patch, not rewrite the whole file");
+    assert.ok(patches[0].newText.length < updated.length, "runtime should derive a bounded replacement");
     assert.ok(run.toolCalls.some((call) => call.name === "file.patch" && call.routedFrom === "file.write"));
+    assert.strictEqual(fs.readFileSync(path.join(root, "public/index.html"), "utf8"), updated);
     assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.directedBy === "runtime" && call.result && call.result.ok));
   });
 
