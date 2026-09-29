@@ -14,7 +14,7 @@ function renderComposer(nonce) {
     body { margin: 0; color: #dfe4ec; background: #1c2027; font-family: var(--vscode-font-family); font-size: 13px; overflow: hidden; }
     .shell { position: relative; height: 100%; min-width: 0; display: flex; flex-direction: column; }
     header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 8px 0 10px; flex-shrink: 0; border-bottom: 1px solid #252b33; }
-    .title-tools { display: flex; align-items: center; gap: 4px; min-width: 0; }
+    .title-tools { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 0 0 auto; }
     h1 { margin: 0 4px 0 0; font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
     .header-action { display: inline-flex; align-items: center; justify-content: center; height: 24px; min-width: 24px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: #97a3b6; cursor: pointer; font: inherit; font-size: 11px; }
     .header-action:hover { background: #2a3038; color: #dfe4ec; }
@@ -31,8 +31,10 @@ function renderComposer(nonce) {
     .history-item.active { background: #26313a; }
     .history-title { display: block; overflow: hidden; color: #cbd2dc; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
     .history-meta { display: block; margin-top: 2px; color: #667284; font-size: 10px; }
-    header .pickers { display: flex; align-items: center; gap: 6px; min-width: 0; }
-    #model, #mode { max-width: min(140px, 46%); min-width: 0; background: transparent; color: #dfe4ec; border: 0; height: 22px; font: inherit; font-size: 12px; text-align: right; }
+    header .pickers { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+    #model, #mode { background: transparent; color: #dfe4ec; border: 0; height: 24px; font: inherit; font-size: 12px; }
+    #mode { flex: 0 0 auto; width: auto; min-width: 62px; max-width: 78px; text-align: right; }
+    #model { flex: 0 1 190px; min-width: 112px; max-width: 190px; text-align: right; text-overflow: ellipsis; }
     .thread { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px 16px; }
     .empty { margin: 28px 4px 0; color: #6b7689; font-size: 12px; line-height: 1.5; }
     .bubble { margin: 0 0 10px; max-width: 100%; min-width: 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -96,19 +98,31 @@ function renderComposer(nonce) {
     .chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; color: #97a3b6; font-size: 11px; }
     .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .chip button { border: 0; background: transparent; color: #6b7689; cursor: pointer; padding: 0; }
-    .composer { display: flex; flex-direction: column; min-width: 0; border-radius: 8px; padding: 2px 4px 4px; }
-    .shell.over .composer { outline: 1px solid #7fd3ea88; outline-offset: 2px; background: #7fd3ea10; }
-    textarea { width: 100%; min-height: 56px; max-height: 180px; box-sizing: border-box; border: 0; resize: none; background: transparent; color: #dfe4ec; font: inherit; padding: 6px 4px 2px; outline: none; }
-    .bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
-    .bar button { border: 0; background: transparent; color: #97a3b6; height: 24px; padding: 0 6px; cursor: pointer; font: inherit; font-size: 12px; }
-    #send, #stop { margin-left: auto; color: #7fd3ea; font-weight: 650; }
+    .composer { display: flex; flex-direction: column; min-width: 0; border: 1px solid #343b46; border-radius: 10px; background: #181c22; padding: 4px 6px 5px; box-shadow: 0 1px 0 #0003; }
+    .composer:focus-within { border-color: #506070; background: #191e25; }
+    .shell.over .composer { outline: 1px solid #7fd3ea88; outline-offset: 2px; background: #1b252c; }
+    textarea { width: 100%; min-height: 60px; max-height: 180px; box-sizing: border-box; border: 0; resize: none; background: transparent; color: #dfe4ec; font: inherit; padding: 7px 6px 4px; outline: none; line-height: 1.45; }
+    textarea::placeholder { color: #6f7a8b; }
+    .bar { display: flex; align-items: center; gap: 4px; min-width: 0; min-height: 28px; }
+    .bar button { border: 0; border-radius: 5px; background: transparent; color: #97a3b6; height: 26px; padding: 0 7px; cursor: pointer; font: inherit; font-size: 12px; }
+    .bar button:hover:not(:disabled) { background: #252b33; color: #dfe4ec; }
+    #send, #stop { margin-left: auto; color: #9cdbea; font-weight: 650; }
+    #send:not(:disabled) { background: #22343c; }
     #send[hidden], #stop[hidden] { display: none; }
     #send:disabled { opacity: 0.35; }
     #mic.on { color: #ff918b; }
     .perm { margin-left: 2px; color: #6b7689; font-size: 10px; }
-    @media (max-width: 220px) {
-      h1, .perm { display: none; }
-      #model { max-width: 100%; text-align: left; }
+    @media (max-width: 360px) {
+      h1 { display: none; }
+      header { gap: 4px; padding-left: 6px; padding-right: 6px; }
+      .title-tools { gap: 2px; }
+      .header-action { padding: 0 4px; }
+      #model { min-width: 96px; max-width: 150px; }
+      #mode { min-width: 58px; }
+    }
+    @media (max-width: 250px) {
+      .perm, #history-toggle { display: none; }
+      #model { min-width: 88px; max-width: 120px; }
     }
   </style>
 </head>
@@ -127,7 +141,9 @@ function renderComposer(nonce) {
           <option value="plan">Plan</option>
           <option value="code">Code</option>
         </select>
-        <select id="model" aria-label="Model"></select>
+        <select id="model" aria-label="Model">
+          <option value="" disabled selected>Loading model…</option>
+        </select>
       </div>
     </header>
     <div class="history-panel" id="history-panel">
@@ -392,6 +408,7 @@ function renderComposer(nonce) {
       const picked = normalizeComposerMode(state.composerMode || state.mode);
       document.getElementById("perm").textContent = composerModeLabel(picked);
       mode.value = picked;
+      mode.title = "Mode: " + composerModeLabel(picked);
       model.innerHTML = "";
       for (const item of state.models || []) {
         const option = document.createElement("option");
@@ -400,6 +417,14 @@ function renderComposer(nonce) {
         option.dataset.source = "provider";
         option.textContent = item.label;
         option.selected = Boolean(state.selected && state.selected.id === item.id && state.selected.provider === item.provider);
+        model.appendChild(option);
+      }
+      if (state.selected) model.title = "Model: " + (state.selected.label || state.selected.id || "");
+      if (!model.options.length) {
+        const option = document.createElement("option");
+        option.textContent = "No model connected";
+        option.disabled = true;
+        option.selected = true;
         model.appendChild(option);
       }
       chips.innerHTML = "";
