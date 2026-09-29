@@ -106,6 +106,27 @@ function isPreviewAssetPath(value) {
   return /\.(?:css|js|mjs|cjs|map|json|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|otf|mp4|webm|mp3|wav)$/i.test(pathname);
 }
 
+function previewWebRoot(root) {
+  const resolved = path.resolve(root);
+  const publicRoot = path.join(resolved, "public");
+  try {
+    if (fs.statSync(path.join(publicRoot, "index.html")).isFile()) return publicRoot;
+  } catch {}
+  return resolved;
+}
+
+function workspacePathToPreviewPath(root, value) {
+  let normalized = String(value || "").replace(/\\/g, "/").replace(/^\.\//, "");
+  const publicRoot = previewWebRoot(root);
+  const resolvedRoot = path.resolve(root);
+  if (publicRoot !== resolvedRoot && normalized.startsWith("public/")) {
+    normalized = normalized.slice("public/".length);
+  } else {
+    normalized = normalized.replace(/^src\//, "");
+  }
+  return normalized;
+}
+
 function resolvePreviewUrl(root, requestedUrl, origin) {
   const raw = String(requestedUrl || "").trim();
   if (!raw) return { ok: false, code: "invalid_args", message: "browser.check requires a URL" };
@@ -123,11 +144,19 @@ function resolvePreviewUrl(root, requestedUrl, origin) {
       return { ok: false, code: "invalid_url", message: "Only localhost preview URLs are allowed." };
     }
     parsed.hostname = "127.0.0.1";
+    const originalPathname = parsed.pathname;
+    const publicRoot = previewWebRoot(root);
+    const resolvedRoot = path.resolve(root);
+    if (publicRoot !== resolvedRoot && parsed.pathname.startsWith("/public/")) {
+      parsed.pathname = parsed.pathname.slice("/public".length) || "/";
+    }
     const requestedAsset = isPreviewAssetPath(parsed.pathname);
     if (requestedAsset) {
       parsed.pathname = "/";
       parsed.search = "";
       parsed.hash = "";
+    } else if (parsed.pathname === "/index.html") {
+      parsed.pathname = "/";
     }
     return {
       ok: true,
@@ -135,11 +164,13 @@ function resolvePreviewUrl(root, requestedUrl, origin) {
       local: true,
       port: Number(parsed.port || 80),
       canonicalizedFromAsset: requestedAsset ? raw : "",
+      canonicalizedFromPublic: originalPathname !== parsed.pathname && originalPathname.startsWith("/public/") ? raw : "",
     };
   }
   const relative = workspaceFilePath(root, raw);
   if (!relative) return { ok: false, code: "invalid_url", message: "That preview path is outside the workspace." };
-  const page = relative.replace(/^src\//, "").replace(/\\/g, "/");
+  const normalizedRelative = relative.replace(/\\/g, "/");
+  const page = workspacePathToPreviewPath(root, relative);
   const requestedAsset = isPreviewAssetPath(page);
   const suffix = requestedAsset || !page || page === "index.html" ? "/" : `/${page}`;
   return {
@@ -148,6 +179,7 @@ function resolvePreviewUrl(root, requestedUrl, origin) {
     local: true,
     port: Number(new URL(origin).port || 80),
     canonicalizedFromAsset: requestedAsset ? raw : "",
+    canonicalizedFromPublic: page !== normalizedRelative && /^public\//.test(normalizedRelative) ? raw : "",
   };
 }
 
@@ -407,13 +439,15 @@ async function ensureStaticPreview(root, preferredPort) {
   const existing = STATIC_SERVERS.get(key);
   if (existing && existing.server && existing.server.listening) return existing;
 
+  const webRoot = previewWebRoot(root);
   let started;
   try {
-    started = await createStaticServer(root, preferredPort || 4173);
+    started = await createStaticServer(webRoot, preferredPort || 4173);
   } catch (error) {
     if (!error || error.code !== "EADDRINUSE") throw error;
-    started = await createStaticServer(root, 0);
+    started = await createStaticServer(webRoot, 0);
   }
+  started.webRoot = webRoot;
   STATIC_SERVERS.set(key, started);
   return started;
 }
@@ -639,6 +673,8 @@ function startPreview(vscode, root, command, forceNew) {
 module.exports = {
   PREVIEW_TERMINAL,
   previewPlan,
+  previewWebRoot,
+  workspacePathToPreviewPath,
   resolvePreviewUrl,
   isPreviewAssetPath,
   portFromText,
