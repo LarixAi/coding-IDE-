@@ -1,6 +1,5 @@
 const vscode = require("vscode");
 const crypto = require("crypto");
-const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { renderComposer } = require("./composer-view");
@@ -9,7 +8,7 @@ const { renderEmptyEditor } = require("./empty-editor");
 const { host } = require("./code-oss-host");
 const { ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
 const { RunStore } = require("../../packages/agent-runtime/run-store");
-const { ComposerSession, listOllamaModels, modelLabel } = require("./composer-session");
+const { ComposerSession, listOllamaModels } = require("./composer-session");
 const { ConversationStore } = require("./conversation-store");
 const { hasWorkspaceEditorInGroups } = require("./tab-policy");
 
@@ -475,58 +474,6 @@ function applyConnection(item, state) {
     item.text = `$(sparkle) ${selected}`;
   }
   item.tooltip = state.detail;
-}
-
-function refreshConnection(state) {
-  return new Promise((resolve) => {
-    const req = http.get("http://127.0.0.1:11434/api/tags", (res) => {
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => {
-        if (res.statusCode !== 200) {
-          state.grade = "chat_only";
-          state.modelLabel = "";
-          state.detail = "The model server did not answer. Explorer, editor, and terminal still work.";
-          resolve();
-          return;
-        }
-        let installed = [];
-        try {
-          const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          installed = (body.models || []).map((model) => String(model.name || "")).filter(Boolean);
-        } catch {
-          installed = [];
-        }
-        if (!installed.length) {
-          state.grade = "chat_only";
-          state.modelLabel = "";
-          state.detail = "Ollama is running, but no model is installed. The IDE stays usable.";
-          resolve();
-          return;
-        }
-        const recorded = readGrade();
-        state.grade = recorded === "read_only_qualified" || recorded === "limited_agent" ? recorded : "limited_agent";
-        state.modelLabel = modelLabel(installed[0]);
-        state.detail = state.grade === "read_only_qualified"
-          ? "Read-only."
-          : "A local model is installed.";
-        resolve();
-      });
-    });
-    req.setTimeout(2000, () => {
-      req.destroy();
-      state.grade = "chat_only";
-      state.modelLabel = "";
-      state.detail = "The model server is not reachable. Explorer, editor, and terminal still work.";
-      resolve();
-    });
-    req.on("error", () => {
-      state.grade = "chat_only";
-      state.modelLabel = "";
-      state.detail = "The model server is not reachable. Explorer, editor, and terminal still work.";
-      resolve();
-    });
-  });
 }
 
 function readGrade() {
