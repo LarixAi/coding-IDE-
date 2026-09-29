@@ -23,6 +23,7 @@ module.exports = {
   RunStore,
   createRun,
   startAgentRun,
+  startPipelineRun,
   resumeRun,
   applyFollowUp,
   lockModel,
