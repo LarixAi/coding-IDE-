@@ -772,6 +772,77 @@ async function main() {
     assert.ok(fs.readFileSync(path.join(root, "public/index.html"), "utf8").includes("CodeMe Test Heading"));
   });
 
+  await test("explicit existing edit normalizes weak-model file.write into a minimal file.patch", async () => {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, "public"), { recursive: true });
+    const original = "<!doctype html>\n<html><body><h1>Old Heading</h1></body></html>\n";
+    const updated = "<!doctype html>\n<html><body><h1>CodeMe Test Heading</h1></body></html>\n";
+    fs.writeFileSync(path.join(root, "public/index.html"), original, "utf8");
+
+    const writes = [];
+    const patches = [];
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 1,
+          git: false,
+          projectMarkers: [],
+          languages: ["html"],
+          frameworks: [],
+          packageManager: "",
+          scripts: {},
+        };
+      },
+      async listDirectory() {
+        return { path: ".", entries: [{ path: "public", type: "directory" }] };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile(filePath, oldText, newText) {
+        patches.push({ filePath, oldText, newText });
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        assert.ok(before.includes(oldText));
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile(filePath, contents) {
+        writes.push({ filePath, contents });
+        fs.writeFileSync(path.join(root, filePath), contents, "utf8");
+        return { path: filePath, bytes: Buffer.byteLength(contents) };
+      },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) { return { available: true, statusCode: 200, title: "Updated", url, assets: [] }; },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "file.write", args: { path: "public/index.html", contents: updated } }] },
+    ]);
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'In public/index.html, change the main page heading to "CodeMe Test Heading". Make the change and verify it in the browser.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 4,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(writes.length, 0, "weak-model full file.write must not be executed");
+    assert.strictEqual(patches.length, 1);
+    assert.strictEqual(patches[0].oldText, "Old Heading");
+    assert.strictEqual(patches[0].newText, "CodeMe Test Heading");
+    assert.ok(run.toolCalls.some((call) => call.name === "file.patch" && call.routedFrom === "file.write"));
+    assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.directedBy === "runtime" && call.result && call.result.ok));
+  });
+
   await test("run-only website request reuses a port already in use without editing server.js", async () => {
     const root = tempDir();
     fs.writeFileSync(path.join(root, "server.js"), "server.listen(3000);\n", "utf8");
