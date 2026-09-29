@@ -550,6 +550,10 @@ function collectBrowserEvidence(message, evidence) {
   if (message.method === "Network.loadingFailed") {
     const params = message.params || {};
     const text = String(params.errorText || params.blockedReason || "Request failed").trim();
+    // Chromium commonly reports net::ERR_ABORTED when a duplicate navigation is
+    // superseded by the explicit Page.navigate call. The final HTTP response,
+    // runtime errors, and interaction assertions are checked separately.
+    if (text === "net::ERR_ABORTED" && !params.blockedReason) return;
     if (text && !evidence.failedRequests.includes(text)) evidence.failedRequests.push(text.slice(0, 1000));
     return;
   }
