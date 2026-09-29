@@ -411,7 +411,13 @@ async function main() {
     decisions: [{
       iteration: 3,
       text: '{"name":"file.write","arguments":{"path":"public/index.html","contents":"<h1>x</h1>"}}',
-      toolCalls: [],
+      toolCalls: [{
+      iteration: 0,
+      name: "file.read",
+      args: { path: "public/index.html" },
+      result: { ok: true, data: { contents: "<h1>Old</h1>" } },
+      directedBy: "runtime",
+    }],
     }],
     toolCalls: [],
     diagnoses: [],
@@ -419,6 +425,7 @@ async function main() {
   assert.strictEqual(debugFixture.error.code, "repeated_action");
   assert.strictEqual(debugFixture.lastDecisionHadTools, false);
   assert.ok(debugFixture.recentDecisions[0].text.includes("file.write"));
+  assert.ok(debugFixture.filesRead.includes("public/index.html"));
 
   const previewHost = workspace(root);
   previewHost.browserCheck = async (url) => ({ available: true, statusCode: 200, title: "Car Bid Dealership", url });
