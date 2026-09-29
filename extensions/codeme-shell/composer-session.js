@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { startAgentRun, startPipelineRun } = require("../../packages/agent-runtime");
 const { stripNegatedEditing } = require("../../packages/agent-runtime/intent");
-const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
+const { composerStage, composerActivity, compactTools, compactRunStream, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
 
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -181,6 +181,7 @@ class ComposerSession {
     this.filesChanged = [];
     this.fileDiffs = [];
     this.tools = [];
+    this.stream = [];
     this.thread = [];
     this.verification = null;
     this.projectDecision = null;
@@ -207,6 +208,7 @@ class ComposerSession {
       filesChanged: this.filesChanged.slice(),
       fileDiffs: this.fileDiffs.map((item) => ({ ...item })),
       tools: this.tools.map((item) => ({ ...item })),
+      stream: this.stream.map((item) => ({ ...item })),
       thread: this.thread.map((item) => ({ ...item })),
       verification: this.verification,
       projectDecision: this.projectDecision ? { ...this.projectDecision } : null,
@@ -286,6 +288,7 @@ class ComposerSession {
     this.filesChanged = [];
     this.fileDiffs = [];
     this.tools = [];
+    this.stream = [];
     this.verification = null;
     this.projectDecision = null;
     this.diff = "";
@@ -416,6 +419,7 @@ class ComposerSession {
     this.filesChanged = [];
     this.fileDiffs = [];
     this.tools = [];
+    this.stream = [];
     this.verification = null;
     this.projectDecision = null;
     this.diff = "";
@@ -504,6 +508,7 @@ class ComposerSession {
     this.diff = diffText(run);
     this.fileDiffs = diffsByFile(this.diff, this.filesChanged);
     this.tools = compactTools(run);
+    this.stream = compactRunStream(run);
 
     const assistantItems = threadFrom(run).filter((item) => item.role === "assistant");
     this.thread = (this.active.baseThread || []).concat(assistantItems);
