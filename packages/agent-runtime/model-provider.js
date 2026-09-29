@@ -65,8 +65,10 @@ class OllamaModelProvider extends ModelProvider {
     if (input.signal) signals.push(input.signal);
     const signal = AbortSignal.any(signals);
     try {
-      const response = await postJson(this.baseUrl, "/api/chat", chatBody(input), signal);
+      const toolMode = ollamaToolMode(input.model);
+      const response = await postJson(this.baseUrl, "/api/chat", chatBody(input, toolMode), signal);
       const decision = normalizeMessage(response.message || {}, input.tools || []);
+      decision.toolMode = toolMode;
       const promptTokens = typeof response.prompt_eval_count === "number" ? response.prompt_eval_count : null;
       const completionTokens = typeof response.eval_count === "number" ? response.eval_count : null;
       if (promptTokens !== null || completionTokens !== null) {
@@ -90,15 +92,63 @@ class OllamaModelProvider extends ModelProvider {
   }
 }
 
-function chatBody(input) {
-  return {
+function ollamaToolMode(model) {
+  const id = String(model || "").trim().toLowerCase();
+  // qwen2.5-coder frequently emits tool JSON in message.content rather than
+  // Ollama message.tool_calls. Give it one provider-independent system-tool
+  // protocol instead of relying on the native tool template.
+  if (/^qwen2\.5-coder(?::|$)/.test(id)) return "system";
+  return "native";
+}
+
+function systemToolProtocol(tools) {
+  const available = (tools || []).map((tool) => ({
+    name: PROVIDER_NAMES[tool.name] || tool.name,
+    contractName: tool.name,
+    description: tool.description || "",
+    parameters: tool.parameters || { type: "object", properties: {} },
+  }));
+  if (!available.length) return "";
+  return [
+    "CODEME TOOL PROTOCOL:",
+    "Use only the tools listed below. When an action is needed, do not describe or simulate it.",
+    "Return exactly one or more tool calls using this form and no prose:",
+    '<tool_call>{"name":"tool_name","arguments":{"key":"value"}}</tool_call>',
+    "Use the listed name exactly when possible. CodeMe also accepts the matching contractName for compatibility. Never invent any other tool name. Never omit required arguments. Wait for the tool result before claiming success.",
+    "AVAILABLE TOOLS:",
+    JSON.stringify(available),
+  ].join("\n");
+}
+
+function messagesForToolMode(input, toolMode) {
+  const messages = (input.messages || []).map(toOllamaMessage);
+  if (toolMode !== "system" || !(input.tools || []).length) return messages;
+
+  const protocol = systemToolProtocol(input.tools || []);
+  const firstSystem = messages.findIndex((message) => message.role === "system");
+  if (firstSystem >= 0) {
+    messages[firstSystem] = {
+      ...messages[firstSystem],
+      content: `${messages[firstSystem].content || ""}\n\n${protocol}`,
+    };
+  } else {
+    messages.unshift({ role: "system", content: protocol });
+  }
+  return messages;
+}
+
+function chatBody(input, toolMode = ollamaToolMode(input.model)) {
+  const body = {
     model: input.model,
     stream: false,
     think: false,
-    messages: (input.messages || []).map(toOllamaMessage),
-    tools: (input.tools || []).map(toOllamaTool),
+    messages: messagesForToolMode(input, toolMode),
     options: { temperature: 0 },
   };
+  if (toolMode === "native" && (input.tools || []).length) {
+    body.tools = (input.tools || []).map(toOllamaTool);
+  }
+  return body;
 }
 
 function toOllamaMessage(message) {
@@ -175,17 +225,83 @@ function contentToolCalls(content, offeredTools) {
     if (candidate.startsWith("{") && candidate.endsWith("}")) candidates.push(candidate);
   }
 
+  for (const match of text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi)) {
+    const candidate = String(match[1] || "").trim();
+    if (candidate.startsWith("{") && candidate.endsWith("}")) candidates.push(candidate);
+  }
+
+  for (const candidate of extractBalancedJsonObjects(text)) {
+    candidates.push(candidate);
+  }
+
   const calls = [];
   const seen = new Set();
-  for (const candidate of candidates) {
-    const call = parseContentToolCall(candidate, offeredTools);
-    if (!call) continue;
+  const rememberCall = (call) => {
+    if (!call) return;
     const key = `${call.name}:${JSON.stringify(call.args || {})}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
     calls.push(call);
+  };
+
+  for (const candidate of candidates) {
+    rememberCall(parseContentToolCall(candidate, offeredTools));
   }
+
+  // Qwen3-Coder's native agent format may surface as raw content when the
+  // serving layer does not translate it into message.tool_calls.
+  for (const match of text.matchAll(/<tool_call>\s*<function=([^>\n]+)>\s*([\s\S]*?)<\/function>\s*<\/tool_call>/gi)) {
+    rememberCall(parseQwenXmlToolCall(match[1], match[2], offeredTools));
+  }
+
   return calls;
+}
+
+function extractBalancedJsonObjects(text) {
+  const source = String(text || "");
+  const objects = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+      continue;
+    }
+    if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(source.slice(start, index + 1));
+        start = -1;
+      }
+    }
+  }
+  return objects;
+}
+
+function offeredToolForName(name, offeredTools) {
+  const candidate = String(name || "").trim();
+  if (!candidate) return null;
+  return (offeredTools || []).find((tool) => {
+    if (!tool || !tool.name) return false;
+    const contractName = String(tool.name);
+    const providerName = String(PROVIDER_NAMES[contractName] || contractName);
+    return candidate === contractName || candidate === providerName;
+  }) || null;
 }
 
 function parseContentToolCall(text, offeredTools) {
@@ -193,16 +309,18 @@ function parseContentToolCall(text, offeredTools) {
   try {
     parsed = JSON.parse(text);
   } catch {
-    return null;
+    try {
+      parsed = JSON.parse(repairInvalidJsonEscapes(text));
+    } catch {
+      return null;
+    }
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
 
   const providerName = typeof parsed.name === "string" ? parsed.name.trim() : "";
   if (!providerName) return null;
 
-  const offered = (offeredTools || []).find((tool) => (
-    tool && (PROVIDER_NAMES[tool.name] || tool.name) === providerName
-  ));
+  const offered = offeredToolForName(providerName, offeredTools);
   if (!offered) return null;
 
   let args = parsed.arguments ?? parsed.args ?? {};
@@ -216,6 +334,87 @@ function parseContentToolCall(text, offeredTools) {
   if (!validToolArguments(args, offered.parameters)) return null;
 
   return { name: offered.name, args };
+}
+
+function repairInvalidJsonEscapes(text) {
+  const source = String(text || "");
+  let output = "";
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (char !== "\\") {
+      output += char;
+      continue;
+    }
+
+    const next = source[index + 1];
+    if (next === undefined) {
+      output += char;
+      continue;
+    }
+
+    if ('"\\/bfnrt'.includes(next)) {
+      output += char + next;
+      index += 1;
+      continue;
+    }
+
+    if (next === "u") {
+      const hex = source.slice(index + 2, index + 6);
+      if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+        output += "\\u" + hex;
+        index += 5;
+        continue;
+      }
+    }
+
+    // Some coding models escape HTML/Markdown punctuation inside JSON string
+    // values (for example \<html>). JSON does not permit those escapes.
+    // Dropping only the invalid backslash recovers the intended literal text.
+    output += next;
+    index += 1;
+  }
+  return output;
+}
+
+function parseQwenXmlToolCall(providerName, body, offeredTools) {
+  const name = String(providerName || "").trim();
+  if (!name) return null;
+  const offered = offeredToolForName(name, offeredTools);
+  if (!offered) return null;
+
+  const args = {};
+  for (const match of String(body || "").matchAll(/<parameter=([^>\n]+)>\s*([\s\S]*?)\s*<\/parameter>/gi)) {
+    const key = String(match[1] || "").trim();
+    if (!key) continue;
+    args[key] = coerceToolArgument(String(match[2] || "").trim(), offered.parameters, key);
+  }
+  if (!validToolArguments(args, offered.parameters)) return null;
+  return { name: offered.name, args };
+}
+
+function coerceToolArgument(value, schema, key) {
+  const properties = schema && schema.properties && typeof schema.properties === "object"
+    ? schema.properties
+    : {};
+  const rule = properties[key] || {};
+  const type = Array.isArray(rule.type) ? rule.type.find((item) => item !== "null") : rule.type;
+  if (type === "integer") {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : value;
+  }
+  if (type === "number") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : value;
+  }
+  if (type === "boolean") {
+    if (/^true$/i.test(value)) return true;
+    if (/^false$/i.test(value)) return false;
+    return value;
+  }
+  if (type === "array" || type === "object") {
+    try { return JSON.parse(value); } catch { return value; }
+  }
+  return value;
 }
 
 function validToolArguments(args, schema) {

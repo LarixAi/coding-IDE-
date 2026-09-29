@@ -176,7 +176,12 @@ async function main() {
       assert.strictEqual(healthHits, 0);
       assert.strictEqual(run.lifecycle, "completed");
       assert.strictEqual(run.error, null);
-      assert.ok(run.observations[0].summary.includes("unknown_capability"));
+      const rejectedObservation = run.observations.find((item) => (
+        item.type === "capability"
+        && item.trusted === false
+        && item.summary.includes("unknown_capability")
+      ));
+      assert.ok(rejectedObservation);
       assert.ok(!model.calls[0].tools.some((tool) => String(tool.description).includes("image.generate")));
       assert.ok(!model.calls[0].tools.some((tool) => String(tool.description).includes("not.a.capability")));
     } finally {
@@ -228,8 +233,12 @@ async function main() {
       assert.strictEqual(observation.trusted, false);
       assert.ok(observation.summary.includes(MARKER));
       assert.ok(!observation.summary.includes("webhook"));
-      const toolMessage = model.calls[1].messages.find((message) => message.role === "tool");
-      assert.ok(toolMessage.content.includes(MARKER));
+      const toolMessage = model.calls[1].messages.find((message) => (
+        message.role === "tool"
+        && message.name === "capability.invoke"
+        && String(message.content).includes(MARKER)
+      ));
+      assert.ok(toolMessage);
       assert.ok(!toolMessage.content.includes("webhook"));
       assert.deepStrictEqual(run.filesChanged, []);
     } finally {
@@ -294,8 +303,13 @@ async function main() {
         }).done;
         assert.strictEqual(run.lifecycle, "completed", label);
         assert.strictEqual(run.error, null, label);
-        assert.ok(run.observations[0].summary.includes(code), label);
-        assert.strictEqual(run.observations[0].trusted, false, label);
+        const failedObservation = run.observations.find((item) => (
+          item.type === "capability"
+          && item.trusted === false
+          && item.summary.includes(code)
+        ));
+        assert.ok(failedObservation, label);
+        assert.strictEqual(failedObservation.trusted, false, label);
       }
 
       const escalating = {

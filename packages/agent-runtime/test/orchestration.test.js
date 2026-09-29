@@ -699,6 +699,207 @@ async function main() {
     assert.ok(context.includes("this is not a Git repository"));
   });
 
+  await test("explicit existing-file edit is pre-read and only offers patch for the edit", async () => {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, "public"), { recursive: true });
+    fs.writeFileSync(path.join(root, "public/index.html"), "<h1>Old Heading</h1>\n", "utf8");
+
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 1,
+          git: false,
+          projectMarkers: [],
+          languages: ["html"],
+          frameworks: [],
+          packageManager: null,
+          scripts: {},
+        };
+      },
+      async listDirectory(dirPath = ".") {
+        if (dirPath === ".") return { path: ".", entries: [{ path: "public", type: "directory" }] };
+        return { path: dirPath, entries: [{ path: "public/index.html", type: "file" }] };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile() { throw new Error("file.write must not be offered for this edit"); },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) { return { available: true, statusCode: 200, title: "CodeMe Test Heading", url }; },
+    };
+
+    const provider = new ScriptedModelProvider([
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: {
+            path: "public/index.html",
+            oldText: "Old Heading",
+            newText: "CodeMe Test Heading",
+          },
+        }],
+      },
+    ]);
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'In public/index.html, change the main page heading to "CodeMe Test Heading". Make the change and verify it in the browser.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 6,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "public/index.html" && call.directedBy === "runtime"));
+    assert.ok(provider.calls[0].messages.some((message) => String(message.content || "").includes("Prefer file.patch with the smallest exact oldText/newText replacement")));
+    assert.strictEqual(provider.calls[0].tools.some((tool) => tool.name === "file.write"), true);
+    assert.deepStrictEqual(provider.calls[0].tools.map((tool) => tool.name).sort(), ["file.patch", "file.write"]);
+    assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.directedBy === "runtime" && call.args.path === "public/index.html"));
+    assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.directedBy === "runtime" && call.result && call.result.ok));
+    assert.ok(fs.readFileSync(path.join(root, "public/index.html"), "utf8").includes("CodeMe Test Heading"));
+  });
+
+  await test("explicit existing edit normalizes weak-model file.write into a minimal file.patch", async () => {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, "public"), { recursive: true });
+    const original = "<!doctype html>\n<html><body><h1>Old Heading</h1></body></html>\n";
+    const updated = "<!doctype html>\n<html><body><h1>CodeMe Test Heading</h1></body></html>\n";
+    fs.writeFileSync(path.join(root, "public/index.html"), original, "utf8");
+
+    const writes = [];
+    const patches = [];
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 1,
+          git: false,
+          projectMarkers: [],
+          languages: ["html"],
+          frameworks: [],
+          packageManager: "",
+          scripts: {},
+        };
+      },
+      async listDirectory() {
+        return { path: ".", entries: [{ path: "public", type: "directory" }] };
+      },
+      async readFile(filePath) {
+        return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") };
+      },
+      async patchFile(filePath, oldText, newText) {
+        patches.push({ filePath, oldText, newText });
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        assert.ok(before.includes(oldText));
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile(filePath, contents) {
+        writes.push({ filePath, contents });
+        fs.writeFileSync(path.join(root, filePath), contents, "utf8");
+        return { path: filePath, bytes: Buffer.byteLength(contents) };
+      },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) { return { available: true, statusCode: 200, title: "Updated", url, assets: [] }; },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "file.write", args: { path: "public/index.html", contents: updated } }] },
+    ]);
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'In public/index.html, change the main page heading to "CodeMe Test Heading". Make the change and verify it in the browser.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 4,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.strictEqual(writes.length, 0, "weak-model full file.write must not be executed");
+    assert.strictEqual(patches.length, 1);
+    assert.ok(patches[0].oldText.length < original.length, "runtime should derive a bounded patch, not rewrite the whole file");
+    assert.ok(patches[0].newText.length < updated.length, "runtime should derive a bounded replacement");
+    assert.ok(run.toolCalls.some((call) => call.name === "file.patch" && call.routedFrom === "file.write"));
+    assert.strictEqual(fs.readFileSync(path.join(root, "public/index.html"), "utf8"), updated);
+    assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.directedBy === "runtime" && call.result && call.result.ok));
+  });
+
+  await test("run-only website request reuses a port already in use without editing server.js", async () => {
+    const root = tempDir();
+    fs.writeFileSync(path.join(root, "server.js"), "server.listen(3000);\n", "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }), "utf8");
+
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 2,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return { path: ".", entries: [{ path: "package.json", type: "file" }, { path: "server.js", type: "file" }] };
+      },
+      async readFile(filePath) { return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") }; },
+      async processStatus() { return { found: false, status: "none", command: "", exitCode: null }; },
+      async startProcess() {
+        return { started: false, status: "failed", command: "npm start", exitCode: 1, output: "Error: listen EADDRINUSE: address already in use :::3000" };
+      },
+      async processLogs() { return { found: true, status: "failed", command: "npm start", exitCode: 1, output: "EADDRINUSE :::3000" }; },
+      async browserCheck(url) { return { available: true, statusCode: 200, title: "Already running", url }; },
+      async writeFile() { throw new Error("run-only must not write"); },
+      async patchFile() { throw new Error("run-only must not patch"); },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "process.start", args: { command: "npm start" } }] },
+    ]);
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: "run the website",
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 4,
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
+    assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.directedBy === "runtime" && call.args.url === "http://127.0.0.1:3000/"));
+    assert.ok(provider.calls[0].tools.every((tool) => !["file.write", "file.patch"].includes(tool.name)));
+    assert.strictEqual(fs.readFileSync(path.join(root, "server.js"), "utf8"), "server.listen(3000);\n");
+  });
+
   await test("already-satisfied button repair reroutes preview shell commands and completes without a new write", async () => {
     const root = tempDir();
     fs.writeFileSync(path.join(root, "index.html"), [
@@ -1382,6 +1583,355 @@ async function main() {
     assert.ok(!run.toolCalls.some((call) => call.name === "terminal.run"));
   });
 
+  await test("runtime-directed browser failure diagnoses process and server before another model turn", async () => {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, "public"), { recursive: true });
+    fs.writeFileSync(path.join(root, "public", "index.html"), '<h1>Old Heading</h1><script src="/app.js"></script>', "utf8");
+    fs.writeFileSync(path.join(root, "public", "app.js"), "console.log('ok');", "utf8");
+    fs.writeFileSync(path.join(root, "server.js"), "server.listen(3000);", "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }), "utf8");
+
+    let browserChecks = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 4,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["html", "javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: [
+            { path: "public", type: "directory" },
+            { path: "server.js", type: "file" },
+            { path: "package.json", type: "file" },
+          ],
+        };
+      },
+      async readFile(filePath) { return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") }; },
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile(filePath, contents) {
+        fs.writeFileSync(path.join(root, filePath), contents, "utf8");
+        return { path: filePath, bytes: Buffer.byteLength(contents) };
+      },
+      async processStatus() { return { found: true, status: "running", command: "npm start", exitCode: null }; },
+      async processLogs() { return { found: true, status: "running", command: "npm start", output: "Server running" }; },
+      async startProcess() { return { started: false, status: "running", command: "npm start" }; },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) {
+        browserChecks += 1;
+        return {
+          available: false,
+          code: "asset_status",
+          message: "script asset app.js returned HTTP 404",
+          url,
+          statusCode: 200,
+          assets: [{ kind: "script", path: "app.js", statusCode: 404, contentType: "text/plain", ok: false }],
+        };
+      },
+    };
+
+    const provider = new ScriptedModelProvider([
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: {
+            path: "public/index.html",
+            oldText: "<h1>Old Heading</h1>",
+            newText: "<h1>CodeMe Test Heading</h1>",
+          },
+        }],
+      },
+      { text: "Waiting for the recorded preview diagnosis." },
+    ]);
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'In public/index.html, change the main page heading to "CodeMe Test Heading". Make the change and verify it in the browser.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 2,
+    }).done;
+
+    assert.strictEqual(browserChecks, 1, quoteRun(run));
+    const failedPreview = run.toolCalls.find((call) => call.name === "browser.check" && call.directedBy === "runtime");
+    assert.ok(failedPreview && failedPreview.result && failedPreview.result.ok === false, quoteRun(run));
+    assert.ok(run.toolCalls.some((call) => call.name === "process.status" && call.directedBy === "runtime"), quoteRun(run));
+    assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "server.js" && call.directedBy === "runtime"), quoteRun(run));
+    assert.ok(provider.calls[1].tools.some((tool) => tool.name === "file.write"), quoteRun(run));
+    assert.ok(provider.calls[1].tools.every((tool) => tool.name !== "browser.check"), quoteRun(run));
+  });
+
+  await test("identical patch is a no-op and is not reported as a changed file", async () => {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, "public"), { recursive: true });
+    fs.writeFileSync(path.join(root, "public", "index.html"), "<h1>CodeMe Test Heading</h1>\n", "utf8");
+
+    let hostPatches = 0;
+    let browserChecks = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 1,
+          git: false,
+          projectMarkers: [],
+          languages: ["html"],
+          frameworks: [],
+          packageManager: null,
+          scripts: {},
+        };
+      },
+      async listDirectory(dirPath = ".") {
+        if (dirPath === ".") return { path: ".", entries: [{ path: "public", type: "directory" }] };
+        return { path: dirPath, entries: [{ path: "public/index.html", type: "file" }] };
+      },
+      async readFile(filePath) { return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") }; },
+      async patchFile() {
+        hostPatches += 1;
+        throw new Error("identical patch must not reach host");
+      },
+      async writeFile() { throw new Error("not used"); },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) {
+        browserChecks += 1;
+        return { available: true, statusCode: 200, title: "CodeMe Test Heading", url, assets: [] };
+      },
+    };
+
+    const provider = new ScriptedModelProvider([
+      {
+        toolCalls: [{
+          name: "file.patch",
+          args: {
+            path: "public/index.html",
+            oldText: "<h1>CodeMe Test Heading</h1>",
+            newText: "<h1>CodeMe Test Heading</h1>",
+          },
+        }],
+      },
+      { text: "The requested heading was already present and browser verification passed." },
+    ]);
+
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'In public/index.html, change the main page heading to "CodeMe Test Heading". Make the change and verify it in the browser.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 3,
+    }).done;
+
+    assert.strictEqual(hostPatches, 0, quoteRun(run));
+    assert.strictEqual(browserChecks, 1, quoteRun(run));
+    const noOp = run.toolCalls.find((call) => call.name === "file.patch" && call.result && call.result.data && call.result.data.noChange);
+    assert.ok(noOp, quoteRun(run));
+    assert.strictEqual(run.filesChanged.includes("public/index.html"), false, quoteRun(run));
+    assert.strictEqual(run.verification.status, "passed", quoteRun(run));
+  });
+
+  await test("HTTP 500 preview reads process logs and ignores unrelated page rewrites as repair", async () => {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, "public"), { recursive: true });
+    fs.writeFileSync(path.join(root, "public", "index.html"), '<h1>CodeMe Test Heading</h1>', "utf8");
+    fs.writeFileSync(path.join(root, "server.js"), "server.listen(3000);", "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }), "utf8");
+
+    let browserChecks = 0;
+    let logReads = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 3,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["html", "javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: [
+            { path: "public", type: "directory" },
+            { path: "server.js", type: "file" },
+            { path: "package.json", type: "file" },
+          ],
+        };
+      },
+      async readFile(filePath) { return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") }; },
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile(filePath, contents) {
+        fs.writeFileSync(path.join(root, filePath), contents, "utf8");
+        return { path: filePath, bytes: Buffer.byteLength(contents) };
+      },
+      async processStatus() { return { found: true, status: "running", command: "npm start", exitCode: null }; },
+      async processLogs() {
+        logReads += 1;
+        return { found: true, status: "running", command: "npm start", exitCode: null, output: "TypeError: bad server route at server.js:12" };
+      },
+      async startProcess() { return { started: true, restarted: true, status: "running", command: "npm start" }; },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) {
+        browserChecks += 1;
+        return {
+          available: false,
+          code: "page_status",
+          message: "Preview page returned HTTP 500",
+          url,
+          statusCode: 500,
+          assets: [],
+        };
+      },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "browser.check", args: { url: "public/index.html" } }] },
+      {
+        toolCalls: [{
+          name: "file.write",
+          args: {
+            path: "public/index.html",
+            contents: "<h1>CodeMe Test Heading</h1>",
+          },
+        }],
+      },
+      { text: "Waiting on server-runtime repair evidence.", toolCalls: [] },
+    ]);
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'In public/index.html, change the main page heading to "CodeMe Test Heading". Make the change and verify it in the browser.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 3,
+    }).done;
+
+    assert.strictEqual(logReads >= 1, true, quoteRun(run));
+    assert.strictEqual(browserChecks, 1, quoteRun(run));
+    assert.ok(run.toolCalls.some((call) => call.name === "process.logs" && call.directedBy === "runtime"), quoteRun(run));
+    assert.ok(run.messages.some((message) => String(message.content || "").includes("server-side HTTP error")), quoteRun(run));
+  });
+
+  await test("asset 404 diagnosis blocks repeated browser checks and inspects the server runtime", async () => {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, "public"), { recursive: true });
+    fs.writeFileSync(path.join(root, "public", "index.html"), '<script src="/app.js"></script><h1>CodeMe Test Heading</h1>', "utf8");
+    fs.writeFileSync(path.join(root, "public", "app.js"), "console.log('ok');", "utf8");
+    fs.writeFileSync(path.join(root, "server.js"), "server.listen(3000);", "utf8");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }), "utf8");
+
+    let browserChecks = 0;
+    const host = {
+      async inspectWorkspace() {
+        return {
+          state: "project",
+          root: path.basename(root),
+          entries: 4,
+          git: false,
+          projectMarkers: ["package.json"],
+          languages: ["html", "javascript"],
+          frameworks: [],
+          packageManager: "npm",
+          scripts: { start: "node server.js" },
+        };
+      },
+      async listDirectory() {
+        return {
+          path: ".",
+          entries: [
+            { path: "public", type: "directory" },
+            { path: "server.js", type: "file" },
+            { path: "package.json", type: "file" },
+          ],
+        };
+      },
+      async readFile(filePath) { return { path: filePath, contents: fs.readFileSync(path.join(root, filePath), "utf8") }; },
+      async patchFile(filePath, oldText, newText) {
+        const full = path.join(root, filePath);
+        const before = fs.readFileSync(full, "utf8");
+        fs.writeFileSync(full, before.replace(oldText, newText), "utf8");
+        return { path: filePath, replacements: 1 };
+      },
+      async writeFile(filePath, contents) {
+        fs.writeFileSync(path.join(root, filePath), contents, "utf8");
+        return { path: filePath, bytes: Buffer.byteLength(contents) };
+      },
+      async processStatus() { return { found: true, status: "running", command: "npm start", exitCode: null }; },
+      async processLogs() { return { found: true, status: "running", command: "npm start", output: "Server running" }; },
+      async startProcess() { return { started: false, status: "running", command: "npm start" }; },
+      async search() { return { query: "", matches: [] }; },
+      async diagnostics() { return { items: [] }; },
+      async browserCheck(url) {
+        browserChecks += 1;
+        return {
+          available: false,
+          code: "asset_status",
+          message: "script asset app.js returned HTTP 404",
+          url,
+          statusCode: 200,
+          assets: [{ kind: "script", path: "app.js", statusCode: 404, contentType: "text/plain", ok: false }],
+        };
+      },
+    };
+
+    const provider = new ScriptedModelProvider([
+      { toolCalls: [{ name: "browser.check", args: { url: "public/index.html" } }] },
+      { text: "The preview route needs diagnosis before another browser check.", toolCalls: [] },
+    ]);
+    const { store } = trackedStore(tempDir());
+    const run = await startAgentRun({
+      goal: 'In public/index.html, change the main page heading to "CodeMe Test Heading". Make the change and verify it in the browser.',
+      model: MODEL,
+      providerName: provider.name,
+      provider,
+      registry: new ToolRegistry(new ControlledToolProvider(host)),
+      store,
+      mode: "controlled",
+      maxIterations: 2,
+    }).done;
+
+    assert.strictEqual(browserChecks, 1, quoteRun(run));
+    assert.ok(run.toolCalls.some((call) => call.name === "process.status" && call.directedBy === "runtime"));
+    assert.ok(run.toolCalls.some((call) => call.name === "file.read" && call.args.path === "server.js" && call.directedBy === "runtime"));
+    assert.ok(provider.calls[1].tools.every((tool) => tool.name !== "browser.check"));
+  });
+
   await test("failed web assets force server repair before completion", async () => {
     const root = tempDir();
     fs.writeFileSync(path.join(root, "index.html"), [
@@ -1539,8 +2089,6 @@ async function main() {
           },
         }],
       },
-      { toolCalls: [{ name: "file.read", args: { path: "server.js" } }] },
-      { toolCalls: [{ name: "browser.check", args: { url: "index.html" } }] },
       {
         toolCalls: [{
           name: "browser.interact",
@@ -1569,8 +2117,8 @@ async function main() {
 
     assert.strictEqual(run.lifecycle, "completed", quoteRun(run));
     assert.strictEqual(run.verification.status, "passed");
-    assert.strictEqual(run.repairReserveUsed, 4);
-    assert.ok(run.events.some((event) => event.type === "repair_reserve" && event.granted === 4));
+    assert.strictEqual(run.repairReserveUsed, 0);
+    assert.ok(!run.events.some((event) => event.type === "repair_reserve"), "runtime verification should finish without spending repair reserve");
     assert.strictEqual(previewCalls, 2);
     assert.strictEqual(processCalls, 0);
     assert.ok(run.filesChanged.includes("server.js"));
@@ -1725,8 +2273,7 @@ async function main() {
     const run = await handle.done;
     assert.strictEqual(run.lifecycle, "failed");
     assert.strictEqual(run.outcome.reason, "repeated_action");
-    assert.strictEqual(host.state.reads, 2);
-    assert.strictEqual(run.toolCalls.length, 2);
+    assert.strictEqual(run.toolCalls.filter((call) => call.name === "file.read" && call.directedBy !== "runtime").length, 2);
     assert.strictEqual(run.filesChanged.length, 0);
   });
 
@@ -1748,7 +2295,7 @@ async function main() {
     });
     const run = await handle.done;
     assert.strictEqual(run.outcome.reason, "repeated_action");
-    assert.strictEqual(host.state.reads, 2);
+    assert.strictEqual(run.toolCalls.filter((call) => call.name === "file.read" && call.directedBy !== "runtime").length, 2);
   });
 
   await test("failed process logs must be read before a repair patch is allowed", async () => {
@@ -2054,8 +2601,9 @@ async function main() {
     const failedStart = startCalls.find((call) => call.result && call.result.ok === false);
     const logsIndex = run.toolCalls.findIndex((call) => call.name === "process.logs" && call.result && call.result.ok);
     const patchIndex = run.toolCalls.findIndex((call) => call.name === "file.patch" && call.result && call.result.ok);
-    const readBack = run.toolCalls.find((call) => (
-      call.name === "file.read"
+    const readBack = run.toolCalls.find((call, index) => (
+      index > patchIndex
+      && call.name === "file.read"
       && call.args
       && call.args.path === "server.js"
       && call.directedBy === "runtime"
@@ -2124,7 +2672,7 @@ async function main() {
     await assert.rejects(handle.done, (error) => error.code === "crash");
     const interrupted = store.load(handle.id);
     assert.strictEqual(interrupted.lifecycle, "interrupted");
-    assert.strictEqual(interrupted.toolCalls.length, 1);
+    assert.strictEqual(interrupted.toolCalls.filter((call) => call.name === "file.read" && call.directedBy !== "runtime").length, 1);
     assert.strictEqual(interrupted.inFlight, null);
     const resumed = await resumeRun(handle.id, {
       provider,
@@ -2140,7 +2688,7 @@ async function main() {
     });
     assert.strictEqual(resumed.lifecycle, "completed");
     assert.strictEqual(resumed.outcome.status, "completed");
-    assert.strictEqual(host.state.reads, 1);
+    assert.strictEqual(resumed.toolCalls.filter((call) => call.name === "file.read" && call.directedBy !== "runtime").length, 1);
     assert.strictEqual(resumed.filesChanged.length, 0);
     const callsBefore = provider.calls.length;
     const again = await resumeRun(resumed.id, { provider, registry, store });

@@ -204,8 +204,26 @@ function processSnapshot(record, includeOutput) {
   };
 }
 
-async function startProcess(command) {
+async function startProcess(command, options = {}) {
   const cwd = workspaceFolder().uri.fsPath;
+  const restart = options && options.restart === true;
+  const previous = latestProcessRecord();
+  if (restart && previous && previous.status === "running") {
+    try {
+      if (previous.terminal && typeof previous.terminal.dispose === "function") previous.terminal.dispose();
+    } catch {}
+    try {
+      await Promise.race([
+        previous.ended,
+        new Promise((resolve) => setTimeout(resolve, 1200)),
+      ]);
+    } catch {}
+    if (previous.status === "running") {
+      previous.status = "stopped";
+      previous.endedAt = new Date().toISOString();
+      previous.updatedAt = previous.endedAt;
+    }
+  }
   const terminal = vscode.window.createTerminal({
     name: "CodeMe Process",
     shellPath: "/bin/bash",
@@ -269,6 +287,9 @@ async function startProcess(command) {
   ]);
 
   const snapshot = processSnapshot(record, true);
+  if (typeof terminal.hide === "function") {
+    try { terminal.hide(); } catch {}
+  }
   if (record.status === "failed") {
     return {
       ...snapshot,
@@ -279,6 +300,7 @@ async function startProcess(command) {
   return {
     ...snapshot,
     started: true,
+    restarted: restart,
     terminal: "CodeMe Process",
   };
 }

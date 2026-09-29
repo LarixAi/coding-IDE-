@@ -5,7 +5,7 @@ const path = require("path");
 const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider, ControlledToolProvider } = require("../../../packages/agent-runtime");
 const { composerKeyAction, composerStage, composerActivity, compactTools, linePreview, diffsByFile, formatGoal, droppedPaths, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
 const { describeFileRead } = require("../image-meta");
-const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels, finalAssistantText } = require("../composer-session");
+const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels, finalAssistantText, buildDebugDetails } = require("../composer-session");
 const { OllamaModelProvider } = require("../../../packages/agent-runtime/model-provider");
 const { renderComposer } = require("../composer-view");
 const { ConversationStore } = require("../conversation-store");
@@ -236,6 +236,14 @@ async function main() {
   assert.ok(html.includes("code-preview"));
   assert.ok(html.includes("tool-stats"));
   assert.ok(html.includes("project-decision"));
+  assert.ok(html.includes("composer:focus-within"));
+  assert.ok(html.includes("Loading model…"));
+  assert.ok(html.includes("No model connected"));
+  const scriptMatch = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch, "composer client script should be present");
+  assert.doesNotThrow(() => new Function(scriptMatch[1]), "rendered composer client script should parse");
+  assert.ok(html.includes("#model { flex: 0 1 190px"));
+  assert.ok(html.includes("border: 1px solid #343b46"));
   assert.ok(html.includes("renderProjectDecision"));
   assert.ok(html.includes("No dependencies required"));
   assert.ok(html.includes("Created "));
@@ -252,6 +260,11 @@ async function main() {
   assert.ok(html.includes('message.type === "accepted" && current(message)'));
   assert.ok(!html.includes("sameRequest("));
   assert.ok(html.includes("Verified"));
+  assert.ok(html.includes("Error details"));
+  assert.ok(html.includes("Copy error"));
+  assert.ok(html.includes("Open run log"));
+  assert.ok(html.includes('type: "copy-debug"'));
+  assert.ok(html.includes('type: "open-run-log"'));
   assert.ok(!html.includes("qwen3.5:9b"));
   assert.ok(!html.includes("workbench.action.chat.open"));
 
@@ -375,10 +388,44 @@ async function main() {
   assert.strictEqual(failed.ok, true);
   await waitFor(failing.session, (item) => item.stage === "Failed" && !item.running);
   assert.strictEqual(failing.session.notice, "");
+  assert.ok(failing.session.snapshot().debug);
+  assert.strictEqual(failing.session.snapshot().debug.runId, failed.runId);
+  assert.ok(failing.session.snapshot().debug.error);
   const again = await failing.session.submit("recover");
   assert.strictEqual(again.ok, true);
   assert.notStrictEqual(again.requestId, failed.requestId);
   await waitFor(failing.session, (item) => item.requestId === again.requestId && item.stage === "Failed" && !item.running);
+
+  const debugFixture = buildDebugDetails({
+    id: "run_debug",
+    lifecycle: "failed",
+    error: { code: "repeated_action", message: "Repeated action file.write" },
+    outcome: { status: "failed", summary: "Repeated action file.write" },
+    verification: { status: "failed", summary: "Apply the edit with a tool" },
+    effectiveModel: "qwen2.5-coder:14b",
+    providerName: "ollama-server",
+    composerMode: "code",
+    taskClass: "layout",
+    iteration: 3,
+    progress: { filesRead: ["public/index.html"], semanticStagnation: 2, stagnantTurns: 2 },
+    decisions: [{
+      iteration: 3,
+      text: '{"name":"file.write","arguments":{"path":"public/index.html","contents":"<h1>x</h1>"}}',
+      toolCalls: [{
+      iteration: 0,
+      name: "file.read",
+      args: { path: "public/index.html" },
+      result: { ok: true, data: { contents: "<h1>Old</h1>" } },
+      directedBy: "runtime",
+    }],
+    }],
+    toolCalls: [],
+    diagnoses: [],
+  });
+  assert.strictEqual(debugFixture.error.code, "repeated_action");
+  assert.strictEqual(debugFixture.lastDecisionHadTools, false);
+  assert.ok(debugFixture.recentDecisions[0].text.includes("file.write"));
+  assert.ok(debugFixture.filesRead.includes("public/index.html"));
 
   const previewHost = workspace(root);
   previewHost.browserCheck = async (url) => ({ available: true, statusCode: 200, title: "Car Bid Dealership", url });

@@ -85,6 +85,8 @@ async function runChatContract() {
   assert.deepStrictEqual(registry.calls, [], "Chat must not auto-inspect or call workspace tools");
   assert.deepStrictEqual(model.calls[0].tools, [], "Chat must expose zero tools");
   assert.ok(model.calls[0].messages[0].content.includes("Chat mode"));
+  assert.ok(model.calls[0].messages[0].content.includes("CodeMe canonical gate contract v1"));
+  assert.ok(model.calls[0].messages[0].content.includes("G11 Autonomous agent hardening"));
   assert.strictEqual(run.filesChanged.length, 0);
 }
 
@@ -114,6 +116,16 @@ async function runAskContract() {
   assert.ok(!offered.has("file.write"));
   assert.ok(!offered.has("terminal.run"));
   assert.ok(!offered.has("browser.check"));
+  assert.ok(model.calls[0].messages[0].content.includes("CodeMe canonical gate contract v1"));
+  assert.ok(model.calls[0].messages[0].content.includes("CodeMe runtime owns workspace state"));
+}
+
+async function runProjectUnderstandingContract() {
+  const { isReadAllFilesGoal } = require("../strategy");
+  assert.strictEqual(
+    isReadAllFilesGoal("Read this project and tell me what it does. Do not change anything."),
+    true,
+  );
 }
 
 async function runPlanContract() {
@@ -146,6 +158,33 @@ async function runPlanContract() {
   assert.ok(!offered.has("terminal.run"));
   assert.ok(!offered.has("browser.check"));
   assert.strictEqual(run.filesChanged.length, 0);
+  assert.ok(model.calls[0].messages[0].content.includes("CodeMe canonical gate contract v1"));
+}
+
+async function runCodeGateContract() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-mode-code-contract-"));
+  const store = new RunStore(path.join(dir, "runs"));
+  const registry = new FakeRegistry();
+  const model = new CaptureModel([{ text: "The workspace is a JavaScript project.", toolCalls: [] }]);
+
+  const run = await startAgentRun({
+    goal: "Inspect this project and tell me what it is.",
+    model: "fixture",
+    providerName: "capture",
+    provider: model,
+    registry,
+    store,
+    mode: "controlled",
+    composerMode: "code",
+    taskClass: "inspect",
+    maxIterations: 2,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  assert.ok(model.calls[0].messages[0].content.includes("You are a CodeMe agent run with workspace-scoped tools."));
+  assert.ok(model.calls[0].messages[0].content.includes("CodeMe canonical gate contract v1"));
+  assert.ok(model.calls[0].messages[0].content.includes("G6 Controlled coding"));
+  assert.ok(model.calls[0].messages[0].content.includes("G11 Autonomous agent hardening"));
 }
 
 function runChatRule() {
@@ -161,7 +200,9 @@ function runChatRule() {
 async function main() {
   await runChatContract();
   await runAskContract();
+  await runProjectUnderstandingContract();
   await runPlanContract();
+  await runCodeGateContract();
   runChatRule();
   console.log("mode contracts passed");
 }

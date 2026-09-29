@@ -188,15 +188,19 @@ async function main() {
     assert.strictEqual(hub.calls[0].protocolVersion, 1);
     assert.ok(!run.goal.includes(MARKER));
     const followUp = model.calls[1];
-    const toolMessage = followUp.messages.find((message) => message.role === "tool");
-    assert.ok(toolMessage.content.includes(MARKER));
+    const toolMessage = followUp.messages.find((message) => (
+      message.role === "tool"
+      && message.name === "capability.invoke"
+      && String(message.content).includes(MARKER)
+    ));
+    assert.ok(toolMessage);
     assert.ok(toolMessage.content.includes('"trusted":false'));
     assert.strictEqual(toolMessage.name, "capability.invoke");
     assert.strictEqual(run.lifecycle, "completed");
     assert.strictEqual(run.error, null);
     assert.deepStrictEqual(run.filesChanged, []);
-    const native = run.observations.find((item) => item.type === "tool");
-    assert.strictEqual(native, undefined);
+    const native = run.observations.filter((item) => item.type === "tool");
+    assert.ok(native.every((item) => item.directedBy === "runtime"));
   });
 
   await test("malformed, timeout, and unavailable hubs do not break the run", async () => {
@@ -231,9 +235,15 @@ async function main() {
         const { run } = await runWith(model, null, hub);
         assert.strictEqual(run.lifecycle, "completed", label);
         assert.strictEqual(run.error, null, label);
-        assert.strictEqual(run.observations[0].type, "capability", label);
-        assert.strictEqual(run.observations[0].trusted, false, label);
-        assert.strictEqual(run.observations[0].ok, false, label);
+        const failedObservation = run.observations.find((item) => (
+          item.type === "capability"
+          && item.trusted === false
+          && item.ok === false
+        ));
+        assert.ok(failedObservation, label);
+        assert.strictEqual(failedObservation.type, "capability", label);
+        assert.strictEqual(failedObservation.trusted, false, label);
+        assert.strictEqual(failedObservation.ok, false, label);
         const code = seen[0].error && seen[0].error.code;
         if (label === "malformed") assert.strictEqual(code, "malformed_response");
         if (label === "timeout") assert.strictEqual(code, "timeout");
@@ -292,7 +302,9 @@ async function main() {
     assert.deepStrictEqual(run.filesChanged, []);
     assert.strictEqual(run.lifecycle, "completed");
     assert.ok(run.toolCalls.every((call) => call.name !== "file.write"));
-    assert.strictEqual(run.observations[0].trusted, false);
+    const evidenceObservation = run.observations.find((item) => item.type === "capability");
+    assert.ok(evidenceObservation);
+    assert.strictEqual(evidenceObservation.trusted, false);
     assert.ok(!fs.existsSync(path.join(directory, "note.txt")));
   });
 

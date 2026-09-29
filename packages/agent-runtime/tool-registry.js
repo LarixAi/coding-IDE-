@@ -104,10 +104,13 @@ const DEFINITIONS = {
     },
   },
   "process.start": {
-    description: "Start or restart a long-running workspace process. After a failed CodeMe-owned process has been diagnosed and repaired, call this to rerun it. For ordinary website preview checks, browser.check can own startup and reuse.",
+    description: "Start a long-running workspace process. Set restart=true only after CodeMe has repaired a file used by an already-running CodeMe-owned process and the live process must reload that change. For ordinary website preview checks, browser.check can own startup and reuse.",
     parameters: {
       type: "object",
-      properties: { command: { type: "string" } },
+      properties: {
+        command: { type: "string" },
+        restart: { type: "boolean" },
+      },
       required: [],
     },
   },

@@ -8,6 +8,7 @@ const { diagnose, autonomyHold } = require("./diagnosis");
 const { inferRequirements, applyFollowUp } = require("./requirements");
 const { RULE_PRIORITY, resolveRuleDecision, isStaticScaffoldTool, READ_ONLY_BLOCKED_TOOLS } = require("./rule-decision");
 const { hasNoEditDirective, stripNegatedEditing } = require("./intent");
+const { gateContractPrompt } = require("./gate-contract");
 
 const TERMINAL = new Set(["completed", "cancelled", "failed"]);
 const STOPPED = new Set(["completed", "cancelled", "failed", "awaiting_user"]);
@@ -20,6 +21,13 @@ const READ_ONLY_COMPOSER_TOOLS = new Set([
   "git.diff",
   "diagnostics.run",
 ]);
+
+function looksLikeRejectedToolText(text) {
+  const value = String(text || "");
+  if (!value) return false;
+  return /["']name["']\s*:\s*["'][a-z0-9_.-]+["']/i.test(value)
+    && /["'](?:arguments|args)["']\s*:/i.test(value);
+}
 
 function createRun(options) {
   const lock = options.modelLock || lockModel(options);
@@ -68,6 +76,7 @@ function createRun(options) {
     verificationHistory: [],
     projectDecision: null,
     workspaceInspected: false,
+    explicitExistingFiles: [],
     outcome: null,
     iteration: 0,
     maxIterations: options.maxIterations ?? 8,
@@ -226,6 +235,9 @@ async function executeRun(run, options) {
           error.message || "CodeMe could not inspect the active workspace",
         );
       }
+      if (workspace && workspace.ok !== false) {
+        await preloadExplicitGoalFiles(run, registry, store);
+      }
     }
 
     applyProjectDecision(run, store);
@@ -361,6 +373,20 @@ async function executeRun(run, options) {
     store.save(run);
 
     if (calls.length === 0) {
+      if (looksLikeRejectedToolText(text)) {
+        const offeredNames = modelTools.map((tool) => tool && tool.name).filter(Boolean);
+        run.messages.push({
+          role: "user",
+          content: `Your response contained tool-call JSON text, but it did not match an available structured tool call. Do not print tool JSON as prose. Call one of the tools currently offered by CodeMe: ${offeredNames.join(", ") || "none"}.`,
+        });
+        if (run.progress) {
+          run.progress.focus = true;
+          run.progress.semanticStagnation = 0;
+          run.progress.stagnantTurns = 0;
+        }
+        store.save(run);
+        continue;
+      }
       touch(run, "verifying");
       setPlan(run, "verify", "in_progress");
       let verification = verify ? verify(run, text) : defaultVerify(run, text);
@@ -395,10 +421,11 @@ async function executeRun(run, options) {
       continue;
     }
 
-    for (const requestedCall of calls) {
+    for (const modelRequestedCall of calls) {
+      const requestedCall = normalizeExplicitExistingEditCall(run, modelRequestedCall);
       const ruleDecision = resolveRequestedToolDecision(run, requestedCall, registry, capabilityTools);
       const call = ruleDecision.call || requestedCall;
-      recordRuleDecision(run, ruleDecision, requestedCall);
+      recordRuleDecision(run, ruleDecision, modelRequestedCall);
       if (cancelled(run, signal)) return finishCancelled(run, store);
       const key = actionKey(call);
       if ((run.failureCounts[key] || 0) >= run.maxRetries) {
@@ -472,13 +499,17 @@ async function executeRun(run, options) {
             },
           };
         } else {
+          const noOpMutation = noOpMutationResult(run, call);
           const processGuard = (
-            ruleDecision.action === "guard"
+            !noOpMutation
+            && ruleDecision.action === "guard"
             && call.name === "process.start"
           )
-            ? await guardProcessStart(run, registry)
+            ? await guardProcessStart(run, registry, call.args || {})
             : null;
-          if (processGuard) {
+          if (noOpMutation) {
+            result = noOpMutation;
+          } else if (processGuard) {
             result = processGuard;
           } else if (call.name === "capability.list" || call.name === "capability.invoke") {
             result = await dispatchCapability(options.capabilities, run, call, signal, capabilityRegistry);
@@ -572,6 +603,19 @@ async function executeRun(run, options) {
       run.inFlight = null;
       pushObservation(run, call, result);
 
+      if (result.ok && result.data && result.data.noChange) {
+        run.messages.push({
+          role: "user",
+          content: "That mutation made no change because the requested file state is already present. Do not rewrite the same contents again. Continue with verification; if verification fails, diagnose that failure instead of repeating this edit.",
+        });
+        if (run.progress) {
+          run.progress.writeNow = false;
+          run.progress.focus = true;
+          run.progress.semanticStagnation = 0;
+          run.progress.stagnantTurns = 0;
+        }
+      }
+
       if (!result.ok && (run.failureCounts[key] || 0) >= run.maxRetries) {
         await maybeResetRepeatedMutationStrategy(run, call, registry, store);
       }
@@ -662,8 +706,15 @@ async function executeRun(run, options) {
 
       store.save(run);
 
+      if (call.name === "process.start" && !result.ok) {
+        const reused = await maybeReuseAddressInUsePreview(run, registry, store, result);
+        if (reused && reused.lifecycle) return reused;
+      }
+
       if (call.name === "browser.check" && result.ok) {
         await maybeAutoVerifyBrowserInteraction(run, registry, store);
+      } else if (call.name === "browser.check" && !result.ok) {
+        await maybeDiagnoseBrowserFailure(run, registry, store, record);
       }
 
       if ((call.name === "browser.check" || call.name === "browser.interact") && result.ok) {
@@ -682,6 +733,11 @@ async function executeRun(run, options) {
     if (done) return done;
 
     await maybeReadBackRepairedFiles(run, registry, store);
+    const browserChanged = await maybeVerifyBrowserEditAfterWrite(run, registry, store);
+    if (browserChanged) {
+      const verifiedNow = maybeFinishVerifiedWork(run, store, text);
+      if (verifiedNow) return verifiedNow;
+    }
     const processChanged = await maybeRestartRepairedProcess(run, registry, store)
       || await maybeStartOwnedProcessForVerification(run, registry, store);
     if (processChanged) {
@@ -934,7 +990,7 @@ function expectedInteractionText(goal) {
   return "";
 }
 
-function interactionTargetText(goal) {
+function interactionTargetText(goal, run) {
   const text = String(goal || "");
   const patterns = [
     /(?:click|clicking|press|pressing|tap|tapping)\s+(?:the\s+)?(?:button\s+)?["“']([^"”']+)["”']/i,
@@ -950,7 +1006,27 @@ function interactionTargetText(goal) {
     if (value && !quoted.includes(value)) quoted.push(value);
   }
   const expected = expectedInteractionText(goal);
-  return quoted.find((value) => value !== expected) || "";
+  const explicit = quoted.find((value) => value !== expected);
+  if (explicit) return explicit;
+
+  // If the user says "the button" without quoting its label, use the only
+  // visible button from the HTML that CodeMe already read.
+  if (run && /\b(button|click|tap|press)\b/i.test(text)) {
+    const htmlReads = (run.toolCalls || []).filter((call) => (
+      call.name === "file.read"
+      && call.result
+      && call.result.ok
+      && /\.html?$/i.test(String(call.args && call.args.path || ""))
+    ));
+    for (let index = htmlReads.length - 1; index >= 0; index -= 1) {
+      const contents = String(htmlReads[index].result.data && htmlReads[index].result.data.contents || "");
+      const buttons = [...contents.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/gi)]
+        .map((match) => String(match[1] || "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
+        .filter(Boolean);
+      if (buttons.length === 1) return buttons[0];
+    }
+  }
+  return "";
 }
 
 function latestSuccessfulBrowserCheck(run) {
@@ -976,7 +1052,7 @@ async function maybeAutoVerifyBrowserInteraction(run, registry, store) {
   const interactionAfterPreview = (run.toolCalls || []).slice(previewIndex + 1).find((call) => call.name === "browser.interact");
   if (interactionAfterPreview) return interactionAfterPreview;
 
-  const targetText = interactionTargetText(run.goal);
+  const targetText = interactionTargetText(run.goal, run);
   const expectedText = expectedInteractionText(run.goal);
   if (!targetText || !expectedText) return null;
 
@@ -1367,7 +1443,9 @@ function isWebVisibleWrite(run, writes) {
 
 async function maybeReadBackRepairedFiles(run, registry, store) {
   if (!run || run.mode !== "controlled") return false;
-  if (!hadFailedOwnedProcess(run) || failedProcessNeedsLogs(run)) return false;
+  const browserEdit = isBrowserEditTask(run) && !hadFailedOwnedProcess(run);
+  const processRepair = hadFailedOwnedProcess(run) && !failedProcessNeedsLogs(run);
+  if (!browserEdit && !processRepair) return false;
   const writes = successfulWrites(run);
   if (!writes.length) return false;
   if (!registry || typeof registry.call !== "function") return false;
@@ -1414,6 +1492,259 @@ async function maybeReadBackRepairedFiles(run, registry, store) {
   return readAny;
 }
 
+function browserInfrastructureFailure(record) {
+  const code = record && record.result && record.result.error && record.result.error.code;
+  return ["asset_unavailable", "asset_status", "asset_mime", "page_status", "preview_not_html", "connection_refused", "timeout"].includes(String(code || ""));
+}
+
+function topLevelServerCandidate(run) {
+  const entry = serverEntryFromWorkspace(run);
+  if (entry) return entry;
+  for (const call of (run && run.toolCalls) || []) {
+    if (!call || call.name !== "dir.list" || !call.result || !call.result.ok) continue;
+    const entries = call.result.data && Array.isArray(call.result.data.entries) ? call.result.data.entries : [];
+    const candidate = entries
+      .map((item) => String(item && item.path || "").replace(/\\/g, "/"))
+      .find((file) => /(^|\/)(server|backend|api)\.(js|mjs|cjs|ts)$/i.test(file));
+    if (candidate) return candidate;
+  }
+  return "";
+}
+
+async function maybeDiagnoseBrowserFailure(run, registry, store, record) {
+  if (!run || !record || record.name !== "browser.check" || !browserInfrastructureFailure(record)) return false;
+  if (run.browserFailureDiagnosedCallId === record.id) return false;
+  run.browserFailureDiagnosedCallId = record.id;
+
+  const definitions = registry && typeof registry.definitions === "function" ? registry.definitions() : [];
+  const names = new Set(definitions.map((tool) => tool && tool.name).filter(Boolean));
+
+  const failureCode = String(record.result && record.result.error && record.result.error.code || "");
+  const failureStatus = Number(record.result && record.result.data && record.result.data.statusCode || 0);
+  if (names.has("process.status")) {
+    const statusResult = await runtimeInspectionCall(run, registry, store, "process.status", {});
+    const data = statusResult && statusResult.data;
+    const shouldReadLogs = Boolean(
+      names.has("process.logs")
+      && statusResult
+      && statusResult.ok
+      && data
+      && (
+        data.status === "failed"
+        || failureCode === "page_status"
+        || failureStatus >= 500
+      )
+    );
+    if (shouldReadLogs) {
+      await runtimeInspectionCall(run, registry, store, "process.logs", {});
+    }
+  }
+
+  const serverFile = topLevelServerCandidate(run);
+  if (serverFile && names.has("file.read") && !latestReadContents(run, serverFile)) {
+    await runtimeInspectionCall(run, registry, store, "file.read", { path: serverFile });
+  }
+
+  const pageStatus = record.result && record.result.data && record.result.data.statusCode;
+  const reachable = Number(pageStatus) >= 200 && Number(pageStatus) < 400;
+  const serverError = Number(pageStatus) >= 500 || failureCode === "page_status";
+  run.messages.push({
+    role: "user",
+    content: serverError
+      ? "The preview returned a server-side HTTP error. CodeMe has collected process status/logs and server-file evidence. Do not rewrite the already-correct page and do not repeat browser.check unchanged. Repair the server/runtime cause shown by that evidence, restart the owned process if the server file changes, then verify again."
+      : reachable
+        ? "The browser reached the application server but verification failed on page/assets. Do not repeat browser.check unchanged. CodeMe has collected process/server evidence. Diagnose the preview route/static web root or repair the relevant server/client file before checking again."
+        : "Browser verification could not reach a valid application page. Do not repeat browser.check unchanged. Use the process/server evidence CodeMe just collected; start or repair the owned process only if that evidence shows it is needed.",
+  });
+  if (run.progress) {
+    run.progress.focus = true;
+    run.progress.writeNow = false;
+    run.progress.semanticStagnation = 0;
+    run.progress.stagnantTurns = 0;
+  }
+  store.save(run);
+  return true;
+}
+
+async function maybeRestartServerRuntimeAfterEdit(run, registry, store, lastWrite) {
+  if (!run || !lastWrite || !lastWrite.args || !isServerRuntimeFile(run, lastWrite.args.path)) return false;
+  const calls = run.toolCalls || [];
+  const writeIndex = calls.indexOf(lastWrite);
+  if (writeIndex < 0) return false;
+  const hadBrowserFailureBeforeWrite = calls.slice(0, writeIndex).some((call) => (
+    call && call.name === "browser.check" && call.result && call.result.ok === false
+  ));
+  if (!hadBrowserFailureBeforeWrite) return false;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  const names = new Set(registry.definitions().map((tool) => tool && tool.name).filter(Boolean));
+  if (!names.has("process.status") || !names.has("process.start")) return false;
+
+  const statusResult = await runtimeInspectionCall(run, registry, store, "process.status", {});
+  const status = statusResult && statusResult.data;
+  if (!statusResult || !statusResult.ok || !status || status.status !== "running") return false;
+
+  const command = status.command || "npm start";
+  const call = { name: "process.start", args: { command, restart: true } };
+  touch(run, "executing_tool", call.name);
+  run.inFlight = {
+    kind: "tool",
+    name: call.name,
+    args: call.args,
+    key: actionKey(call),
+    directedBy: "runtime",
+  };
+  store.save(run);
+
+  let result;
+  try {
+    result = await registry.call(call.name, call.args);
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: call.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  const observation = observe(call, result);
+  observation.directedBy = "runtime";
+  run.observations.push(observation);
+  pushObservation(run, call, result);
+  run.inFlight = null;
+
+  if (!result.ok) {
+    run.messages.push({
+      role: "user",
+      content: "CodeMe repaired the server runtime file but could not restart the owned process. Read process.logs or process.status before another browser check.",
+    });
+  } else {
+    run.messages.push({
+      role: "user",
+      content: "CodeMe restarted the owned server process so the repaired server file is now loaded. Verify the preview again.",
+    });
+  }
+  store.save(run);
+  return result.ok;
+}
+
+async function maybeVerifyBrowserEditAfterWrite(run, registry, store) {
+  if (!run || run.mode !== "controlled" || !isBrowserEditTask(run) || hadFailedOwnedProcess(run)) return false;
+  const writes = successfulWrites(run);
+  if (!writes.length) return false;
+  const lastWrite = writes[writes.length - 1];
+  const failedBrowser = latestFailedBrowserCheck(run);
+  if (
+    failedBrowser
+    && failedBrowser.index < (run.toolCalls || []).indexOf(lastWrite)
+    && !browserRepairActionIsRelevant(run, failedBrowser.call, lastWrite)
+  ) {
+    return false;
+  }
+  const changed = uniqueWrittenPaths(writes);
+  if (!changed.every((file) => wasReadAfterMutation(run, file))) return false;
+  await maybeRestartServerRuntimeAfterEdit(run, registry, store, lastWrite);
+  const after = callsAfter(run, lastWrite);
+  if (after.some((call) => call.name === "browser.check" && call.result && call.result.ok)) return false;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return false;
+  if (!registry.definitions().some((tool) => tool.name === "browser.check")) return false;
+
+  const target = previewTargetFromRun(run);
+  const call = { name: "browser.check", args: { url: target } };
+  touch(run, "executing_tool", call.name);
+  run.inFlight = { kind: "tool", name: call.name, args: call.args, key: actionKey(call), directedBy: "runtime" };
+  store.save(run);
+
+  let result;
+  try {
+    result = await registry.call(call.name, call.args);
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: call.name,
+      error: { code: "tool_failed", message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  const observation = observe(call, result);
+  observation.directedBy = "runtime";
+  run.observations.push(observation);
+  pushObservation(run, call, result);
+  run.inFlight = null;
+  store.save(run);
+
+  if (result.ok) {
+    await maybeAutoVerifyBrowserInteraction(run, registry, store);
+  } else {
+    await maybeDiagnoseBrowserFailure(run, registry, store, record);
+  }
+  return true;
+}
+
+function addressInUsePort(result) {
+  const data = result && result.data;
+  const output = String(
+    (data && data.output)
+    || (result && result.error && result.error.message)
+    || ""
+  );
+  if (!/EADDRINUSE|address already in use/i.test(output)) return 0;
+  const matches = [...output.matchAll(/(?::|port\s+)(\d{2,5})\b/gi)];
+  if (!matches.length) return 0;
+  const port = Number(matches[matches.length - 1][1]);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : 0;
+}
+
+async function maybeReuseAddressInUsePreview(run, registry, store, processResult) {
+  if (!isRunOnlyBrowserGoal(run)) return null;
+  const port = addressInUsePort(processResult);
+  if (!port || !registry || typeof registry.call !== "function") return null;
+  const call = { name: "browser.check", args: { url: `http://127.0.0.1:${port}/` } };
+  const result = await registry.call(call.name, call.args);
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name: call.name,
+    args: call.args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  const observation = observe(call, result);
+  observation.directedBy = "runtime";
+  run.observations.push(observation);
+  pushObservation(run, call, result);
+  if (result && result.ok) {
+    run.verification = {
+      status: "passed",
+      summary: `The site was already reachable on port ${port}; CodeMe reused the existing preview instead of editing the server port.`,
+      evidence: ["process.start", "browser.check"],
+    };
+    run.verificationHistory.push({ ...run.verification, at: new Date().toISOString() });
+    store.save(run);
+    return finishCompleted(run, store, run.verification.summary);
+  }
+  store.save(run);
+  return null;
+}
+
 async function maybeRestartRepairedProcess(run, registry, store) {
   if (!run || run.mode !== "controlled" || run.processRestartAttempted) return false;
   if (requiresExternalEvidenceForRun(run) || workspaceHasTests(run)) return false;
@@ -1450,7 +1781,7 @@ async function maybeRestartRepairedProcess(run, registry, store) {
       };
     } else {
       const processGuard = ruleDecision.action === "guard"
-        ? await guardProcessStart(run, registry)
+        ? await guardProcessStart(run, registry, call.args || {})
         : null;
       result = processGuard || await registry.call(call.name, call.args);
     }
@@ -1541,7 +1872,7 @@ async function maybeStartOwnedProcessForVerification(run, registry, store) {
       };
     } else {
       const processGuard = ruleDecision.action === "guard"
-        ? await guardProcessStart(run, registry)
+        ? await guardProcessStart(run, registry, call.args || {})
         : null;
       result = processGuard || await registry.call(call.name, call.args);
     }
@@ -1582,7 +1913,7 @@ async function maybeStartOwnedProcessForVerification(run, registry, store) {
   return true;
 }
 
-async function guardProcessStart(run, registry) {
+async function guardProcessStart(run, registry, args = {}) {
   let evidence = latestProcessEvidence(run);
   let status = evidence.status;
   if (!status && registry && typeof registry.call === "function") {
@@ -1609,7 +1940,7 @@ async function guardProcessStart(run, registry) {
     }
   }
 
-  if (status && status.status === "running") {
+  if (status && status.status === "running" && !(args && args.restart === true)) {
     return {
       ok: true,
       tool: "process.start",
@@ -1668,6 +1999,94 @@ function browserFailureObserved(run) {
     && call.result
     && call.result.ok === false
   ));
+}
+
+function minimalReplacement(before, after) {
+  const left = String(before || "");
+  const right = String(after || "");
+  if (left === right) return null;
+
+  let prefix = 0;
+  const maxPrefix = Math.min(left.length, right.length);
+  while (prefix < maxPrefix && left[prefix] === right[prefix]) prefix += 1;
+
+  let suffix = 0;
+  const maxSuffix = Math.min(left.length - prefix, right.length - prefix);
+  while (
+    suffix < maxSuffix
+    && left[left.length - 1 - suffix] === right[right.length - 1 - suffix]
+  ) suffix += 1;
+
+  const oldText = left.slice(prefix, left.length - suffix);
+  const newText = right.slice(prefix, right.length - suffix);
+  if (!oldText || !newText) return null;
+  return { oldText, newText };
+}
+
+function noOpMutationResult(run, call) {
+  if (!run || !call || !call.args) return null;
+  const filePath = String(call.args.path || "").replace(/\\/g, "/");
+  if (!filePath) return null;
+
+  if (call.name === "file.patch") {
+    const oldText = call.args.oldText;
+    const newText = call.args.newText;
+    if (typeof oldText === "string" && typeof newText === "string" && oldText === newText) {
+      return {
+        ok: true,
+        tool: call.name,
+        data: {
+          path: filePath,
+          replacements: 0,
+          noChange: true,
+          reason: "identical_patch",
+        },
+      };
+    }
+  }
+
+  if (call.name === "file.write" && typeof call.args.contents === "string") {
+    const current = latestReadContents(run, filePath);
+    if (current && current === call.args.contents) {
+      return {
+        ok: true,
+        tool: call.name,
+        data: {
+          path: filePath,
+          bytes: Buffer.byteLength(call.args.contents),
+          noChange: true,
+          reason: "contents_already_match",
+        },
+      };
+    }
+  }
+
+  return null;
+}
+
+function normalizeExplicitExistingEditCall(run, requestedCall) {
+  if (
+    !preferPatchForExplicitExistingEdit(run)
+    || !requestedCall
+    || requestedCall.name !== "file.write"
+    || !requestedCall.args
+  ) return requestedCall;
+
+  const filePath = String(requestedCall.args.path || "").replace(/\\/g, "/");
+  const contents = requestedCall.args.contents;
+  if (!filePath || typeof contents !== "string") return requestedCall;
+  if (!run.explicitExistingFiles.includes(filePath)) return requestedCall;
+
+  const before = latestReadContents(run, filePath);
+  if (!before) return requestedCall;
+  const patch = minimalReplacement(before, contents);
+  if (!patch) return requestedCall;
+
+  return {
+    name: "file.patch",
+    args: { path: filePath, oldText: patch.oldText, newText: patch.newText },
+    routedFrom: "file.write",
+  };
 }
 
 function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTools) {
@@ -1733,6 +2152,69 @@ function recordRuleDecision(run, decision, requestedCall) {
   run.events.push({ type: "rule_decision", ...record });
 }
 
+function latestFailedBrowserCheck(run) {
+  const calls = (run && run.toolCalls) || [];
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call && call.name === "browser.check" && browserInfrastructureFailure(call)) {
+      return { call, index };
+    }
+    if (call && call.name === "browser.check" && call.result && call.result.ok) break;
+  }
+  return null;
+}
+
+function failedAssetWorkspacePaths(run, failedCall) {
+  const result = failedCall && failedCall.result;
+  const data = result && result.data;
+  const assets = data && Array.isArray(data.assets) ? data.assets : [];
+  const paths = new Set();
+  for (const asset of assets) {
+    if (!asset || asset.ok !== false) continue;
+    const value = String(asset.path || "").replace(/^\//, "").replace(/\\/g, "/");
+    if (!value) continue;
+    paths.add(value);
+    if (run && run.explicitExistingFiles && run.explicitExistingFiles.some((file) => file.startsWith("public/"))) {
+      paths.add(`public/${value}`);
+    }
+  }
+  return paths;
+}
+
+function browserRepairActionIsRelevant(run, failedCall, call) {
+  if (!call || !call.result || call.result.ok !== true) return false;
+  if (call.name === "process.start") return true;
+  if ((call.name !== "file.patch" && call.name !== "file.write") || (call.result.data && call.result.data.noChange)) return false;
+
+  const filePath = String(call.args && call.args.path || "").replace(/\\/g, "/");
+  if (!filePath) return false;
+  if (isServerRuntimeFile(run, filePath) || /(^|\/)package\.json$/i.test(filePath)) return true;
+
+  const code = String(failedCall && failedCall.result && failedCall.result.error && failedCall.result.error.code || "");
+  const status = Number(failedCall && failedCall.result && failedCall.result.data && failedCall.result.data.statusCode || 0);
+
+  // A 5xx page is a server/runtime failure when the workspace has a server entry.
+  // Do not treat unrelated HTML rewrites as a repair and immediately retry the browser.
+  if ((code === "page_status" || status >= 500) && topLevelServerCandidate(run)) return false;
+
+  if (code === "asset_status" || code === "asset_unavailable" || code === "asset_mime") {
+    const failedAssets = failedAssetWorkspacePaths(run, failedCall);
+    if (failedAssets.has(filePath)) return true;
+    // The document itself can legitimately repair a bad <script>/<link> reference.
+    if (/\.html?$/i.test(filePath)) return true;
+    return false;
+  }
+
+  return true;
+}
+
+function browserFailureNeedsRepair(run) {
+  const failed = latestFailedBrowserCheck(run);
+  if (!failed) return false;
+  const calls = (run && run.toolCalls) || [];
+  return !calls.slice(failed.index + 1).some((call) => browserRepairActionIsRelevant(run, failed.call, call));
+}
+
 function toolsForRun(run, localTools, capabilityTools) {
   if (run && run.mode === "chat_only") return [];
 
@@ -1745,6 +2227,20 @@ function toolsForRun(run, localTools, capabilityTools) {
     local = local.filter((tool) => READ_ONLY_COMPOSER_TOOLS.has(tool.name));
   }
   if (run && run.noEdit) local = local.filter((tool) => !READ_ONLY_BLOCKED_TOOLS.has(tool.name));
+  if (isRunOnlyBrowserGoal(run)) {
+    const previewTools = new Set(["process.status", "process.start", "process.logs", "browser.check"]);
+    local = local.filter((tool) => previewTools.has(tool.name));
+  }
+  if (preferPatchForExplicitExistingEdit(run) && !browserFailureNeedsRepair(run)) {
+    const hasWrite = successfulWrites(run).length > 0;
+    local = hasWrite
+      ? local.filter((tool) => tool.name !== "file.write")
+      : local.filter((tool) => tool.name === "file.patch" || tool.name === "file.write");
+  }
+  if (browserFailureNeedsRepair(run)) {
+    const recovery = new Set(["file.read", "file.patch", "file.write", "process.status", "process.logs", "process.start"]);
+    local = local.filter((tool) => recovery.has(tool.name));
+  }
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
   if (!workspaceHasGit(run)) local = local.filter((tool) => tool.name !== "git.diff" && tool.name !== "git.status");
   if (isBrowserEditTask(run) && !requiresOwnedProcess(run) && !hadFailedOwnedProcess(run)) {
@@ -2061,6 +2557,15 @@ function unresolvedBrowserFailure(run) {
   return null;
 }
 
+function isRunOnlyBrowserGoal(run) {
+  if (!run || run.mode !== "controlled") return false;
+  const text = stripNegatedEditing(run.goal).toLowerCase();
+  const wantsRun = /\b(start|run|launch|serve|open|preview)\b/.test(text)
+    && /\b(website|site|web app|page|browser|preview)\b/.test(text);
+  const wantsEdit = /\b(change|edit|fix|repair|add|remove|update|implement|build|create|patch|rewrite)\b/.test(text);
+  return wantsRun && !wantsEdit;
+}
+
 function isBrowserEditTask(run) {
   if (!run || !run.workspace || run.workspace.state === "empty") return false;
   if (isResearchRun(run)) return false;
@@ -2144,6 +2649,7 @@ function systemPrompt(options) {
       "Do not promise that you changed, checked, ran, created, fixed, or verified anything in the workspace.",
       "Answer conversationally from the visible conversation and general model knowledge.",
       "If the user asks you to inspect, read, search, test, or change workspace files, explain that Chat mode has no workspace access and tell them to use Ask for read-only inspection, Plan for planning, or Code for edits.",
+      gateContractPrompt(),
     ].join(" ");
   }
   if (options.mode === "controlled") {
@@ -2160,7 +2666,9 @@ function systemPrompt(options) {
       "Use file.patch for a precise edit to an existing file and file.write for a new file or full replacement. Create folders with dir.create. Use process.start for a long-running preview server; do not use terminal.run for servers, mkdir, ls, or node -e.",
       "To see which files exist, call dir.list with path \".\". repo.search searches file text and does not list the folder.",
       "For local website previews, do not start the server with terminal.run or background shell commands. Call browser.check on the HTML page; CodeMe owns preview startup and reuse. For user-visible interactions such as click/button/tap behaviour, browser.check is not enough: browser.interact must verify the real resulting text/state before finishing. For booking/form journeys, use one browser.interact action=sequence with fill steps, a submit click, and assertText for the confirmation; dependent form steps must stay in one sequence because each browser.interact call starts a fresh browser session.",
-      runIsResearch(options)
+      isRunOnlyBrowserGoal(options)
+        ? "This is a run/preview-only request. Do not edit any file or change ports in source code. Use process.status/process.start/process.logs only for the existing start script, then use browser.check. If the port is already in use, treat that as a possible already-running preview; do not patch the server port."
+        : runIsResearch(options)
         ? "This job is research and explanation. Do not edit files. Call the research capability at most once with input.problem, read the relevant workspace files, then answer."
         : isLayoutJob(options)
         ? "This is a layout job. After the HTML and CSS are read, use file.patch for a precise existing-file edit or file.write for a full replacement, then browser.check. Do not wait for tests or git."
@@ -2173,6 +2681,7 @@ function systemPrompt(options) {
               : "Verify with the checks that actually exist in the inspected workspace. Do not call tests.run when there is no test script, and do not call Git tools when the workspace is not a Git repository. For browser-visible changes, read the changed file back and use browser.check. For click/button/tap interactions, you must also use browser.interact; source inspection alone is not proof. For a form or booking flow, use one browser.interact sequence to fill the fields, click submit, and assert the resulting confirmation text. If a CodeMe-owned process failed, read process.logs, repair the file, restart it with process.start, and confirm it is running before finishing.",
       "A claim of success is not evidence.",
       strategyGuidance(options.strategyRecord),
+      gateContractPrompt(),
       hub,
     ].join(" ");
   }
@@ -2191,6 +2700,7 @@ function systemPrompt(options) {
       : "",
     "Do not start or interact with the workspace application in Ask or Plan mode.",
     "Inspect once, then write the answer. Do not reread the same files.",
+    gateContractPrompt(),
     options.taskClass === "plan" || (options.strategyRecord && options.strategyRecord.taskClass === "plan")
       ? "Plan mode is plan-only. Finish with a sequenced implementation plan that names the relevant files, ordered steps, verification steps, and risks. Do not perform the plan."
       : "Ask mode is answer-only. Explain the findings and recommended changes, but do not perform them.",
@@ -2346,6 +2856,7 @@ function defaultVerify(run, text) {
 
   if (run.taskClass === "inspect") {
     const listed = (run.toolCalls || []).some((call) => call.name === "dir.list" && call.result && call.result.ok);
+    const readAny = (run.toolCalls || []).some((call) => call.name === "file.read" && call.result && call.result.ok);
 
     if (isReadAllFilesGoal(run.goal)) {
       if (!listed) {
@@ -2370,19 +2881,35 @@ function defaultVerify(run, text) {
           evidence: ["dir.list", "file.read"],
         };
       }
+      if (String(text || "").trim()) {
+        return {
+          status: "passed",
+          summary: "The answer follows the inspected workspace files",
+          evidence: ["dir.list", "file.read"],
+        };
+      }
+      return {
+        status: "failed",
+        summary: "Answer from the files that were read.",
+        evidence: ["dir.list", "file.read"],
+      };
     }
 
-    if (String(text || "").trim() && (listed || run.workspaceInspected)) {
-      const readAny = (run.toolCalls || []).some((call) => call.name === "file.read" && call.result && call.result.ok);
+    if (String(text || "").trim() && (trustedObservation(run) || run.workspaceInspected)) {
       const evidence = [];
       if (listed) evidence.push("dir.list");
       if (readAny) evidence.push("file.read");
       if (!evidence.length && run.workspaceInspected) evidence.push("workspace.inspect");
+      if (!evidence.length) {
+        for (const item of run.observations || []) {
+          if (item && item.tool && !evidence.includes(item.tool)) evidence.push(item.tool);
+        }
+      }
       return {
         status: "passed",
         summary: readAny
           ? "The answer follows the inspected workspace files"
-          : "The answer follows the recorded workspace inspection",
+          : "The answer follows the recorded workspace observations",
         evidence,
       };
     }
@@ -2420,7 +2947,7 @@ function defaultVerify(run, text) {
     }
     const htmlWrite = writes.some((call) => /\.(html?|css)$/i.test(String(call.args && call.args.path || "")));
     const lastWrite = writes[writes.length - 1];
-    const after = lastWrite ? (run.toolCalls || []).filter((call) => call.iteration > lastWrite.iteration) : [];
+    const after = lastWrite ? callsAfter(run, lastWrite) : [];
     const preview = after.find((call) => (
       (call.name === "browser.check" || call.name === "browser.interact")
       && call.result
@@ -2448,8 +2975,8 @@ function defaultVerify(run, text) {
     return {
       status: "failed",
       summary: htmlWrite
-        ? "The layout write is not complete until browser.check succeeds"
-        : "Apply the layout with file.write on the HTML or CSS, then call browser.check",
+        ? "The layout edit is not complete until browser.check succeeds"
+        : "Apply the layout with file.patch or file.write on the HTML or CSS, then call browser.check",
       evidence: htmlWrite ? ["file.write"] : [],
     };
   }
@@ -2788,7 +3315,7 @@ function touch(run, lifecycle, detail) {
 }
 
 function recordChange(run, call, result) {
-  if (result.ok && (call.name === "file.write" || call.name === "file.patch") && call.args && call.args.path) {
+  if (result.ok && !(result.data && result.data.noChange) && (call.name === "file.write" || call.name === "file.patch") && call.args && call.args.path) {
     if (run.progress) run.progress.writeNow = false;
     addChanged(run, call.args.path);
     setPlan(run, "edit", "in_progress");
@@ -3092,6 +3619,153 @@ async function maybeDirectSelected(run, selected, registry, options, signal, sto
   return true;
 }
 
+async function runtimeInspectionCall(run, registry, store, name, args) {
+  touch(run, "executing_tool", name);
+  run.inFlight = {
+    kind: "tool",
+    name,
+    args,
+    key: actionKey({ name, args }),
+    directedBy: "runtime",
+  };
+  store.save(run);
+
+  let result;
+  try {
+    result = await registry.call(name, args);
+  } catch (error) {
+    result = {
+      ok: false,
+      tool: name,
+      error: {
+        code: error && error.code ? String(error.code) : "tool_failed",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+
+  const call = { name, args };
+  const record = {
+    id: `call_${crypto.randomBytes(4).toString("hex")}`,
+    iteration: run.iteration,
+    name,
+    args,
+    result,
+    directedBy: "runtime",
+  };
+  run.toolCalls.push(record);
+  const observation = observe(call, result);
+  observation.directedBy = "runtime";
+  run.observations.push(observation);
+  pushObservation(run, call, result);
+  run.inFlight = null;
+  store.save(run);
+  return result;
+}
+
+async function preloadReadAllWorkspace(run, registry, store, rootEntries) {
+  if (!isReadAllFilesGoal(run.goal)) return;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return;
+
+  const names = new Set(registry.definitions().map((tool) => tool && tool.name).filter(Boolean));
+  if (!names.has("dir.list") || !names.has("file.read")) return;
+
+  const ignoredSegments = new Set([".git", ".tools", ".codeme", "node_modules", "dist", "build", "coverage", ".cache"]);
+  const normalizePath = (value) => String(value || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+  const ignored = (value) => normalizePath(value).split("/").some((segment) => ignoredSegments.has(segment));
+
+  const queuedDirs = [];
+  const seenDirs = new Set(["."]);
+  const files = [];
+  const seenFiles = new Set();
+
+  const collect = (entries) => {
+    for (const entry of entries || []) {
+      const entryPath = normalizePath(entry && entry.path);
+      if (!entryPath || ignored(entryPath)) continue;
+      const type = String(entry && (entry.type || entry.kind) || "").toLowerCase();
+      if (type === "directory" || type === "dir" || type === "folder") {
+        if (!seenDirs.has(entryPath) && !queuedDirs.includes(entryPath)) queuedDirs.push(entryPath);
+      } else if (!seenFiles.has(entryPath)) {
+        seenFiles.add(entryPath);
+        files.push(entryPath);
+      }
+    }
+  };
+
+  collect(rootEntries);
+
+  let listedCount = 0;
+  while (queuedDirs.length && listedCount < 100) {
+    const dirPath = queuedDirs.shift();
+    if (!dirPath || seenDirs.has(dirPath)) continue;
+    seenDirs.add(dirPath);
+    listedCount += 1;
+    const result = await runtimeInspectionCall(run, registry, store, "dir.list", { path: dirPath });
+    if (result && result.ok && result.data && Array.isArray(result.data.entries)) {
+      collect(result.data.entries);
+    }
+  }
+
+  let readCount = 0;
+  for (const filePath of files) {
+    if (readCount >= 200) break;
+    readCount += 1;
+    await runtimeInspectionCall(run, registry, store, "file.read", { path: filePath });
+  }
+
+  run.messages.push({
+    role: "user",
+    content: `CodeMe completed the deterministic read-all workspace pass: listed ${seenDirs.size} director${seenDirs.size === 1 ? "y" : "ies"} and attempted ${readCount} project file reads. The file observations are already above. Answer from them now; do not repeat the same listings or reads unless one failed.`,
+  });
+  store.save(run);
+}
+
+function explicitWorkspacePaths(goal) {
+  const text = String(goal || "");
+  const matches = text.match(/(?:^|[\s"'\`(])((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:html?|css|js|mjs|cjs|jsx|ts|tsx|json|md|py|rb|go|rs|java|kt|php|vue|svelte|ya?ml|toml|txt))\b/gi) || [];
+  const paths = [];
+  for (const raw of matches) {
+    const filePath = String(raw || "").trim().replace(/^["'\`(]+/, "");
+    if (filePath && !paths.includes(filePath)) paths.push(filePath);
+    if (paths.length >= 6) break;
+  }
+  return paths;
+}
+
+function preferPatchForExplicitExistingEdit(run) {
+  if (!run || run.mode !== "controlled") return false;
+  if (!Array.isArray(run.explicitExistingFiles) || run.explicitExistingFiles.length === 0) return false;
+  const text = String(run.goal || "").toLowerCase();
+  if (/\b(create|new file|replace (?:the )?entire|rewrite (?:the )?entire|overwrite|full replacement)\b/.test(text)) return false;
+  return /\b(change|edit|update|set|make|fix|repair|add|remove|rename|heading|title|text|style|colour|color)\b/.test(text);
+}
+
+async function preloadExplicitGoalFiles(run, registry, store) {
+  if (!run || run.mode === "chat_only" || isReadAllFilesGoal(run.goal)) return;
+  if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return;
+  const names = new Set(registry.definitions().map((tool) => tool && tool.name).filter(Boolean));
+  if (!names.has("file.read")) return;
+
+  const targets = explicitWorkspacePaths(run.goal);
+  if (!targets.length) return;
+
+  if (!Array.isArray(run.explicitExistingFiles)) run.explicitExistingFiles = [];
+  for (const filePath of targets) {
+    if (run.explicitExistingFiles.includes(filePath)) continue;
+    const result = await runtimeInspectionCall(run, registry, store, "file.read", { path: filePath });
+    if (result && result.ok) run.explicitExistingFiles.push(filePath);
+  }
+
+  if (preferPatchForExplicitExistingEdit(run)) {
+    run.messages.push({
+      role: "user",
+      content: `CodeMe already read the existing target file${run.explicitExistingFiles.length === 1 ? "" : "s"}: ${run.explicitExistingFiles.join(", ")}. This is a small existing-file edit. Prefer file.patch with the smallest exact oldText/newText replacement. If you emit file.write for the existing target, CodeMe may normalize the full replacement into a bounded patch before execution.`,
+    });
+  }
+  store.save(run);
+}
+
 async function showWorkspace(run, registry, store) {
   if (!registry || typeof registry.call !== "function" || typeof registry.definitions !== "function") return null;
   if (run.taskClass === "folder") return null;
@@ -3198,6 +3872,11 @@ async function showWorkspace(run, registry, store) {
     content: `Workspace files: ${files.join(", ") || "none"}. This is the open folder. Use these paths. Do not invent a different project.`,
   });
   store.save(run);
+
+  if (isReadAllFilesGoal(run.goal)) {
+    await preloadReadAllWorkspace(run, registry, store, entries);
+  }
+
   return result;
 }
 

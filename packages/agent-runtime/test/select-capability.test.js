@@ -200,7 +200,12 @@ async function main() {
     assert.strictEqual(run.taskClass, "build");
     assert.strictEqual(run.lifecycle, "completed", `${run.error && run.error.code}: ${run.verification && run.verification.summary}`);
     assert.deepStrictEqual(state.invocations, ["research.problem"]);
-    const directed = run.toolCalls.find((call) => call.directedBy === "runtime");
+    const directed = run.toolCalls.find((call) => (
+      call.name === "capability.invoke"
+      && call.directedBy === "runtime"
+      && call.args
+      && call.args.capability === "research.problem"
+    ));
     assert.ok(directed);
     assert.strictEqual(directed.iteration, 0);
     assert.strictEqual(directed.args.input.problem, goal);

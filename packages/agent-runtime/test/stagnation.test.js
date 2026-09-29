@@ -150,7 +150,12 @@ async function main() {
     const hubState = { invocations: 0 };
     const provider = new ScriptedModelProvider(loopSteps(8));
     const run = await start({ provider, capabilities: researchHub(hubState) }).done;
-    const directed = run.toolCalls.find((call) => call.directedBy === "runtime");
+    const directed = run.toolCalls.find((call) => (
+      call.name === "capability.invoke"
+      && call.directedBy === "runtime"
+      && call.args
+      && call.args.capability === "research.problem"
+    ));
     assert.strictEqual(run.lifecycle, "failed");
     assert.strictEqual(run.error.code, "recovery_edit_required");
     assert.ok(run.iteration <= 6);
