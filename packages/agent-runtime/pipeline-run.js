@@ -50,6 +50,15 @@ function summarize(result) {
   ).slice(0, 800);
 }
 
+function appliedMutation(call) {
+  if (!call || !MUTATION_TOOLS.has(call.name) || !call.result || !call.result.ok) return false;
+  if (call.name === "file.write" || call.name === "file.patch") {
+    const data = call.result.data;
+    if (data && typeof data === "object" && data.changed === false) return false;
+  }
+  return true;
+}
+
 function recordTool(run, call, result, directedBy) {
   const external = String(call && call.name || "").startsWith("capability.")
     || Boolean(result && result.trusted === false);
@@ -71,7 +80,7 @@ function recordTool(run, call, result, directedBy) {
     ...(directedBy ? { directedBy } : {}),
   });
 
-  if (result && result.ok && (call.name === "file.write" || call.name === "file.patch")) {
+  if (appliedMutation(record) && (call.name === "file.write" || call.name === "file.patch")) {
     const path = String(call.args && call.args.path || "");
     if (path && !run.filesChanged.includes(path)) run.filesChanged.push(path);
   }
@@ -215,7 +224,7 @@ async function createVerifier(run, context) {
     const mutationIndexes = [];
     for (let index = 0; index < run.toolCalls.length; index += 1) {
       const call = run.toolCalls[index];
-      if (MUTATION_TOOLS.has(call.name) && call.result && call.result.ok) mutationIndexes.push(index);
+      if (appliedMutation(call)) mutationIndexes.push(index);
     }
     const latestMutation = mutationIndexes.length ? mutationIndexes[mutationIndexes.length - 1] : -1;
 
