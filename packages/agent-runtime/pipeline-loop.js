@@ -5,6 +5,45 @@ function nextCallId(name) {
   return "call_" + fallbackCallCounter + "_" + String(name || "tool").replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+function embeddedJsonObjects(text) {
+  const source = String(text || "");
+  const values = [];
+  let start = -1;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (quoted) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        quoted = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      quoted = true;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+      continue;
+    }
+    if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        values.push(source.slice(start, index + 1));
+        start = -1;
+      }
+    }
+  }
+  return values;
+}
+
 function recoverTextToolCalls(content, knownNames) {
   const text = String(content || "").trim();
   if (!text) return [];
@@ -18,6 +57,7 @@ function recoverTextToolCalls(content, knownNames) {
     if (value.startsWith("{") && value.endsWith("}")) candidates.push(value);
   }
   if (!candidates.length && text.startsWith("{") && text.endsWith("}")) candidates.push(text);
+  for (const value of embeddedJsonObjects(text)) candidates.push(value);
 
   const calls = [];
   const seen = new Set();
@@ -308,6 +348,20 @@ async function runPipeline(options) {
         name: call.name,
         content: JSON.stringify(result).slice(0, 12000),
       });
+      if (
+        call.name === "browser.interact"
+        && result
+        && result.ok
+        && result.data
+        && result.data.matched !== false
+      ) {
+        messages.push({
+          role: "user",
+          content:
+            "The requested real-browser interaction has succeeded. If the user's requested behavior is now satisfied, give the final answer without making further edits. " +
+            "Do not make cosmetic, cleanup, or speculative changes after successful verification. If a real edit is still necessary, you must verify the browser again after that edit.",
+        });
+      }
     }
   }
 
@@ -320,5 +374,6 @@ async function runPipeline(options) {
 module.exports = {
   runPipeline,
   recoverTextToolCalls,
+  embeddedJsonObjects,
   normalizeArgs,
 };
