@@ -550,15 +550,45 @@ async function probe(url) {
 }
 
 async function openPreview(vscode, url) {
-  // Keep CodeMe previews inside the IDE. The built-in Simple Browser renders
-  // localhost pages in an editor tab and avoids launching the system browser.
+  // Keep previews inside CodeMe and open them beside the working editor.
+  // Newer Code-OSS builds have the integrated browser; older builds fall back
+  // to the Simple Browser API with an explicit Beside view column.
   try {
+    const commands = vscode.commands && typeof vscode.commands.getCommands === "function"
+      ? await vscode.commands.getCommands(true)
+      : [];
+    if (Array.isArray(commands) && commands.includes("workbench.action.browser.open")) {
+      let reuseUrlFilter;
+      try {
+        const parsed = new URL(url);
+        const slash = parsed.pathname.lastIndexOf("/");
+        reuseUrlFilter = `${parsed.pathname.slice(0, slash + 1)}**`;
+      } catch {
+        reuseUrlFilter = undefined;
+      }
+      await vscode.commands.executeCommand("workbench.action.browser.open", {
+        url,
+        openToSide: true,
+        ...(reuseUrlFilter ? { reuseUrlFilter } : {}),
+      });
+      return { opened: true, surface: "integratedBrowser", position: "beside" };
+    }
+
+    if (vscode.Uri && vscode.ViewColumn) {
+      await vscode.commands.executeCommand(
+        "simpleBrowser.api.open",
+        vscode.Uri.parse(url),
+        { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+      );
+      return { opened: true, surface: "simpleBrowser", position: "beside" };
+    }
+
     await vscode.commands.executeCommand("simpleBrowser.show", url);
-    return { opened: true, surface: "simpleBrowser" };
+    return { opened: true, surface: "simpleBrowser", position: "active" };
   } catch (error) {
     return {
       opened: false,
-      surface: "simpleBrowser",
+      surface: "internalBrowser",
       code: "internal_browser_unavailable",
       message: error instanceof Error ? error.message : String(error),
     };
