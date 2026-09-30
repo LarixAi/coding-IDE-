@@ -495,7 +495,7 @@ function renderComposer(nonce) {
       n8nAuto.checked = Boolean(settings.autoEnhance);
       n8nToggle.classList.toggle("on", Boolean(settings.toolCount));
       n8nToggle.title = settings.toolCount
-        ? `n8n MCP · ${settings.toolCount} workflow${settings.toolCount === 1 ? "" : "s"} discovered`
+        ? "n8n MCP · " + settings.toolCount + " workflow" + (settings.toolCount === 1 ? "" : "s") + " discovered"
         : "n8n MCP tools";
       if (!n8nStatus.textContent || /Saving|Checking|Enhancing/.test(n8nStatus.textContent)) {
         if (settings.lastError) n8nStatus.textContent = "MCP: " + settings.lastError;
