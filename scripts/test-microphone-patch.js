@@ -1,9 +1,13 @@
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const {
   EXTENSION_ID,
   MARKER,
   patchPermissionHandlers,
   patchPermissionPolicy,
+  runtimeRoots,
 } = require("./patch-codeme-microphone");
 
 const permissionFixture = `
@@ -55,5 +59,26 @@ assert.ok(patchedPolicy.text.includes("'microphone;'"));
 const idempotentPolicy = patchPermissionPolicy(patchedPolicy.text);
 assert.strictEqual(idempotentPolicy.changed, false);
 assert.strictEqual(idempotentPolicy.text, patchedPolicy.text);
+
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-mic-path-"));
+const devOut = path.join(tempRoot, "code-oss", "out");
+fs.mkdirSync(devOut, { recursive: true });
+const discoveredDev = runtimeRoots(tempRoot);
+assert.deepStrictEqual(discoveredDev.roots, [devOut]);
+
+const packagedOut = path.join(
+  tempRoot,
+  "code-oss",
+  ".build",
+  "electron",
+  "Code - OSS.app",
+  "Contents",
+  "Resources",
+  "app",
+  "out",
+);
+fs.mkdirSync(packagedOut, { recursive: true });
+const discoveredBoth = runtimeRoots(tempRoot);
+assert.deepStrictEqual(discoveredBoth.roots, [devOut, packagedOut]);
 
 console.log("ok CodeMe microphone host patch");
