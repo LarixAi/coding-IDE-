@@ -381,6 +381,75 @@ async function testExternalToolsStayVisibleAndUntrusted() {
   assert.deepStrictEqual(run.filesChanged, []);
 }
 
+async function testReadOnlyHidesExternalActionTools() {
+  const registry = new FakeRegistry();
+  const externalTools = {
+    calls: [],
+    async listTools() {
+      return [
+        {
+          name: "external_lookup",
+          description: "Read-only external evidence",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+          external: {
+            source: "n8n-mcp",
+            externalName: "research.lookup",
+            category: "research",
+            sideEffect: false,
+          },
+        },
+        {
+          name: "external_send",
+          description: "Send an external message",
+          parameters: {
+            type: "object",
+            properties: { text: { type: "string" } },
+            required: ["text"],
+          },
+          external: {
+            source: "n8n-mcp",
+            externalName: "send.message",
+            category: "communication",
+            sideEffect: true,
+          },
+        },
+      ];
+    },
+    async call(name, args) {
+      this.calls.push({ name, args });
+      return { ok: true, tool: name, trusted: false, data: { output: "ok" } };
+    },
+  };
+  const provider = new ScriptedProvider([
+    (input) => {
+      assert.ok(input.tools.some((tool) => tool.name === "external_lookup"));
+      assert.ok(!input.tools.some((tool) => tool.name === "external_send"), "Ask mode must not expose n8n action tools");
+      return { text: "Read-only external tools are available, action tools are not.", toolCalls: [] };
+    },
+  ]);
+
+  const run = await startPipelineRun({
+    goal: "Tell me what external tools are available without taking any action.",
+    model: "fixture",
+    providerName: "fixture-local",
+    provider,
+    registry,
+    externalTools,
+    store: storeFor("external-action-lockdown"),
+    mode: "read_only",
+    composerMode: "ask",
+    maxIterations: 3,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  assert.strictEqual(externalTools.calls.length, 0);
+  assert.deepStrictEqual(run.filesChanged, []);
+}
+
 async function testLiveFollowUp() {
   const registry = new FakeRegistry();
   const provider = new ScriptedProvider([
@@ -434,6 +503,7 @@ async function main() {
   await testNoOpAfterBrowserDoesNotInvalidateVerification();
   await testVerifierReplaysBrowserAfterLaterRealEdit();
   await testExternalToolsStayVisibleAndUntrusted();
+  await testReadOnlyHidesExternalActionTools();
   await testLiveFollowUp();
   console.log("ok pipeline v2 cursor-style loop");
 }
