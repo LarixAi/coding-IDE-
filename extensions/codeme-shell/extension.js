@@ -91,10 +91,14 @@ function activate(context) {
   });
   refreshModels();
 
-  const refreshHub = () => probeHub(composer.capabilities, composer.externalTools).then((hub) => {
-    state.hub = hub;
-    applyHub(hubItem, state);
-  });
+  const refreshHub = () => {
+    composer.syncExternalPermissions();
+    return probeHub(composer.capabilities, composer.externalTools).then((hub) => {
+      state.hub = hub;
+      applyHub(hubItem, state);
+      composer.post(composer.session.snapshot());
+    });
+  };
   refreshHub();
 
   const modelTimer = setInterval(refreshModels, 15000);
@@ -391,13 +395,30 @@ async function probeHub(capabilityProvider, mcpProvider) {
   const details = [];
   const capabilities = [];
   let connected = false;
+  let tools = [];
+  let categories = {};
+  let imageUploadAllowed = false;
+  let actionsAllowed = false;
 
   if (mcpProvider && typeof mcpProvider.connectionStatus === "function") {
     const mcp = await mcpProvider.connectionStatus();
     if (mcp.connected) {
       connected = true;
       const count = Number(mcp.toolCount || 0);
-      details.push("n8n MCP connected: " + count + " tool" + (count === 1 ? "" : "s"));
+      tools = Array.isArray(mcp.toolRecords) ? mcp.toolRecords.map((item) => ({ ...item })) : [];
+      categories = mcp.categories && typeof mcp.categories === "object" ? { ...mcp.categories } : {};
+      imageUploadAllowed = Boolean(mcp.imageUploadAllowed);
+      actionsAllowed = Boolean(mcp.actionsAllowed);
+      const imageCount = tools.filter((item) => item.acceptsImage).length;
+      const categoryText = Object.entries(categories)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, total]) => name + ":" + total)
+        .join(", ");
+      details.push(
+        "n8n MCP connected: " + count + " tool" + (count === 1 ? "" : "s")
+        + (imageCount ? " · " + imageCount + " image-capable" : "")
+        + (categoryText ? " · " + categoryText : "")
+      );
       for (const name of mcp.tools || []) capabilities.push(name);
     } else {
       const code = mcp.error && mcp.error.code;
@@ -427,6 +448,10 @@ async function probeHub(capabilityProvider, mcpProvider) {
   return {
     connected,
     capabilities: [...new Set(capabilities)],
+    tools,
+    categories,
+    imageUploadAllowed,
+    actionsAllowed,
     detail: details.join(" · ") || "Intelligence hub is not configured.",
   };
 }
@@ -582,6 +607,7 @@ class ComposerViewProvider {
     this.view = undefined;
     this.capabilities = N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null;
     this.externalTools = N8nMcpProvider ? new N8nMcpProvider() : null;
+    this.syncExternalPermissions();
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
       historyStore: new ConversationStore(path.join(context.globalStorageUri.fsPath, "composer-history")),
@@ -619,6 +645,13 @@ class ComposerViewProvider {
     });
   }
 
+  syncExternalPermissions() {
+    if (!this.externalTools) return;
+    const config = vscode.workspace.getConfiguration("codeme.n8n");
+    this.externalTools.allowImageUpload = Boolean(config.get("allowImageUpload", false));
+    this.externalTools.allowActions = Boolean(config.get("allowActions", false));
+  }
+
   async resolveWebviewView(webviewView) {
     this.view = webviewView;
     webviewView.webview.options = { enableScripts: true };
@@ -654,7 +687,12 @@ class ComposerViewProvider {
     }
     if (this.refreshStatus) this.refreshStatus();
     if (!this.view) return;
-    this.view.webview.postMessage({ type: "state", readOnly: snapshot.mode !== "controlled", ...snapshot });
+    this.view.webview.postMessage({
+      type: "state",
+      readOnly: snapshot.mode !== "controlled",
+      ...snapshot,
+      hub: this.state.hub || { connected: false, capabilities: [], tools: [], categories: {} },
+    });
   }
 
   async onMessage(message) {
