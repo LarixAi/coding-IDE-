@@ -560,7 +560,9 @@ class ComposerViewProvider {
       createRegistry: async (mode) => {
         const local = mode === "controlled" ? new ControlledToolProvider(host) : new ReadOnlyToolProvider(host);
         if (mode === "chat_only") return new ToolRegistry(local);
-        const mcp = await this.n8n.buildProvider({ timeoutMs: 5000 });
+        // Ordinary sends must not wait behind an unavailable external hub.
+        // The explicit Test connection action uses the longer diagnostic timeout.
+        const mcp = await this.n8n.buildProvider({ timeoutMs: 1500 });
         return new ToolRegistry(mcp ? new CompositeToolProvider([local, mcp]) : local);
       },
       capabilities: N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null,
