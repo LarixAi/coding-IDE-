@@ -46,14 +46,15 @@ class OllamaModelProvider extends ModelProvider {
     this.timeoutMs = options.timeoutMs || 180000;
   }
 
-  async listModels() {
+  async listModels(options = {}) {
     try {
       const body = await getJson(this.baseUrl, "/api/tags");
       return (body.models || []).map((model) => {
         const id = String(model && model.name || "");
         return id ? { provider: this.name, id, label: id } : null;
       }).filter(Boolean);
-    } catch {
+    } catch (error) {
+      if (options && options.strict) throw error;
       return [];
     }
   }
@@ -97,18 +98,8 @@ function chatBody(input) {
     think: false,
     messages: (input.messages || []).map(toOllamaMessage),
     tools: (input.tools || []).map(toOllamaTool),
-    options: {
-      temperature: 0,
-      num_ctx: boundedGenerationNumber(process.env.CODEME_OLLAMA_NUM_CTX, 32768, 8192, 262144),
-      num_predict: boundedGenerationNumber(process.env.CODEME_OLLAMA_NUM_PREDICT, 8192, 1024, 16384),
-    },
+    options: { temperature: 0 },
   };
-}
-
-function boundedGenerationNumber(raw, fallback, min, max) {
-  const value = Number(raw);
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(min, Math.min(max, Math.floor(value)));
 }
 
 function toOllamaMessage(message) {
