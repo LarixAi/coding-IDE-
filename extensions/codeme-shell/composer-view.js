@@ -123,6 +123,15 @@ function renderComposer(nonce) {
     #stop { width: 24px; padding: 0; color: #aab3bf; }
     #send[hidden], #stop[hidden] { display: none; }
     #mic.on { color: #ff918b; }
+    #n8n-toggle.on { color: #7fc9dd; }
+    .n8n-panel { display: none; margin: 0 0 6px; padding: 8px; border: 1px solid #343a44; border-radius: 7px; background: #1d2127; }
+    .n8n-panel.on { display: block; }
+    .n8n-title { margin: 0 0 6px; color: #d7dce4; font-size: 10.5px; font-weight: 650; }
+    .n8n-row { display: flex; align-items: center; gap: 5px; margin: 5px 0; color: #9da7b4; font-size: 10px; }
+    .n8n-row input[type="text"], .n8n-row input[type="password"] { flex: 1; min-width: 0; border: 1px solid #303640; border-radius: 5px; background: #15191e; color: #dfe4ec; padding: 5px 6px; font: inherit; font-size: 10px; }
+    .n8n-row button { border: 1px solid #303640; border-radius: 5px; background: #252a31; color: #c5ccd6; padding: 4px 7px; cursor: pointer; font: inherit; font-size: 10px; }
+    .n8n-status { min-height: 13px; margin-top: 4px; color: #7fc9dd; font-size: 10px; overflow-wrap: anywhere; }
+    .n8n-divider { margin: 7px 0; border-top: 1px solid #2b3037; }
     .perm { display: none; }
 
     @media (max-width: 230px) {
@@ -160,11 +169,24 @@ function renderComposer(nonce) {
       <div class="changed-files" id="changed-files"></div>
       <p class="notice" id="notice"></p>
       <div class="chips" id="chips"></div>
+      <div class="n8n-panel" id="n8n-panel">
+        <p class="n8n-title">n8n MCP & prompt pre-flight</p>
+        <label class="n8n-row"><input type="checkbox" id="n8n-enabled" /> Use n8n workflows as agent tools</label>
+        <div class="n8n-row"><input type="text" id="n8n-url" placeholder="http://127.0.0.1:5678/mcp-server/http" /></div>
+        <div class="n8n-row"><input type="password" id="n8n-token" placeholder="MCP token · stored securely" /></div>
+        <div class="n8n-row"><button type="button" id="n8n-save">Save settings</button><button type="button" id="n8n-test">Test connection</button></div>
+        <div class="n8n-status" id="n8n-status"></div>
+        <div class="n8n-divider"></div>
+        <div class="n8n-row"><input type="text" id="n8n-enhance-url" placeholder="Prompt enhancer webhook URL (optional)" /></div>
+        <label class="n8n-row"><input type="checkbox" id="n8n-auto" /> Enhance every prompt on send</label>
+      </div>
       <div class="composer" id="drop">
         <textarea id="prompt" placeholder="Ask CodeMe anything, @ files or type /" rows="2"></textarea>
         <div class="bar">
           <button type="button" id="attach" title="Add context">＋ Context</button>
           <button type="button" id="mic" title="Voice to text" aria-pressed="false">Mic</button>
+          <button type="button" id="enhance" title="Enhance prompt before running">✨</button>
+          <button type="button" id="n8n-toggle" title="n8n MCP tools">n8n</button>
           <select id="mode" aria-label="Mode">
             <option value="chat">Chat</option>
             <option value="ask">Ask</option>
@@ -207,6 +229,17 @@ function renderComposer(nonce) {
     const empty = document.getElementById("empty");
     const drop = document.getElementById("drop");
     const mic = document.getElementById("mic");
+    const enhance = document.getElementById("enhance");
+    const n8nToggle = document.getElementById("n8n-toggle");
+    const n8nPanel = document.getElementById("n8n-panel");
+    const n8nEnabled = document.getElementById("n8n-enabled");
+    const n8nUrl = document.getElementById("n8n-url");
+    const n8nToken = document.getElementById("n8n-token");
+    const n8nSave = document.getElementById("n8n-save");
+    const n8nTest = document.getElementById("n8n-test");
+    const n8nStatus = document.getElementById("n8n-status");
+    const n8nEnhanceUrl = document.getElementById("n8n-enhance-url");
+    const n8nAuto = document.getElementById("n8n-auto");
     const thread = document.getElementById("thread");
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
     let rec = null;
@@ -340,6 +373,30 @@ function renderComposer(nonce) {
       }
     }
     mic.addEventListener("click", startVoice);
+    enhance.addEventListener("click", () => {
+      const text = prompt.value.trim();
+      if (!text || sending) return;
+      enhance.disabled = true;
+      n8nStatus.textContent = "Enhancing prompt…";
+      vscode.postMessage({ type: "enhance-prompt", text });
+    });
+    n8nToggle.addEventListener("click", () => n8nPanel.classList.toggle("on"));
+    n8nSave.addEventListener("click", () => {
+      const patch = {
+        mcpEnabled: Boolean(n8nEnabled.checked),
+        mcpUrl: n8nUrl.value,
+        autoEnhance: Boolean(n8nAuto.checked),
+        enhanceWebhookUrl: n8nEnhanceUrl.value,
+      };
+      if (n8nToken.value.trim()) patch.mcpToken = n8nToken.value.trim();
+      n8nStatus.textContent = "Saving…";
+      vscode.postMessage({ type: "n8n-config", patch });
+    });
+    n8nTest.addEventListener("click", () => {
+      n8nStatus.textContent = "Checking n8n MCP…";
+      n8nTest.disabled = true;
+      vscode.postMessage({ type: "n8n-test" });
+    });
     model.addEventListener("change", () => {
       const option = model.selectedOptions[0];
       if (!option || !option.dataset.provider) return;
@@ -428,6 +485,7 @@ function renderComposer(nonce) {
       modelRefresh.classList.remove("loading");
       prompt.disabled = false;
       if (!sending) notice.textContent = state.notice || "";
+      renderN8n(state.n8n || null);
       const picked = normalizeComposerMode(state.composerMode || state.mode);
       document.getElementById("perm").textContent = composerModeLabel(picked);
       mode.value = picked;
@@ -519,6 +577,29 @@ function renderComposer(nonce) {
       empty.hidden = Boolean(messages.childElementCount || running);
       thread.scrollTop = thread.scrollHeight;
     }
+    function renderN8n(settings) {
+      if (!settings) {
+        n8nToggle.classList.remove("on");
+        return;
+      }
+      n8nEnabled.checked = settings.mcpEnabled !== false;
+      if (document.activeElement !== n8nUrl) n8nUrl.value = settings.mcpUrl || "";
+      if (document.activeElement !== n8nEnhanceUrl) n8nEnhanceUrl.value = settings.enhanceWebhookUrl || "";
+      n8nAuto.checked = Boolean(settings.autoEnhance);
+      n8nToggle.classList.toggle("on", Boolean(settings.toolCount));
+      n8nToggle.title = settings.toolCount
+        ? "n8n MCP · " + settings.toolCount + " tool" + (settings.toolCount === 1 ? "" : "s") + " discovered"
+        : "n8n MCP tools";
+      if (!n8nStatus.textContent || /Saving|Checking|Enhancing/.test(n8nStatus.textContent)) {
+        if (settings.lastError) n8nStatus.textContent = "MCP: " + settings.lastError;
+        else if (settings.toolCount) n8nStatus.textContent = settings.toolCount + " MCP tool(s) available";
+        else n8nStatus.textContent = settings.tokenConfigured ? "MCP configured · press Test connection" : "MCP token not configured";
+      }
+      n8nToken.placeholder = settings.tokenConfigured
+        ? "MCP token stored securely · enter a new token to replace"
+        : "MCP token · stored securely";
+    }
+
     function renderProjectDecision(decision) {
       projectDecision.innerHTML = "";
       projectDecision.classList.toggle("on", Boolean(decision));
@@ -715,6 +796,7 @@ function renderComposer(nonce) {
       if (item.name === "process.start" || item.name === "process.status" || item.name === "process.logs") return "◆";
       if (item.name === "browser.check" || item.name === "browser.interact") return "◉";
       if (item.name === "capability.invoke" || item.name === "capability.list") return "◇";
+      if (/^mcp_n8n_/.test(String(item.name || ""))) return "N8N";
       if (item.name === "diagnostics.run") return "✓";
       if (item.name === "git.diff" || item.name === "git.status") return "↕";
       return "›";
@@ -752,6 +834,10 @@ function renderComposer(nonce) {
       if (item.name === "git.status") return live ? "Checking Git status" : "Git status";
       if (item.name === "capability.invoke") return live ? "Researching" : "Research";
       if (item.name === "capability.list") return live ? "Checking capabilities" : "Capabilities";
+      if (/^mcp_n8n_/.test(String(item.name || ""))) {
+        const target = String(item.name).replace(/^mcp_n8n_/, "").replace(/_/g, " ");
+        return (live ? "Running n8n workflow " : "Ran n8n workflow ") + target;
+      }
       return item.name;
     }
     function diffCounts(diff) {
@@ -884,6 +970,26 @@ function renderComposer(nonce) {
         clearSendPending();
         notice.textContent = message.message || "Could not send.";
         if (!prompt.value && draft) prompt.value = draft;
+      }
+      if (message.type === "n8n-config-result") {
+        n8nStatus.textContent = message.ok ? "n8n settings saved" : (message.message || "Could not save n8n settings");
+        if (message.ok) n8nToken.value = "";
+      }
+      if (message.type === "n8n-test-result") {
+        n8nTest.disabled = Boolean(message.checking);
+        if (message.checking) n8nStatus.textContent = "Checking n8n MCP…";
+        else if (message.ok) n8nStatus.textContent = message.count + " MCP tool(s) available";
+        else n8nStatus.textContent = "Failed: " + (message.message || "n8n MCP unavailable");
+      }
+      if (message.type === "enhanced-prompt") {
+        enhance.disabled = false;
+        if (message.ok) {
+          prompt.value = message.prompt || prompt.value;
+          prompt.dispatchEvent(new Event("input"));
+          n8nStatus.textContent = message.source === "n8n" ? "Prompt enhanced by n8n" : "Prompt enhanced locally";
+        } else {
+          n8nStatus.textContent = "Enhancement failed: " + (message.message || "unknown error");
+        }
       }
     });
     const readyTimer = setInterval(() => {
