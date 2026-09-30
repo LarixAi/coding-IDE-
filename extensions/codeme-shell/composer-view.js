@@ -36,7 +36,19 @@ function renderComposer(nonce) {
     .empty { margin: 24px 2px 0; color: #67717f; font-size: 11px; line-height: 1.5; }
     .bubble { margin: 0 1px 10px; max-width: 100%; min-width: 0; line-height: 1.48; white-space: pre-wrap; overflow-wrap: anywhere; }
     .bubble.user { color: #e0e4ea; font-size: 12px; font-weight: 500; }
-    .bubble.assistant { color: #c8ced8; }
+    .bubble.assistant { color: #c8ced8; white-space: normal; }
+    .bubble.assistant p { margin: 0 0 8px; }
+    .bubble.assistant p:last-child { margin-bottom: 0; }
+    .bubble.assistant h2, .bubble.assistant h3, .bubble.assistant h4 { margin: 10px 0 5px; color: #e1e6ee; line-height: 1.3; }
+    .bubble.assistant h2 { font-size: 13px; }
+    .bubble.assistant h3 { font-size: 12px; }
+    .bubble.assistant h4 { font-size: 11px; }
+    .bubble.assistant ul, .bubble.assistant ol { margin: 4px 0 8px 18px; padding: 0; }
+    .bubble.assistant li { margin: 2px 0; }
+    .bubble.assistant strong { color: #e1e6ee; font-weight: 600; }
+    .bubble.assistant code { padding: 1px 3px; border-radius: 3px; background: #252a31; color: #d7dde6; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 0.94em; }
+    .bubble.assistant pre { margin: 6px 0 9px; padding: 7px 8px; overflow: auto; border-left: 1px solid #39414b; background: #15181c; white-space: pre; }
+    .bubble.assistant pre code { padding: 0; background: transparent; }
 
     .project-decision { display: none; margin: 1px 1px 7px; color: #75808f; font-size: 10px; line-height: 1.35; }
     .project-decision.on { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
@@ -889,12 +901,102 @@ function renderComposer(nonce) {
         changedFiles.appendChild(row);
       }
     }
+    function appendInlineMarkdown(parent, value) {
+      let rest = String(value || "");
+      while (rest) {
+        const boldAt = rest.indexOf("**");
+        const codeAt = rest.indexOf("`");
+        let next = -1;
+        let kind = "";
+        if (boldAt >= 0 && (codeAt < 0 || boldAt < codeAt)) { next = boldAt; kind = "bold"; }
+        else if (codeAt >= 0) { next = codeAt; kind = "code"; }
+        if (next < 0) { parent.appendChild(document.createTextNode(rest)); break; }
+        if (next > 0) parent.appendChild(document.createTextNode(rest.slice(0, next)));
+        if (kind === "bold") {
+          const end = rest.indexOf("**", 2);
+          if (end < 0) { parent.appendChild(document.createTextNode(rest)); break; }
+          const strong = document.createElement("strong");
+          strong.textContent = rest.slice(2, end);
+          parent.appendChild(strong);
+          rest = rest.slice(end + 2);
+        } else {
+          const end = rest.indexOf("`", 1);
+          if (end < 0) { parent.appendChild(document.createTextNode(rest)); break; }
+          const code = document.createElement("code");
+          code.textContent = rest.slice(1, end);
+          parent.appendChild(code);
+          rest = rest.slice(end + 1);
+        }
+      }
+    }
+
+    function renderMarkdownText(container, value) {
+      container.innerHTML = "";
+      const lines = String(value || "").replace(/\r\n/g, "\n").split("\n");
+      let list = null;
+      let listKind = "";
+      let pre = null;
+      let codeLines = [];
+      const closeList = () => { list = null; listKind = ""; };
+      const flushCode = () => {
+        if (!pre) return;
+        const code = document.createElement("code");
+        code.textContent = codeLines.join("\n");
+        pre.appendChild(code);
+        container.appendChild(pre);
+        pre = null;
+        codeLines = [];
+      };
+      for (const rawLine of lines) {
+        const line = String(rawLine || "");
+        if (line.trim().startsWith("```")) {
+          closeList();
+          if (pre) flushCode();
+          else pre = document.createElement("pre");
+          continue;
+        }
+        if (pre) { codeLines.push(line); continue; }
+        if (!line.trim()) { closeList(); continue; }
+
+        const heading = line.match(/^(#{1,4})\s+(.+)$/);
+        if (heading) {
+          closeList();
+          const level = Math.min(4, Math.max(2, heading[1].length + 1));
+          const node = document.createElement("h" + level);
+          appendInlineMarkdown(node, heading[2]);
+          container.appendChild(node);
+          continue;
+        }
+
+        const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+        const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+        if (bullet || numbered) {
+          const kind = bullet ? "ul" : "ol";
+          if (!list || listKind !== kind) {
+            list = document.createElement(kind);
+            listKind = kind;
+            container.appendChild(list);
+          }
+          const item = document.createElement("li");
+          appendInlineMarkdown(item, (bullet || numbered)[1]);
+          list.appendChild(item);
+          continue;
+        }
+
+        closeList();
+        const paragraph = document.createElement("p");
+        appendInlineMarkdown(paragraph, line);
+        container.appendChild(paragraph);
+      }
+      flushCode();
+    }
+
     function renderResult(state) {
       result.innerHTML = "";
       if (deferredFinal) {
         const final = document.createElement("div");
         final.className = "bubble assistant";
-        final.textContent = deferredFinal;
+        renderMarkdownText(final, deferredFinal);
         result.appendChild(final);
       } else if (state.stage !== "Complete") {
         const summary = document.createElement("p");
@@ -906,7 +1008,7 @@ function renderComposer(nonce) {
         if (summary) {
           const final = document.createElement("div");
           final.className = "bubble assistant";
-          final.textContent = summary;
+          renderMarkdownText(final, summary);
           result.appendChild(final);
         }
       }
@@ -930,8 +1032,7 @@ function renderComposer(nonce) {
     function addMessage(role, text) {
       const item = document.createElement("div");
       item.className = "bubble " + role;
-      item.textContent = text;
-      messages.appendChild(item);
+      if (role === "assistant") renderMarkdownText(item, text);\n      else item.textContent = text;\n      messages.appendChild(item);
       empty.hidden = true;
     }
     let sawState = false;
