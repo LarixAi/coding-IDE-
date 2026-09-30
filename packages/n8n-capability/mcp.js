@@ -242,6 +242,8 @@ class N8nMcpToolProvider {
       name: item.name,
       description: item.description,
       parameters: JSON.parse(JSON.stringify(item.parameters || { type: "object", properties: {} })),
+      external: item.external === true,
+      externalKind: item.externalKind || "mcp",
     }));
   }
 
