@@ -315,6 +315,35 @@ async function testVerifierReplaysBrowserAfterLaterRealEdit() {
   assert.ok(run.verification.evidence.includes("browser.interact"));
 }
 
+async function testRunWebsiteRequiresRealPreview() {
+  const registry = new FakeRegistry();
+  const provider = new ScriptedProvider([
+    { text: "The website should be running.", toolCalls: [] },
+    { text: "", toolCalls: [{ name: "process.start", args: {} }] },
+    { text: "", toolCalls: [{ name: "browser.check", args: { url: "http://127.0.0.1:4173/" } }] },
+    { text: "The existing website is running and verified.", toolCalls: [] },
+  ]);
+
+  const run = await startPipelineRun({
+    goal: "Run the existing website and open it in the browser.",
+    model: "fixture",
+    providerName: "fixture-local",
+    provider,
+    registry,
+    store: storeFor("run-existing-site"),
+    mode: "controlled",
+    composerMode: "code",
+    maxIterations: 8,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  assert.strictEqual(run.taskClass, "run");
+  assert.ok(run.toolCalls.some((call) => call.name === "process.start" && call.result && call.result.ok));
+  assert.ok(run.toolCalls.some((call) => call.name === "browser.check" && call.result && call.result.ok));
+  assert.ok(run.verification.evidence.includes("browser.check"));
+  assert.ok(run.repairs.some((item) => item.reason === "verification_failed"));
+}
+
 async function testExternalToolsStayVisibleAndUntrusted() {
   const registry = new FakeRegistry();
   const externalTools = {
@@ -433,6 +462,7 @@ async function main() {
   await testVerificationRepair();
   await testNoOpAfterBrowserDoesNotInvalidateVerification();
   await testVerifierReplaysBrowserAfterLaterRealEdit();
+  await testRunWebsiteRequiresRealPreview();
   await testExternalToolsStayVisibleAndUntrusted();
   await testLiveFollowUp();
   console.log("ok pipeline v2 cursor-style loop");
