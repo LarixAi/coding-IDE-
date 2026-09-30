@@ -123,7 +123,7 @@ function patchBuiltFiles(root) {
     if (!source.includes("allowedPermissionsInWebview") && !source.includes("local-network-access")) continue;
 
     if (source.includes(MARKER)) permissionHandlerPatches += 1;
-    if (/allowRules[\\s\\S]{0,500}microphone/.test(source)) permissionPolicyPatches += 1;
+    if (/allowRules[\s\S]{0,500}microphone/.test(source)) permissionPolicyPatches += 1;
 
     const handler = patchPermissionHandlers(source);
     const policy = patchPermissionPolicy(handler.text);
