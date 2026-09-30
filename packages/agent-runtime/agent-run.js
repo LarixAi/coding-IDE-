@@ -1950,6 +1950,7 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
     : [];
   const allDefinitions = localDefinitions.concat(Array.isArray(capabilityTools) ? capabilityTools : []);
   const registeredToolNames = [...new Set(allDefinitions.map((tool) => tool && tool.name).filter(Boolean))];
+  const requestedDefinition = allDefinitions.find((tool) => tool && requestedCall && tool.name === requestedCall.name) || null;
   return resolveRuleDecision({
     call: requestedCall,
     facts: {
@@ -1961,6 +1962,7 @@ function resolveRequestedToolDecision(run, requestedCall, registry, capabilityTo
         ? capabilityAnswered(run, requestedCall.args.capability)
         : false,
       dependencyFreeStatic: isDependencyFreeStatic(run && run.projectDecision),
+      externalReadOnlyTool: Boolean(requestedDefinition && requestedDefinition.external === true),
       workspaceHasTests: workspaceHasTests(run),
       workspaceHasGit: workspaceHasGit(run),
       simpleLocalWorkspaceTask: isSimpleLocalWorkspaceTask(run),
@@ -2023,7 +2025,11 @@ function toolsForRun(run, localTools, capabilityTools) {
 
   let local = localTools.slice();
   if (run && (run.mode === "read_only" || isWorkspaceInventory(run.goal))) {
-    local = local.filter((tool) => READ_ONLY_COMPOSER_TOOLS.has(tool.name));
+    local = local.filter((tool) => READ_ONLY_COMPOSER_TOOLS.has(tool.name) || (
+      run.mode === "read_only"
+      && !isWorkspaceInventory(run.goal)
+      && tool.external === true
+    ));
   }
   if (run && run.noEdit) local = local.filter((tool) => !READ_ONLY_BLOCKED_TOOLS.has(tool.name));
   if (!workspaceHasTests(run)) local = local.filter((tool) => tool.name !== "tests.run");
