@@ -79,11 +79,6 @@
           "type": "boolean",
           "default": false,
           "description": "Allow CodeMe to send attached image bytes to image-capable n8n MCP tools. Images are never sent to n8n when this is off."
-        },
-        "codeme.n8n.allowActions": {
-          "type": "boolean",
-          "default": false,
-          "description": "Allow n8n MCP tools that may perform external actions such as sending, creating, updating, deleting, deploying, or triggering workflows."
         }
       }
     }

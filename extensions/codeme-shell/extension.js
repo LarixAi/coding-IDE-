@@ -12,16 +12,15 @@ const { ComposerSession, listOllamaModels } = require("./composer-session");
 const { ConversationStore } = require("./conversation-store");
 const { hasWorkspaceEditorInGroups } = require("./tab-policy");
 const { loadRuntimeEnv } = require("./runtime-config");
+const { N8nIntegration } = require("./n8n-integration");
 
 let N8nCapabilityProvider;
-let N8nMcpProvider;
 let OllamaModelProvider;
 try {
-  ({ N8nCapabilityProvider, N8nMcpProvider } = require("../../packages/n8n-capability"));
+  ({ N8nCapabilityProvider } = require("../../packages/n8n-capability"));
   ({ OllamaModelProvider } = require("../../packages/agent-runtime/model-provider"));
 } catch {
   N8nCapabilityProvider = null;
-  N8nMcpProvider = null;
   OllamaModelProvider = null;
 }
 
@@ -606,7 +605,8 @@ class ComposerViewProvider {
     this.state = state;
     this.view = undefined;
     this.capabilities = N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null;
-    this.externalTools = N8nMcpProvider ? new N8nMcpProvider() : null;
+    this.n8n = new N8nIntegration(context);
+    this.externalTools = this.n8n;
     this.syncExternalPermissions();
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
@@ -640,16 +640,18 @@ class ComposerViewProvider {
       ),
       capabilities: this.capabilities,
       externalTools: this.externalTools,
+      n8n: this.n8n,
       root: workspaceRoot(),
       onChange: (snapshot) => this.post(snapshot),
     });
   }
 
   syncExternalPermissions() {
-    if (!this.externalTools) return;
+    if (!this.n8n || typeof this.n8n.setRuntimePermissions !== "function") return;
     const config = vscode.workspace.getConfiguration("codeme.n8n");
-    this.externalTools.allowImageUpload = Boolean(config.get("allowImageUpload", false));
-    this.externalTools.allowActions = Boolean(config.get("allowActions", false));
+    this.n8n.setRuntimePermissions({
+      allowImageUpload: Boolean(config.get("allowImageUpload", false)),
+    });
   }
 
   async resolveWebviewView(webviewView) {
@@ -659,6 +661,7 @@ class ComposerViewProvider {
     webviewView.webview.html = renderComposer(nonce);
     webviewView.webview.onDidReceiveMessage((message) => this.onMessage(message));
     this.session.setRoot(workspaceRoot());
+    await this.n8n.refreshTokenFlag();
     await this.session.refreshModels();
   }
 

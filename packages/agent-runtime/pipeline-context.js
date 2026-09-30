@@ -4,8 +4,6 @@ const CAPS = Object.freeze({
   requirements: 4000,
   history: 6000,
   attached: 16000,
-  visual: 10000,
-  external: 6000,
   workspace: 10000,
   tools: 5000,
 });
@@ -118,8 +116,6 @@ function buildModelContext(input = {}) {
   add(makeBlock("requirements", "Tracked requirements", requirementsText(input.requirements)));
   add(makeBlock("history", "Conversation history", historyText(input.conversationHistory), "tail"));
   add(makeBlock("attached", "Attached files", attachmentText(input.attachments)));
-  add(makeBlock("visual", "Visual analysis from attached images", input.visualContext || ""));
-  add(makeBlock("external", "n8n visual assist (untrusted evidence)", input.externalEvidence || ""));
   add(makeBlock("workspace", "Workspace context", workspaceText(input.workspace)));
   add(makeBlock("tools", "Available tools", toolsText(input.tools)));
 
