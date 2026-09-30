@@ -15,6 +15,8 @@ fi
 
 export CODEME_SKIP_LIVE="${CODEME_SKIP_LIVE:-1}"
 
+"$node" "$root/scripts/check-pipeline-lock.js"
+
 "$node" "$root/scripts/test-microphone-patch.js"
 "$node" "$root/packages/agent-tools/test/contract.test.js"
 "$node" "$root/packages/agent-runtime/test/rule-decision.test.js"
