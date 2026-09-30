@@ -10,6 +10,11 @@ const {
   runtimeRoots,
   patchBuiltFiles,
 } = require("./patch-codeme-microphone");
+const {
+  restorePermissionHandlers,
+  restorePermissionPolicy,
+  restoreRuntime,
+} = require("./restore-codeme-webview");
 
 const permissionFixture = `
 const allowedPermissionsInWebview = new Set([
@@ -99,5 +104,21 @@ const secondRun = patchBuiltFiles(repeatRoot);
 assert.ok(secondRun.permissionHandlerPatches >= 1);
 assert.ok(secondRun.permissionPolicyPatches >= 1);
 assert.strictEqual(secondRun.changedFiles.length, 0);
+
+const restoredHandlers = restorePermissionHandlers(fs.readFileSync(path.join(repeatOut, "electron-main.js"), "utf8"));
+assert.strictEqual(restoredHandlers.changed, true);
+assert.ok(!restoredHandlers.text.includes(MARKER));
+
+const restoredPolicy = restorePermissionPolicy(fs.readFileSync(path.join(repeatOut, "webview.js"), "utf8"));
+assert.strictEqual(restoredPolicy.changed, true);
+assert.ok(!restoredPolicy.text.includes("microphone"));
+
+const restoredRuntime = restoreRuntime(repeatRoot);
+assert.ok(restoredRuntime.restoredFiles.length >= 2);
+assert.ok(!fs.readFileSync(path.join(repeatOut, "electron-main.js"), "utf8").includes(MARKER));
+assert.ok(!fs.readFileSync(path.join(repeatOut, "webview.js"), "utf8").includes("microphone"));
+
+const restoredAgain = restoreRuntime(repeatRoot);
+assert.strictEqual(restoredAgain.restoredFiles.length, 0);
 
 console.log("ok CodeMe microphone host patch");
