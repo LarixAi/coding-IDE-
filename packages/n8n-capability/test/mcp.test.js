@@ -1,6 +1,11 @@
 const assert = require("assert");
+const fs = require("fs");
 const http = require("http");
-const { CompositeToolProvider, ToolRegistry, ToolProvider } = require("../../agent-runtime/tool-registry");
+const os = require("os");
+const path = require("path");
+const { ModelProvider, RunStore, startAgentRun } = require("../../agent-runtime");
+const { CompositeToolProvider, ControlledToolProvider, ToolRegistry, ToolProvider } = require("../../agent-runtime/tool-registry");
+const { createWorkspaceHost } = require("../../coding-qualify/host");
 const {
   McpHttpClient,
   N8nMcpToolProvider,
@@ -130,6 +135,96 @@ async function main() {
       assert.strictEqual(sessions[0], "");
       assert.ok(sessions.slice(1).some((value) => value === "session-1"));
       assert.ok(auth.every((value) => value === "Bearer test-token"));
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  await test("n8n MCP result returns to the same agent loop as untrusted tool evidence", async () => {
+    const server = await listen(async (req, res) => {
+      const body = JSON.parse(await readText(req) || "{}");
+      res.setHeader("content-type", "application/json");
+      res.setHeader("mcp-session-id", "agent-session");
+      if (!Object.prototype.hasOwnProperty.call(body, "id")) {
+        res.statusCode = 202;
+        res.end("");
+        return;
+      }
+      let result = {};
+      if (body.method === "initialize") result = { protocolVersion: "2025-03-26" };
+      if (body.method === "tools/list") {
+        result = {
+          tools: [{
+            name: "docs search",
+            description: "Search docs",
+            inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+          }],
+        };
+      }
+      if (body.method === "tools/call") {
+        result = { content: [{ type: "text", text: "React boundary evidence from n8n" }], isError: false };
+      }
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
+    });
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-mcp-agent-"));
+    fs.writeFileSync(path.join(root, "README.md"), "fixture\n");
+    class ScriptedModel extends ModelProvider {
+      constructor() {
+        super("scripted");
+        this.turn = 0;
+        this.calls = [];
+      }
+      async complete(input) {
+        this.calls.push(input);
+        this.turn += 1;
+        if (this.turn === 1) {
+          assert.ok(input.tools.some((tool) => tool.name === "mcp_n8n_docs_search"));
+          return {
+            text: "",
+            toolCalls: [{ name: "mcp_n8n_docs_search", args: { query: "React error boundaries" } }],
+          };
+        }
+        const evidence = input.messages.find((message) => (
+          message.role === "tool"
+          && message.name === "mcp_n8n_docs_search"
+          && String(message.content || "").includes("React boundary evidence from n8n")
+        ));
+        assert.ok(evidence);
+        return { text: "Used the external documentation result.", toolCalls: [] };
+      }
+    }
+    try {
+      const mcp = new N8nMcpToolProvider({
+        url: `http://127.0.0.1:${server.address().port}/mcp-server/http`,
+        timeoutMs: 1500,
+      });
+      await mcp.discover();
+      const local = new ControlledToolProvider(createWorkspaceHost(root));
+      const registry = new ToolRegistry(new CompositeToolProvider([local, mcp]));
+      const model = new ScriptedModel();
+      const run = await startAgentRun({
+        goal: "Use the available external docs workflow to answer this technical question.",
+        model: "scripted",
+        providerName: "scripted",
+        provider: model,
+        registry,
+        store: new RunStore(path.join(root, "runs")),
+        mode: "controlled",
+        maxIterations: 5,
+        verify(runState, text) {
+          const observation = runState.observations.find((item) => item.type === "mcp");
+          if (observation && observation.trusted === false && String(text).includes("external documentation")) {
+            return { status: "passed", summary: "MCP evidence was consumed", evidence: ["mcp"] };
+          }
+          return { status: "failed", summary: "waiting for MCP evidence", evidence: [] };
+        },
+      }).done;
+      assert.strictEqual(run.lifecycle, "completed");
+      const observation = run.observations.find((item) => item.type === "mcp");
+      assert.ok(observation);
+      assert.strictEqual(observation.trusted, false);
+      assert.strictEqual(observation.ok, true);
+      assert.ok(run.toolCalls.some((call) => call.name === "mcp_n8n_docs_search"));
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
