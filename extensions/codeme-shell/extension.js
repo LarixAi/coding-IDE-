@@ -7,11 +7,12 @@ const { renderComposer } = require("./composer-view");
 const { renderWelcome, formatRelativeTime } = require("./welcome");
 const { renderEmptyEditor } = require("./empty-editor");
 const { host } = require("./code-oss-host");
-const { ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
+const { ReadOnlyToolProvider, ControlledToolProvider, CompositeToolProvider, ToolRegistry } = require("../../packages/agent-runtime/tool-registry");
 const { RunStore } = require("../../packages/agent-runtime/run-store");
 const { ComposerSession, listOllamaModels, modelLabel } = require("./composer-session");
 const { ConversationStore } = require("./conversation-store");
 const { hasWorkspaceEditorInGroups } = require("./tab-policy");
+const { N8nIntegration } = require("./n8n-integration");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -518,6 +519,7 @@ class ComposerViewProvider {
     this.context = context;
     this.state = state;
     this.view = undefined;
+    this.n8n = new N8nIntegration(context);
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
       historyStore: new ConversationStore(path.join(context.globalStorageUri.fsPath, "composer-history")),
@@ -555,10 +557,14 @@ class ComposerViewProvider {
         }
         throw Object.assign(new Error(`Provider ${selection.provider} is not connected`), { code: "unknown_provider" });
       },
-      createRegistry: (mode) => new ToolRegistry(
-        mode === "controlled" ? new ControlledToolProvider(host) : new ReadOnlyToolProvider(host),
-      ),
+      createRegistry: async (mode) => {
+        const local = mode === "controlled" ? new ControlledToolProvider(host) : new ReadOnlyToolProvider(host);
+        if (mode === "chat_only") return new ToolRegistry(local);
+        const mcp = await this.n8n.buildProvider({ timeoutMs: 5000 });
+        return new ToolRegistry(mcp ? new CompositeToolProvider([local, mcp]) : local);
+      },
       capabilities: N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null,
+      n8n: this.n8n,
       root: workspaceRoot(),
       onChange: (snapshot) => this.post(snapshot),
     });
@@ -571,7 +577,9 @@ class ComposerViewProvider {
     webviewView.webview.html = renderComposer(nonce);
     webviewView.webview.onDidReceiveMessage((message) => this.onMessage(message));
     this.session.setRoot(workspaceRoot());
+    await this.n8n.refreshTokenFlag();
     await this.session.refreshModels();
+    this.n8n.buildProvider({ timeoutMs: 5000 }).then(() => this.session.emit()).catch(() => this.session.emit());
   }
 
   sync() {
@@ -656,6 +664,39 @@ class ComposerViewProvider {
         if (file && file.contents) this.session.attach(file);
         else this.session.attach(fileFromUri(file.path || file));
       }
+      return;
+    }
+    if (message.type === "n8n-config") {
+      const result = await this.session.configureN8n(message.patch || {});
+      this.view.webview.postMessage({
+        type: "n8n-config-result",
+        ok: Boolean(result && result.ok),
+        message: result && result.message ? result.message : "",
+      });
+      return;
+    }
+    if (message.type === "n8n-test") {
+      this.view.webview.postMessage({ type: "n8n-test-result", checking: true });
+      const result = await this.session.testN8n();
+      this.view.webview.postMessage({
+        type: "n8n-test-result",
+        checking: false,
+        ok: Boolean(result && result.ok),
+        count: result && result.ok ? result.count : 0,
+        names: result && result.ok ? result.names : [],
+        message: result && result.message ? result.message : "",
+      });
+      return;
+    }
+    if (message.type === "enhance-prompt") {
+      const result = await this.session.enhanceDraft(message.text || "");
+      this.view.webview.postMessage({
+        type: "enhanced-prompt",
+        ok: Boolean(result && result.ok),
+        prompt: result && result.ok ? result.prompt : "",
+        source: result && result.ok ? result.source : "",
+        message: result && result.message ? result.message : "",
+      });
       return;
     }
     if (message.type === "pick") await this.pickFiles();
