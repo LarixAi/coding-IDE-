@@ -49,6 +49,12 @@ const STRATEGIES = {
     taskClass: "layout",
     guidance: "Inspect the current HTML and CSS once. Apply the layout with file.patch for precise edits or file.write for full replacements. Then call browser.check. Do not search the same query again.",
   },
+  run: {
+    id: "run",
+    version: 1,
+    taskClass: "run",
+    guidance: "Run the existing project rather than creating or redesigning it. Inspect the current workspace and start configuration, check the owned process, start it only when needed, then verify the real preview. Do not edit files unless startup or verification produces concrete failure evidence that requires a repair.",
+  },
   folder: {
     id: "folder",
     version: 1,
@@ -87,6 +93,7 @@ function classifyTask(goal, options = {}) {
     || (/\b(edit|change|update|rewrite|improve)\b/.test(text) && /\b(html|css|page|site|website|layout)\b/.test(text))) {
     return options.mode === "read_only" ? "inspect" : "layout";
   }
+  if (isRunGoal(goal)) return options.mode === "read_only" ? "inspect" : "run";
   if (isBuildGoal(goal)) return options.mode === "read_only" ? "inspect" : "build";
   if (/\b(fix|repair|bug|failing|broken|does not|regression)\b/.test(text)) return "bug-fix";
   if (options.mode === "read_only") return "inspect";
@@ -132,11 +139,19 @@ function isWorkspaceInventory(goal) {
     && /\b(files?|folders?|directory|workspace)\b/.test(text);
 }
 
+function isRunGoal(goal) {
+  const text = stripNegatedEditing(goal).toLowerCase();
+  if (/\b(create|make|build|scaffold|set up|setup|write|add)\b/.test(text)) return false;
+  const action = /\b(run|start|launch|serve|open)\b/.test(text);
+  const target = /\b(existing|current|website|site|web app|app|application|project|server|preview|it|this|that)\b/.test(text);
+  return action && target;
+}
+
 function isBuildGoal(goal) {
   const text = String(goal || "").toLowerCase();
   if (folderNameFromGoal(goal)) return false;
   if (/\b(fix|repair|bug|failing|broken|regression)\b/.test(text)) return false;
-  return /\b(create|make|build|scaffold|set up|setup|continue|run|start|write|add)\b/.test(text)
+  return /\b(create|make|build|scaffold|set up|setup|write|add)\b/.test(text)
     && /\b(website|site|app|application|project|page|server|files?)\b/.test(text);
 }
 
@@ -154,4 +169,4 @@ function strategyGuidance(strategy) {
   return (strategy && strategy.guidance) || STRATEGIES.general.guidance;
 }
 
-module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isReadAllFilesGoal, isLocalFollowUp, isBuildGoal, isWebsiteBuild, isNewWebsite };
+module.exports = { STRATEGIES, classifyTask, selectStrategy, strategyGuidance, folderNameFromGoal, isWorkspaceInventory, isReadAllFilesGoal, isLocalFollowUp, isRunGoal, isBuildGoal, isWebsiteBuild, isNewWebsite };
