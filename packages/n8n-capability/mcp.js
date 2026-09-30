@@ -142,6 +142,7 @@ class McpHttpClient {
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
+        "mcp-protocol-version": "2025-03-26",
         ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
         ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}),
       },
