@@ -933,7 +933,7 @@ function renderComposer(nonce) {
 
     function renderMarkdownText(container, value) {
       container.innerHTML = "";
-      const lines = String(value || "").replace(/\r\n/g, "\n").split("\n");
+      const lines = String(value || "").replace(/\\r\\n/g, "\\n").split("\\n");
       const codeFence = String.fromCharCode(96, 96, 96);
       let list = null;
       let listKind = "";
@@ -943,7 +943,7 @@ function renderComposer(nonce) {
       const flushCode = () => {
         if (!pre) return;
         const code = document.createElement("code");
-        code.textContent = codeLines.join("\n");
+        code.textContent = codeLines.join("\\n");
         pre.appendChild(code);
         container.appendChild(pre);
         pre = null;
@@ -960,7 +960,7 @@ function renderComposer(nonce) {
         if (pre) { codeLines.push(line); continue; }
         if (!line.trim()) { closeList(); continue; }
 
-        const heading = line.match(/^(#{1,4})\s+(.+)$/);
+        const heading = line.match(/^(#{1,4})\\s+(.+)$/);
         if (heading) {
           closeList();
           const level = Math.min(4, Math.max(2, heading[1].length + 1));
@@ -970,8 +970,8 @@ function renderComposer(nonce) {
           continue;
         }
 
-        const bullet = line.match(/^\s*[-*]\s+(.+)$/);
-        const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+        const bullet = line.match(/^\\s*[-*]\\s+(.+)$/);
+        const numbered = line.match(/^\\s*\\d+[.)]\\s+(.+)$/);
         if (bullet || numbered) {
           const kind = bullet ? "ul" : "ol";
           if (!list || listKind !== kind) {
