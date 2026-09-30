@@ -103,7 +103,18 @@ function renderComposer(nonce) {
     .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .chip button { border: 0; background: transparent; color: #687382; cursor: pointer; padding: 0; }
 
-    .composer { display: flex; flex-direction: column; min-width: 0; border: 1px solid #343a44; border-radius: 8px; background: #20242a; padding: 2px 4px 4px; box-shadow: 0 1px 0 #0004; }
+    .composer { position: relative; display: flex; flex-direction: column; min-width: 0; border: 1px solid #343a44; border-radius: 8px; background: #20242a; padding: 2px 4px 4px; box-shadow: 0 1px 0 #0004; }
+    .hub-panel { display: none; position: absolute; z-index: 30; left: 4px; right: 4px; bottom: 34px; max-height: 260px; overflow: auto; border: 1px solid #39414b; border-radius: 7px; background: #171a1f; box-shadow: 0 12px 28px #0009; }
+    .hub-panel.on { display: block; }
+    .hub-head { display: flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 8px; border-bottom: 1px solid #292e36; color: #c8ced8; font-size: 10px; }
+    .hub-state { margin-left: auto; color: #74808e; }
+    .hub-flags { padding: 6px 8px 2px; color: #788492; font-size: 9px; line-height: 1.45; }
+    .hub-tools { padding: 4px; }
+    .hub-tool { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; padding: 5px 6px; border-radius: 4px; }
+    .hub-tool:hover { background: #22272e; }
+    .hub-tool-name { overflow: hidden; color: #b7c0cb; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .hub-tool-meta { color: #6f7a88; font-size: 9px; white-space: nowrap; }
+    #hub-tools-button.on { color: #7fc9dd; }
     .shell.over .composer { outline: 1px solid #7fc9dd88; outline-offset: 2px; background: #7fc9dd0d; }
     textarea { width: 100%; min-height: 45px; max-height: 160px; box-sizing: border-box; border: 0; resize: none; background: transparent; color: #e0e4ea; font: inherit; font-size: 12px; line-height: 1.4; padding: 7px 5px 3px; outline: none; }
     textarea::placeholder { color: #697482; }
@@ -161,10 +172,19 @@ function renderComposer(nonce) {
       <p class="notice" id="notice"></p>
       <div class="chips" id="chips"></div>
       <div class="composer" id="drop">
+        <div class="hub-panel" id="hub-panel">
+          <div class="hub-head">
+            <strong>n8n MCP tools</strong>
+            <span class="hub-state" id="hub-state">checking…</span>
+          </div>
+          <div class="hub-flags" id="hub-flags"></div>
+          <div class="hub-tools" id="hub-tool-list"></div>
+        </div>
         <textarea id="prompt" placeholder="Ask CodeMe anything, @ files or type /" rows="2"></textarea>
         <div class="bar">
           <button type="button" id="attach" title="Add context">＋ Context</button>
           <button type="button" id="mic" title="Voice to text" aria-pressed="false">Mic</button>
+          <button type="button" id="hub-tools-button" title="n8n MCP tools" aria-expanded="false">n8n</button>
           <select id="mode" aria-label="Mode">
             <option value="chat">Chat</option>
             <option value="ask">Ask</option>
@@ -207,6 +227,11 @@ function renderComposer(nonce) {
     const empty = document.getElementById("empty");
     const drop = document.getElementById("drop");
     const mic = document.getElementById("mic");
+    const hubToolsButton = document.getElementById("hub-tools-button");
+    const hubPanel = document.getElementById("hub-panel");
+    const hubState = document.getElementById("hub-state");
+    const hubFlags = document.getElementById("hub-flags");
+    const hubToolList = document.getElementById("hub-tool-list");
     const thread = document.getElementById("thread");
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
     let rec = null;
@@ -275,6 +300,12 @@ function renderComposer(nonce) {
     send.addEventListener("click", sendPrompt);
     stop.addEventListener("click", () => vscode.postMessage({ type: "cancel", requestId }));
     document.getElementById("attach").addEventListener("click", () => vscode.postMessage({ type: "pick" }));
+    hubToolsButton.addEventListener("click", () => {
+      const open = !hubPanel.classList.contains("on");
+      hubPanel.classList.toggle("on", open);
+      hubToolsButton.classList.toggle("on", open);
+      hubToolsButton.setAttribute("aria-expanded", open ? "true" : "false");
+    });
     newChat.addEventListener("click", () => {
       historyPanel.classList.remove("on");
       vscode.postMessage({ type: "new-chat" });
@@ -486,6 +517,7 @@ function renderComposer(nonce) {
         if (!source.available) return source.label + ": unavailable";
         return source.label + ": " + source.count + " model" + (source.count === 1 ? "" : "s");
       }).join(" · ");
+      renderHub(state.hub || null);
       chips.innerHTML = "";
       for (const item of state.attachments || []) {
         const chip = document.createElement("span");
@@ -519,6 +551,46 @@ function renderComposer(nonce) {
       empty.hidden = Boolean(messages.childElementCount || running);
       thread.scrollTop = thread.scrollHeight;
     }
+    function renderHub(hub) {
+      const connected = Boolean(hub && hub.connected);
+      const toolItems = hub && Array.isArray(hub.tools) ? hub.tools : [];
+      hubState.textContent = connected
+        ? toolItems.length + " tool" + (toolItems.length === 1 ? "" : "s")
+        : "offline";
+      hubToolsButton.title = connected
+        ? "n8n MCP connected · " + toolItems.length + " tool" + (toolItems.length === 1 ? "" : "s")
+        : "n8n MCP offline";
+      hubFlags.textContent = connected
+        ? "Raw image upload: " + (hub.imageUploadAllowed ? "allowed" : "blocked")
+          + " · External actions: " + (hub.actionsAllowed ? "allowed" : "blocked")
+        : "Connect n8n MCP to discover tools.";
+      hubToolList.innerHTML = "";
+      if (!toolItems.length) {
+        const emptyHub = document.createElement("div");
+        emptyHub.className = "history-empty";
+        emptyHub.textContent = connected ? "No MCP tools published." : "n8n MCP is not connected.";
+        hubToolList.appendChild(emptyHub);
+        return;
+      }
+      for (const item of toolItems) {
+        const row = document.createElement("div");
+        row.className = "hub-tool";
+        const name = document.createElement("span");
+        name.className = "hub-tool-name";
+        name.textContent = item.externalName || item.name || "n8n tool";
+        const meta = document.createElement("span");
+        meta.className = "hub-tool-meta";
+        const labels = [item.category || "general"];
+        if (item.acceptsImage) labels.push("image");
+        if (item.sideEffect) labels.push("action");
+        else labels.push("read");
+        meta.textContent = labels.join(" · ");
+        row.appendChild(name);
+        row.appendChild(meta);
+        hubToolList.appendChild(row);
+      }
+    }
+
     function renderProjectDecision(decision) {
       projectDecision.innerHTML = "";
       projectDecision.classList.toggle("on", Boolean(decision));
