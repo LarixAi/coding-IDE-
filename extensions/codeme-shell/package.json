@@ -7,8 +7,13 @@
   "engines": {
     "vscode": "^1.139.0"
   },
-  "categories": ["Other", "Themes"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other",
+    "Themes"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
   "contributes": {
     "themes": [
@@ -66,6 +71,21 @@
       "workbench.secondarySideBar.defaultVisibility": "visible",
       "workbench.tips.enabled": false,
       "workbench.editor.empty.hint": "hidden"
+    },
+    "configuration": {
+      "title": "CodeMe",
+      "properties": {
+        "codeme.n8n.allowImageUpload": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow CodeMe to send attached image bytes to image-capable n8n MCP tools. Images are never sent to n8n when this is off."
+        },
+        "codeme.n8n.allowActions": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow n8n MCP tools that may perform external actions such as sending, creating, updating, deleting, deploying, or triggering workflows."
+        }
+      }
     }
   }
 }
