@@ -140,7 +140,9 @@ function createBrowserInteractionRunner(options = {}) {
           "--disable-sync",
           "--disable-extensions",
           "--disable-features=Translate",
-          checked.url,
+          // Start on a neutral page. Navigating here and again through CDP can
+          // make newer Chromium report the replaced first request as ERR_ABORTED.
+          "about:blank",
         ], {
           stdio: "ignore",
           detached: false,
