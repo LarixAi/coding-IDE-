@@ -32,6 +32,12 @@ export VSCODE_SKIP_PRELAUNCH=1
 # The Code - OSS pin keeps the upstream product name. Swap the dock icon
 # in the built app so Finder and the Dock show the CodeMe mark.
 app_bundle="$root/code-oss/.build/electron/Code - OSS.app"
+
+# CodeMe voice runs inside an extension webview. The pinned Code - OSS build
+# denies media to webviews by default and its unsigned dev app may lack the
+# microphone usage string that macOS needs before it can prompt the user.
+"$node_bin/node" "$root/scripts/patch-codeme-microphone.js" "$root"
+
 icon_src="$root/branding/macos/CodeMe.icns"
 icon_dest="$app_bundle/Contents/Resources/Code - OSS.icns"
 if [ -f "$icon_src" ] && [ -f "$icon_dest" ] && ! cmp -s "$icon_src" "$icon_dest"; then
