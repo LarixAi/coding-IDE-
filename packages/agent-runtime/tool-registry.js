@@ -26,7 +26,7 @@ const DEFINITIONS = {
     parameters: { type: "object", properties: {}, required: [] },
   },
   "browser.check": {
-    description: "Verify an already-running local page with HTTP readiness plus a real Chromium observation. This tool never starts, restarts, or kills the application process. Optionally provide selector/expectedText to assert rendered text.",
+    description: "Verify the current CodeMe-owned preview with HTTP readiness plus a real Chromium observation. Call process.start first. URL is optional; when an owned preview is running CodeMe uses its canonical URL instead of trusting an invented port. Optionally provide selector/expectedText to assert rendered text.",
     parameters: {
       type: "object",
       properties: {
@@ -34,11 +34,11 @@ const DEFINITIONS = {
         selector: { type: "string" },
         expectedText: { type: "string" },
       },
-      required: ["url"],
+      required: [],
     },
   },
   "browser.interact": {
-    description: "Drive a real installed Chromium browser against the local preview. Supports click, fill, assertText, and sequence. Use sequence for a form journey so field values, submit click, navigation, and confirmation assertion happen in one browser session. The tool fails on unmet expectations or browser runtime/console errors.",
+    description: "Drive a real installed Chromium browser against the current CodeMe-owned preview. Call process.start first. URL is optional; CodeMe prefers the owned preview URL over model-invented ports. Supports click, fill, assertText, and sequence. Use sequence for a form journey so field values, submit click, navigation, and confirmation assertion happen in one browser session. The tool fails on unmet expectations or browser runtime/console errors.",
     parameters: {
       type: "object",
       properties: {
@@ -65,7 +65,7 @@ const DEFINITIONS = {
           },
         },
       },
-      required: ["url", "action"],
+      required: ["action"],
     },
   },
   "dir.create": {
@@ -97,7 +97,7 @@ const DEFINITIONS = {
     },
   },
   "terminal.run": {
-    description: "Run one short Node command or npm test and wait for it to finish. Never use this to start a website/dev server or append &: use browser.check for web previews.",
+    description: "Run one short Node command or npm test and wait for it to finish. Never use this to start a website/dev server or append &: use process.start for the owned preview process, process.logs for its output, and browser.check/browser.interact to verify it.",
     parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
   },
   "sandbox.run": {
@@ -172,48 +172,6 @@ class ControlledToolProvider extends ToolProvider {
   }
 }
 
-
-class CompositeToolProvider extends ToolProvider {
-  constructor(providers) {
-    super();
-    this.providers = (providers || []).filter((provider) => provider && typeof provider.call === "function");
-    this.route = new Map();
-    this.cachedDefinitions = null;
-  }
-
-  definitions() {
-    if (this.cachedDefinitions) return this.cachedDefinitions.map((item) => ({ ...item }));
-    const definitions = [];
-    const seen = new Set();
-    this.route.clear();
-    for (const provider of this.providers) {
-      const listed = typeof provider.definitions === "function" ? provider.definitions() : [];
-      for (const definition of listed || []) {
-        if (!definition || typeof definition.name !== "string" || !definition.name) continue;
-        if (seen.has(definition.name)) continue;
-        seen.add(definition.name);
-        this.route.set(definition.name, provider);
-        definitions.push({ ...definition });
-      }
-    }
-    this.cachedDefinitions = definitions;
-    return definitions.map((item) => ({ ...item }));
-  }
-
-  async call(name, args) {
-    if (!this.cachedDefinitions) this.definitions();
-    const provider = this.route.get(name);
-    if (!provider) {
-      return {
-        ok: false,
-        tool: name,
-        error: { code: "unknown_tool", message: `Tool ${name} is not registered` },
-      };
-    }
-    return provider.call(name, args || {});
-  }
-}
-
 function availableTools(names, host) {
   return names.filter((name) => {
     if (name === "workspace.inspect") return Boolean(host && typeof host.inspectWorkspace === "function");
@@ -245,4 +203,4 @@ class ToolRegistry {
   }
 }
 
-module.exports = { ToolProvider, ReadOnlyToolProvider, ControlledToolProvider, CompositeToolProvider, ToolRegistry };
+module.exports = { ToolProvider, ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry };
