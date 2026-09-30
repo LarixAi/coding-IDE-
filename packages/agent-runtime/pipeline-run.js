@@ -502,6 +502,65 @@ async function executePipelineRun(run, options, followUpQueue) {
   }
   const externalToolNames = new Set(externalDefinitions.map((tool) => tool && tool.name).filter(Boolean));
 
+  if (
+    imageAttachments.length
+    && run.mode !== "chat_only"
+    && options.externalTools
+    && typeof options.externalTools.assistImages === "function"
+  ) {
+    touch(run, "analyzing_image", { kind: "n8n-vision", imageCount: imageAttachments.length });
+    store.save(run);
+    let n8nVision;
+    try {
+      n8nVision = await options.externalTools.assistImages({
+        attachments: imageAttachments,
+        readAttachment: options.readAttachment,
+        goal: run.goal,
+        signal,
+      });
+    } catch (error) {
+      n8nVision = {
+        ok: false,
+        skipped: false,
+        reason: "n8n_image_assist_failed",
+        notice: error instanceof Error ? error.message : String(error),
+      };
+    }
+    run.n8nVision = {
+      status: n8nVision && n8nVision.ok ? "ok" : (n8nVision && n8nVision.skipped ? "skipped" : "unavailable"),
+      tool: n8nVision && n8nVision.externalName || "",
+      imageCount: n8nVision && n8nVision.imageCount || imageAttachments.length,
+      reason: n8nVision && n8nVision.reason || "",
+      notice: n8nVision && n8nVision.notice || "",
+    };
+    if (n8nVision && n8nVision.ok) {
+      const safeCall = {
+        id: "call_" + crypto.randomBytes(4).toString("hex"),
+        name: n8nVision.tool || "n8n.image.assist",
+        args: {
+          imageCount: n8nVision.imageCount || imageAttachments.length,
+          externalName: n8nVision.externalName || "",
+        },
+      };
+      recordTool(run, safeCall, n8nVision, "vision-assist");
+      externalEvidence = [
+        externalEvidence,
+        externalEvidenceText(n8nVision),
+      ].filter(Boolean).join("\n\n");
+    } else if (n8nVision && !n8nVision.skipped && Array.isArray(run.observations)) {
+      run.observations.push({
+        type: "capability",
+        tool: "n8n.image.assist",
+        ok: false,
+        trusted: false,
+        summary: n8nVision.notice || n8nVision.reason || "n8n image assistance unavailable",
+        directedBy: "vision-assist",
+      });
+    }
+    touch(run, "running");
+    store.save(run);
+  }
+
   const baseDefinitions = run.mode === "chat_only"
     ? []
     : registry.definitions().filter((tool) => run.mode !== "read_only" || !READ_ONLY_BLOCKED.has(tool.name));
