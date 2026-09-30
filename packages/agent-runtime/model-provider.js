@@ -89,6 +89,48 @@ class OllamaModelProvider extends ModelProvider {
       throw Object.assign(new Error(message), { code: "model_disconnected" });
     }
   }
+
+  async completeVision(input) {
+    const timeoutMs = input.timeoutMs || Math.max(this.timeoutMs, 240000);
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signals = [timeoutSignal];
+    if (input.signal) signals.push(input.signal);
+    const signal = AbortSignal.any(signals);
+    try {
+      const body = {
+        model: input.model,
+        stream: false,
+        think: false,
+        messages: [{
+          role: "user",
+          content: String(input.prompt || ""),
+          images: (input.images || []).map((image) => String(image || "")).filter(Boolean),
+        }],
+        options: { temperature: 0.1 },
+      };
+      if (input.schema) body.format = input.schema;
+      const response = await postJson(this.baseUrl, "/api/chat", body, signal);
+      const promptTokens = typeof response.prompt_eval_count === "number" ? response.prompt_eval_count : 0;
+      const completionTokens = typeof response.eval_count === "number" ? response.eval_count : 0;
+      return {
+        text: stripThinking(response.message && response.message.content || ""),
+        usage: {
+          promptTokens,
+          completionTokens,
+          total: promptTokens + completionTokens,
+        },
+      };
+    } catch (error) {
+      if (input.signal && input.signal.aborted) {
+        throw Object.assign(new Error("vision model call cancelled"), { code: "cancelled" });
+      }
+      if (timeoutSignal.aborted) {
+        throw Object.assign(new Error("vision model request timed out"), { code: "timeout" });
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw Object.assign(new Error(message), { code: "vision_model_disconnected" });
+    }
+  }
 }
 
 function chatBody(input) {
