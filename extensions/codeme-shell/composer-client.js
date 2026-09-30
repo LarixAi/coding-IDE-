@@ -73,7 +73,7 @@ function stageForTool(name) {
   if (name === "workspace.inspect" || name === "dir.list" || name === "file.read") return "Reading";
   if (name === "file.write" || name === "file.patch" || name === "dir.create") return "Editing";
   if (name === "tests.run" || name === "terminal.run" || name === "process.start" || name === "process.status" || name === "process.logs") return "Testing";
-  if (name === "capability.invoke" || name === "capability.list") return "Researching";
+  if (name === "capability.invoke" || name === "capability.list" || /^mcp_n8n_/.test(String(name || ""))) return "Researching";
   if (name === "browser.check" || name === "browser.interact") return "Testing";
   if (name === "diagnostics.run" || name === "git.diff" || name === "git.status") return "Verifying";
   return "Reading";
@@ -122,7 +122,11 @@ function composerActivity(run) {
     if (tool === "terminal.run") return "Running command…";
     return "Running tests";
   }
-  if (stage === "Researching") return "Researching documentation";
+  if (stage === "Researching") {
+    const tool = run && run.inFlight && run.inFlight.name;
+    if (/^mcp_n8n_/.test(String(tool || ""))) return "Running n8n workflow…";
+    return "Researching documentation";
+  }
   if (stage === "Fixing") return "Fixing test failure";
   if (stage === "Verifying") return "Verifying";
   if (stage === "Complete") return "Complete";
