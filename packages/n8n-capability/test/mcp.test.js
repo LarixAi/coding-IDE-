@@ -54,20 +54,31 @@ async function main() {
     }
 
     if (body.method === "tools/list") {
+      const tools = [{
+        name: "research.problem",
+        description: "Research a current problem",
+        inputSchema: {
+          type: "object",
+          properties: { problem: { type: "string" } },
+          required: ["problem"],
+        },
+      }];
+      for (let index = 1; index < 39; index += 1) {
+        tools.push({
+          name: "workflow." + index,
+          description: "Large n8n workflow description " + index + " " + "x".repeat(2200),
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "q".repeat(120) },
+            },
+          },
+        });
+      }
       res.end(JSON.stringify({
         jsonrpc: "2.0",
         id: body.id,
-        result: {
-          tools: [{
-            name: "research.problem",
-            description: "Research a current problem",
-            inputSchema: {
-              type: "object",
-              properties: { problem: { type: "string" } },
-              required: ["problem"],
-            },
-          }],
-        },
+        result: { tools },
       }));
       return;
     }
@@ -95,13 +106,14 @@ async function main() {
     const provider = new N8nMcpProvider({ url, token: "test-token", timeoutMs: 1500 });
     const status = await provider.connectionStatus();
     assert.strictEqual(status.connected, true);
-    assert.strictEqual(status.toolCount, 1);
+    assert.strictEqual(status.toolCount, 39);
     assert.strictEqual(status.tools[0], "mcp_n8n_research_problem");
 
     const definitions = await provider.listTools();
-    assert.strictEqual(definitions.length, 1);
+    assert.strictEqual(definitions.length, 39);
     assert.strictEqual(definitions[0].name, "mcp_n8n_research_problem");
     assert.deepStrictEqual(definitions[0].parameters.required, ["problem"]);
+    assert.ok(definitions[1].description.length < 600);
 
     const result = await provider.call(
       "mcp_n8n_research_problem",
