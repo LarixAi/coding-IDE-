@@ -1,0 +1,16 @@
+---
+description: Keep the qualified CodeMe Pipeline v2 unchanged unless the owner explicitly approves a pipeline change
+alwaysApply: true
+---
+
+# Pipeline v2 is locked
+
+The canonical Pipeline v2 is protected by `.codeme/pipeline-lock.json`.
+
+- Do not modify any protected pipeline file unless the repository owner explicitly authorizes a pipeline change in the current conversation/task.
+- Do not update lock hashes just to make CI green.
+- If an add-on appears to require a protected-file change, stop and ask for permission first.
+- Prefer extension points: external MCP tools, capabilities, providers, UI modules, adapters, and new packages.
+- After an explicitly approved pipeline change, run the full qualification suite and deliberately refresh the lock baseline.
+
+The frozen restore point is branch `pipeline-v2-locked-baseline`.

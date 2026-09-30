@@ -1,0 +1,22 @@
+# Canonical CodeMe Pipeline v2
+# Enable "Require review from Code Owners" on main branch protection for hard GitHub enforcement.
+.codeme/pipeline-lock.json @LarixAi
+.codeme/rules.md @LarixAi
+scripts/check-pipeline-lock.js @LarixAi
+.cursor/rules/pipeline-lock.mdc @LarixAi
+
+packages/agent-runtime/pipeline-run.js @LarixAi
+packages/agent-runtime/pipeline-loop.js @LarixAi
+packages/agent-runtime/pipeline-context.js @LarixAi
+packages/agent-runtime/pipeline-instructions.js @LarixAi
+packages/agent-runtime/agent-run.js @LarixAi
+packages/agent-runtime/model-provider.js @LarixAi
+packages/agent-runtime/tool-registry.js @LarixAi
+packages/agent-runtime/capability.js @LarixAi
+packages/agent-runtime/requirements.js @LarixAi
+packages/agent-runtime/strategy.js @LarixAi
+packages/agent-runtime/intent.js @LarixAi
+packages/agent-runtime/project-decision.js @LarixAi
+extensions/codeme-shell/composer-session.js @LarixAi
+packages/agent-runtime/test/pipeline-v2.test.js @LarixAi
+extensions/codeme-shell/test/composer-pipeline-v2.test.js @LarixAi
