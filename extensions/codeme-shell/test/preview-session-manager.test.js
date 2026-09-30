@@ -5,7 +5,7 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 const { createPreviewSessionManager } = require("../preview-session-manager");
-const { createPreviewRunner } = require("../preview-runner");
+const { createPreviewRunner, resolveOwnedPreviewUrl } = require("../preview-runner");
 
 async function freePort() {
   const server = net.createServer();
@@ -98,6 +98,30 @@ async function main() {
   assert.strictEqual(staticPreview.available, true);
   assert.strictEqual(staticFake.terminalStarts, 0, "browser verification must not create a process terminal");
   await staticSessions.stop(staticRoot);
+
+  // A common plain-site layout keeps the entrypoint under public/. The owned
+  // preview must publish that canonical page instead of returning a 404 at /.
+  const publicRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-session-public-"));
+  fs.mkdirSync(path.join(publicRoot, "public"), { recursive: true });
+  fs.writeFileSync(path.join(publicRoot, "public", "index.html"), "<title>Public</title><h1>CodeMe Final Test</h1>");
+  fs.writeFileSync(path.join(publicRoot, "public", "style.css"), "body { font-family: sans-serif; }");
+  const publicPort = await freePort();
+  fs.writeFileSync(path.join(publicRoot, "README.md"), `Preview: http://127.0.0.1:${publicPort}\n`);
+  const publicFake = createFakeVscode(publicPort, { value: 200 });
+  const publicSessions = createPreviewSessionManager(publicFake.vscode);
+  const publicStart = await publicSessions.start(publicRoot, "");
+  assert.strictEqual(publicStart.kind, "static");
+  assert.ok(publicStart.url.endsWith("/public/"), publicStart.url);
+  assert.strictEqual(publicSessions.status(publicRoot).url, publicStart.url);
+  assert.strictEqual(
+    resolveOwnedPreviewUrl(publicSessions.status(publicRoot), "http://127.0.0.1:8080/"),
+    publicStart.url,
+    "model-invented localhost ports must resolve to the owned preview URL",
+  );
+  const publicPreview = await createPreviewRunner(publicFake.vscode).check(publicRoot, publicStart.url);
+  assert.strictEqual(publicPreview.available, true, JSON.stringify(publicPreview));
+  assert.strictEqual(publicPreview.statusCode, 200);
+  await publicSessions.stop(publicRoot);
 
   // Dynamic server: one owned session, 500 does not trigger a second start, and
   // restart keeps the same session identity after the repair.
