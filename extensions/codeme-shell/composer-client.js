@@ -60,6 +60,7 @@ function composerStage(run) {
   if (run.lifecycle === "cancelled") return "Cancelled";
   if (run.lifecycle === "awaiting_user") return "Waiting";
   if (run.lifecycle === "verifying") return "Verifying";
+  if (run.lifecycle === "analyzing_image") return "Reading";
   if (run.repairs && run.repairs.length && run.lifecycle !== "completed") return "Fixing";
   if (run.lifecycle === "executing_tool") return stageForTool(run.inFlight && run.inFlight.name);
   if (run.strategy === "researching" || (run.progress && run.progress.strategy === "researching")) return "Researching";
@@ -102,6 +103,10 @@ function composerActivity(run) {
   if (stage === "Planning") return "Planning…";
   if (stage === "Searching") return target ? `Searching ${target}` : "Searching…";
   if (stage === "Reading") {
+    if (run && run.inFlight && run.inFlight.kind === "vision") {
+      const count = Number(run.inFlight.imageCount || 1);
+      return "Analyzing " + count + " attached image" + (count === 1 ? "" : "s") + "…";
+    }
     const tool = run && run.inFlight && run.inFlight.name;
     if (tool === "workspace.inspect") return "Inspecting workspace…";
     if (tool === "dir.list") return target ? `Listing ${target}` : "Listing workspace…";
