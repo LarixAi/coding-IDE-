@@ -73,7 +73,7 @@ function stageForTool(name) {
   if (name === "workspace.inspect" || name === "dir.list" || name === "file.read") return "Reading";
   if (name === "file.write" || name === "file.patch" || name === "dir.create") return "Editing";
   if (name === "tests.run" || name === "terminal.run" || name === "process.start" || name === "process.status" || name === "process.logs") return "Testing";
-  if (name === "capability.invoke" || name === "capability.list" || /^mcp_n8n_/.test(String(name || ""))) return "Researching";
+  if (name === "capability.invoke" || name === "capability.list") return "Researching";
   if (name === "browser.check" || name === "browser.interact") return "Testing";
   if (name === "diagnostics.run" || name === "git.diff" || name === "git.status") return "Verifying";
   return "Reading";
@@ -122,11 +122,7 @@ function composerActivity(run) {
     if (tool === "terminal.run") return "Running command…";
     return "Running tests";
   }
-  if (stage === "Researching") {
-    const tool = run && run.inFlight && run.inFlight.name;
-    if (/^mcp_n8n_/.test(String(tool || ""))) return "Running n8n workflow…";
-    return "Researching documentation";
-  }
+  if (stage === "Researching") return "Researching documentation";
   if (stage === "Fixing") return "Fixing test failure";
   if (stage === "Verifying") return "Verifying";
   if (stage === "Complete") return "Complete";
@@ -140,9 +136,92 @@ function compactTools(run) {
   const items = calls.map((call, index) => compactTool(run, call, index, "done"));
   const active = run && run.inFlight && run.inFlight.kind === "tool" ? run.inFlight : null;
   if (active && active.name) {
-    items.push(compactTool(run, { name: active.name, args: active.args || {}, result: null }, calls.length, "running"));
+    items.push(compactTool(run, {
+      name: active.name,
+      args: active.args || {},
+      result: null,
+      iteration: run && run.iteration,
+      directedBy: active.directedBy || "model",
+    }, calls.length, "running"));
   }
   return items.slice(-40);
+}
+
+function isToolProtocolJsonLine(value) {
+  const text = String(value || "").trim();
+  if (!text || !text.startsWith("{") || !text.endsWith("}")) return false;
+  try {
+    const parsed = JSON.parse(text);
+    return Boolean(
+      parsed
+      && typeof parsed === "object"
+      && !Array.isArray(parsed)
+      && (parsed.name || parsed.tool)
+      && (parsed.arguments !== undefined || parsed.args !== undefined)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function visibleNarration(value) {
+  let text = String(value || "").trim();
+  if (!text) return "";
+  text = text.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
+  text = text.replace(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/gi, (whole, body) => {
+    return /"(?:name|tool)"\s*:/.test(body) && /"(?:arguments|args)"\s*:/.test(body) ? "" : whole;
+  });
+  text = text
+    .split(/\r?\n/)
+    .filter((line) => !isToolProtocolJsonLine(line))
+    .join("\n")
+    .trim();
+  if (!text || isToolProtocolJsonLine(text)) return "";
+  return text.slice(0, 1000);
+}
+
+function compactRunStream(run) {
+  const tools = compactTools(run);
+  const decisions = ((run && run.decisions) || []).slice().sort((a, b) => Number(a.iteration || 0) - Number(b.iteration || 0));
+  const emitted = new Set();
+  const stream = [];
+
+  const appendTools = (iteration) => {
+    for (let index = 0; index < tools.length; index += 1) {
+      const item = tools[index];
+      if (emitted.has(index) || Number(item.iteration || 0) !== Number(iteration || 0)) continue;
+      emitted.add(index);
+      const quietContext = item.directedBy === "context"
+        && item.status === "done"
+        && ["workspace.inspect", "dir.list", "file.read"].includes(item.name);
+      if (!quietContext) stream.push({ type: "tool", ...item });
+    }
+  };
+
+  appendTools(0);
+  for (const decision of decisions) {
+    const narration = visibleNarration(decision.text);
+    const hasTools = Array.isArray(decision.toolCalls) && decision.toolCalls.length > 0;
+    if (narration && hasTools) {
+      stream.push({
+        type: "narration",
+        iteration: Number(decision.iteration || 0),
+        text: narration,
+      });
+    }
+    appendTools(decision.iteration);
+  }
+
+  for (let index = 0; index < tools.length; index += 1) {
+    if (emitted.has(index)) continue;
+    const item = tools[index];
+    const quietContext = item.directedBy === "context"
+      && item.status === "done"
+      && ["workspace.inspect", "dir.list", "file.read"].includes(item.name);
+    if (!quietContext) stream.push({ type: "tool", ...item });
+  }
+
+  return stream.slice(-60);
 }
 
 function compactTool(run, call, index, status) {
@@ -161,7 +240,6 @@ function compactTool(run, call, index, status) {
     reason: String(data.reason || ""),
     error: result && result.error ? String(result.error.message || result.error.code || "") : "",
     output: String(data.output || data.stderr || data.stdout || ""),
-    workflow: String(data.workflow || result && result.workflow || ""),
     beforeText: String(data.beforeText || ""),
     afterText: String(data.afterText || ""),
     expectedText: String(args.expectedText || ""),
@@ -171,6 +249,8 @@ function compactTool(run, call, index, status) {
     network: String(data.network || ""),
     discarded: data.discarded === true,
     changedPaths: Array.isArray(data.changedPaths) ? data.changedPaths.slice(0, 30).map(String) : [],
+    iteration: Number(call.iteration || 0),
+    directedBy: String(call.directedBy || ""),
   };
   if (call.name === "file.write") {
     item.operation = fileWriteOperation(run, call, index);
@@ -367,6 +447,7 @@ if (typeof module !== "undefined" && module.exports) {
     composerStage,
     composerActivity,
     compactTools,
+    compactRunStream,
     linePreview,
     diffsByFile,
     formatGoal,
