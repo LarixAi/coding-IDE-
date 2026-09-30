@@ -12,16 +12,15 @@ const { ComposerSession, listOllamaModels } = require("./composer-session");
 const { ConversationStore } = require("./conversation-store");
 const { hasWorkspaceEditorInGroups } = require("./tab-policy");
 const { loadRuntimeEnv } = require("./runtime-config");
+const { N8nIntegration } = require("./n8n-integration");
 
 let N8nCapabilityProvider;
-let N8nMcpProvider;
 let OllamaModelProvider;
 try {
-  ({ N8nCapabilityProvider, N8nMcpProvider } = require("../../packages/n8n-capability"));
+  ({ N8nCapabilityProvider } = require("../../packages/n8n-capability"));
   ({ OllamaModelProvider } = require("../../packages/agent-runtime/model-provider"));
 } catch {
   N8nCapabilityProvider = null;
-  N8nMcpProvider = null;
   OllamaModelProvider = null;
 }
 
@@ -581,7 +580,8 @@ class ComposerViewProvider {
     this.state = state;
     this.view = undefined;
     this.capabilities = N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null;
-    this.externalTools = N8nMcpProvider ? new N8nMcpProvider() : null;
+    this.n8n = new N8nIntegration(context);
+    this.externalTools = this.n8n;
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
       historyStore: new ConversationStore(path.join(context.globalStorageUri.fsPath, "composer-history")),
@@ -614,6 +614,7 @@ class ComposerViewProvider {
       ),
       capabilities: this.capabilities,
       externalTools: this.externalTools,
+      n8n: this.n8n,
       root: workspaceRoot(),
       onChange: (snapshot) => this.post(snapshot),
     });
@@ -626,6 +627,7 @@ class ComposerViewProvider {
     webviewView.webview.html = renderComposer(nonce);
     webviewView.webview.onDidReceiveMessage((message) => this.onMessage(message));
     this.session.setRoot(workspaceRoot());
+    await this.n8n.refreshTokenFlag();
     await this.session.refreshModels();
   }
 
@@ -734,6 +736,39 @@ class ComposerViewProvider {
         if (file && file.contents) this.session.attach(file);
         else this.session.attach(fileFromUri(file.path || file));
       }
+      return;
+    }
+    if (message.type === "n8n-config") {
+      const result = await this.session.configureN8n(message.patch || {});
+      this.view.webview.postMessage({
+        type: "n8n-config-result",
+        ok: Boolean(result && result.ok),
+        message: result && result.message ? result.message : "",
+      });
+      return;
+    }
+    if (message.type === "n8n-test") {
+      this.view.webview.postMessage({ type: "n8n-test-result", checking: true });
+      const result = await this.session.testN8n();
+      this.view.webview.postMessage({
+        type: "n8n-test-result",
+        checking: false,
+        ok: Boolean(result && result.ok),
+        count: result && result.ok ? result.count : 0,
+        names: result && result.ok ? result.names : [],
+        message: result && result.message ? result.message : "",
+      });
+      return;
+    }
+    if (message.type === "enhance-prompt") {
+      const result = await this.session.enhanceDraft(message.text || "");
+      this.view.webview.postMessage({
+        type: "enhanced-prompt",
+        ok: Boolean(result && result.ok),
+        prompt: result && result.ok ? result.prompt : "",
+        source: result && result.ok ? result.source : "",
+        message: result && result.message ? result.message : "",
+      });
       return;
     }
     if (message.type === "pick") await this.pickFiles();
