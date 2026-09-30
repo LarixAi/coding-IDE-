@@ -11,106 +11,133 @@ function renderComposer(nonce) {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${escapeHtml(nonce)}'; connect-src https: http: ws: wss:; media-src mediastream: blob:;" />
   <style>
     html, body { height: 100%; }
-    body { margin: 0; color: #dfe4ec; background: #1c2027; font-family: var(--vscode-font-family); font-size: 13px; overflow: hidden; }
+    body { margin: 0; color: #d9dee7; background: #191c21; font-family: var(--vscode-font-family); font-size: 12px; overflow: hidden; }
     .shell { position: relative; height: 100%; min-width: 0; display: flex; flex-direction: column; }
-    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 8px 0 10px; flex-shrink: 0; border-bottom: 1px solid #252b33; }
-    .title-tools { display: flex; align-items: center; gap: 4px; min-width: 0; }
-    h1 { margin: 0 4px 0 0; font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
-    .header-action { display: inline-flex; align-items: center; justify-content: center; height: 24px; min-width: 24px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: #97a3b6; cursor: pointer; font: inherit; font-size: 11px; }
-    .header-action:hover { background: #2a3038; color: #dfe4ec; }
+    header { display: flex; align-items: center; min-height: 30px; padding: 0 7px 0 10px; flex-shrink: 0; border-bottom: 1px solid #252a31; }
+    .title-tools { display: flex; align-items: center; gap: 3px; min-width: 0; width: 100%; }
+    h1 { margin: 0 auto 0 0; font-size: 11px; font-weight: 600; letter-spacing: 0.01em; color: #cfd5df; }
+    .header-action { display: inline-flex; align-items: center; justify-content: center; height: 22px; min-width: 22px; padding: 0 5px; border: 0; border-radius: 4px; background: transparent; color: #778291; cursor: pointer; font: inherit; font-size: 10px; }
+    .header-action:hover { background: #232830; color: #d9dee7; }
     .header-action:disabled { opacity: 0.35; cursor: default; }
-    #new-chat { font-size: 17px; line-height: 1; }
-    .history-panel { display: none; position: absolute; z-index: 20; top: 34px; left: 8px; right: 8px; max-height: min(420px, 62%); overflow: hidden; border: 1px solid #343b46; border-radius: 9px; background: #171b21; box-shadow: 0 12px 28px #0008; }
+    #new-chat { font-size: 15px; line-height: 1; }
+    .history-panel { display: none; position: absolute; z-index: 20; top: 32px; left: 7px; right: 7px; max-height: min(420px, 62%); overflow: hidden; border: 1px solid #343a44; border-radius: 7px; background: #171a1f; box-shadow: 0 12px 28px #0008; }
     .history-panel.on { display: flex; flex-direction: column; }
-    .history-head { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 10px; border-bottom: 1px solid #292f38; color: #dfe4ec; font-size: 12px; }
-    .history-head button { border: 0; background: transparent; color: #788495; cursor: pointer; font-size: 16px; }
-    .history-list { overflow: auto; padding: 5px; }
-    .history-empty { padding: 16px 10px; color: #697587; font-size: 11px; text-align: center; }
-    .history-item { display: block; width: 100%; padding: 8px 9px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
-    .history-item:hover { background: #222831; }
-    .history-item.active { background: #26313a; }
-    .history-title { display: block; overflow: hidden; color: #cbd2dc; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-    .history-meta { display: block; margin-top: 2px; color: #667284; font-size: 10px; }
-    header .pickers { display: flex; align-items: center; gap: 6px; min-width: 0; }
-    #model, #mode { max-width: min(140px, 46%); min-width: 0; background: transparent; color: #dfe4ec; border: 0; height: 22px; font: inherit; font-size: 12px; text-align: right; }
-    .thread { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px 16px; }
-    .empty { margin: 28px 4px 0; color: #6b7689; font-size: 12px; line-height: 1.5; }
-    .bubble { margin: 0 0 10px; max-width: 100%; min-width: 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .bubble.user { margin-left: 18%; color: #dfe4ec; font-size: 13px; }
-    .bubble.assistant { color: #c7ced8; }
-    .project-decision { display: none; margin: 0 0 10px; padding: 9px 10px; border: 1px solid #303640; border-radius: 9px; background: #181c22; }
-    .project-decision.on { display: block; }
-    .project-decision-title { margin: 0 0 3px; color: #dfe4ec; font-size: 12px; font-weight: 650; }
-    .project-decision-meta { margin: 0 0 4px; color: #7fd3ea; font-size: 11px; }
-    .project-decision-reason { margin: 0; color: #8e99aa; font-size: 11px; line-height: 1.4; }
-    .activity { display: none; margin: 0 0 10px; color: #97a3b6; font-size: 12px; }
+    .history-head { display: flex; align-items: center; justify-content: space-between; min-height: 32px; padding: 0 9px; border-bottom: 1px solid #292e36; color: #d9dee7; font-size: 11px; }
+    .history-head button { border: 0; background: transparent; color: #778291; cursor: pointer; font-size: 15px; }
+    .history-list { overflow: auto; padding: 4px; }
+    .history-empty { padding: 14px 9px; color: #687382; font-size: 10px; text-align: center; }
+    .history-item { display: block; width: 100%; padding: 7px 8px; border: 0; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+    .history-item:hover { background: #22272e; }
+    .history-item.active { background: #252c34; }
+    .history-title { display: block; overflow: hidden; color: #c6cdd7; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .history-meta { display: block; margin-top: 2px; color: #66717f; font-size: 9px; }
+
+    .thread { flex: 1; min-height: 0; overflow: auto; padding: 9px 10px 16px; }
+    .empty { margin: 24px 2px 0; color: #67717f; font-size: 11px; line-height: 1.5; }
+    .bubble { margin: 0 1px 10px; max-width: 100%; min-width: 0; line-height: 1.48; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .bubble.user { color: #e0e4ea; font-size: 12px; font-weight: 500; }
+    .bubble.assistant { color: #c8ced8; }
+
+    .project-decision { display: none; margin: 1px 1px 7px; color: #75808f; font-size: 10px; line-height: 1.35; }
+    .project-decision.on { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
+    .project-decision-title, .project-decision-meta, .project-decision-reason { margin: 0; font-size: inherit; font-weight: 400; color: inherit; }
+    .project-decision-title { color: #909aa8; }
+    .project-decision-reason { display: none; }
+
+    .activity { display: none; margin: 2px 1px 7px; color: #798493; font-size: 10px; }
     .activity.on { display: block; }
-    .tools { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; }
-    .tool-card { overflow: hidden; border: 1px solid #303640; border-radius: 9px; background: #181c22; color: #c7ced8; }
-    .tool-card[open] { background: #171b21; }
-    .tool-card.failed { border-color: #733b43; }
-    .tool-card.running { border-color: #3d5964; }
-    .tool-card summary { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 10px; cursor: pointer; list-style: none; user-select: none; }
+    .activity.on::before { content: "●"; margin-right: 5px; color: #7fc9dd; animation: codeme-pulse 1.1s ease-in-out infinite; }
+
+    .tools { display: flex; flex-direction: column; gap: 1px; margin: 0 0 9px; }
+    .work-note { margin: 8px 1px 5px; color: #c8ced8; font-size: 12px; line-height: 1.48; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .tool-card { overflow: hidden; border: 0; border-radius: 4px; background: transparent; color: #aeb7c3; }
+    .tool-card summary { display: flex; align-items: center; gap: 6px; min-height: 23px; padding: 0 2px; cursor: pointer; list-style: none; user-select: none; }
     .tool-card summary::-webkit-details-marker { display: none; }
-    .tool-kind { flex: 0 0 auto; min-width: 22px; color: #e8b66b; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; font-weight: 700; }
-    .tool-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c7ced8; font-size: 12px; font-weight: 600; }
-    .tool-stats { display: inline-flex; gap: 5px; flex: 0 0 auto; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; }
-    .tool-add { color: #63c58c; }
-    .tool-remove { color: #e16e79; }
-    .tool-state { flex: 0 0 auto; color: #6b7689; font-size: 11px; }
-    .tool-card.running .tool-state { color: #7fd3ea; animation: codeme-pulse 1.1s ease-in-out infinite; }
+    .tool-card summary:hover { background: #22272e; }
+    .tool-card.failed summary { background: #342025; color: #efb5ba; }
+    .tool-kind { flex: 0 0 auto; width: 17px; color: #778291; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 11px; text-align: center; }
+    .tool-card.failed .tool-kind { color: #ff918b; }
+    .tool-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #aeb7c3; font-size: 11px; font-weight: 400; }
+    .tool-card.failed .tool-label { color: #efb5ba; }
+    .tool-stats { display: inline-flex; gap: 4px; flex: 0 0 auto; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 10px; }
+    .tool-add { color: #64bd88; }
+    .tool-remove { color: #df7780; }
+    .tool-state { flex: 0 0 auto; width: 12px; color: #687382; font-size: 10px; text-align: center; }
+    .tool-card.running .tool-state { color: #7fc9dd; animation: codeme-pulse 1.1s ease-in-out infinite; }
     .tool-card.failed .tool-state { color: #ff918b; }
     @keyframes codeme-pulse { 50% { opacity: 0.35; } }
-    .tool-detail { margin: 0; padding: 9px 10px; max-height: 220px; overflow: auto; border-top: 1px solid #2a3038; background: #14181d; color: #aeb8c7; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 10px; line-height: 1.5; }
-    .code-preview { max-height: 310px; overflow: auto; border-top: 1px solid #2a3038; background: #14181d; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; line-height: 1.55; }
-    .code-line { display: grid; grid-template-columns: 38px 18px minmax(0, 1fr); min-height: 18px; }
-    .code-line.add { background: #173325; }
-    .code-line.remove { background: #3a1f25; }
-    .code-no { padding: 0 7px 0 4px; color: #667080; text-align: right; border-right: 1px solid #252b33; user-select: none; }
-    .code-sign { text-align: center; color: #667080; user-select: none; }
-    .code-line.add .code-sign { color: #63c58c; }
-    .code-line.remove .code-sign { color: #e16e79; }
-    .code-text { min-width: 0; padding: 0 8px 0 2px; white-space: pre; overflow-x: visible; color: #c7ced8; }
-    .code-truncated { padding: 6px 10px; border-top: 1px solid #252b33; color: #6b7689; font-size: 10px; }
-    .result { margin: 8px 0 0; }
-    .result-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #dfe4ec; }
-    .result-summary { margin: 0 0 8px; color: #c7ced8; }
-    .result-count { margin: 0 0 6px; color: #97a3b6; font-size: 12px; }
-    .file { margin: 0; }
-    .file summary { cursor: pointer; color: #dfe4ec; font-size: 12px; list-style: none; }
-    .file summary::-webkit-details-marker { display: none; }
-    .file summary::before { content: "› "; color: #6b7689; }
-    .file[open] summary::before { content: "⌄ "; }
-    .file pre { margin: 6px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; color: #97a3b6; font-size: 11px; }
-    .error { margin: 0 0 8px; color: #ff918b; font-size: 12px; }
-    footer { flex-shrink: 0; padding: 0 8px 8px; }
-    .notice { min-height: 0; margin: 0 2px 4px; color: #eebb58; font-size: 11px; }
-    .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 2px 6px; }
-    .chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; color: #97a3b6; font-size: 11px; }
+
+    .tool-detail { margin: 2px 4px 6px 24px; padding: 7px 8px; max-height: 220px; overflow: auto; border-left: 1px solid #343b45; background: #15181c; color: #9ba5b3; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 10px; line-height: 1.45; }
+    .code-preview { margin: 2px 4px 6px 24px; max-height: 260px; overflow: auto; border-left: 1px solid #343b45; background: #15181c; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 10px; line-height: 1.5; }
+    .code-line { display: grid; grid-template-columns: 34px 16px minmax(0, 1fr); min-height: 17px; }
+    .code-line.add { background: #173024; }
+    .code-line.remove { background: #351f24; }
+    .code-no { padding: 0 6px 0 3px; color: #5f6976; text-align: right; border-right: 1px solid #252a31; user-select: none; }
+    .code-sign { text-align: center; color: #5f6976; user-select: none; }
+    .code-line.add .code-sign { color: #64bd88; }
+    .code-line.remove .code-sign { color: #df7780; }
+    .code-text { min-width: 0; padding: 0 7px 0 2px; white-space: pre; overflow-x: visible; color: #bbc2cc; }
+    .code-truncated { padding: 5px 8px; border-top: 1px solid #252a31; color: #687382; font-size: 9px; }
+
+    .result { margin: 7px 0 0; }
+    .result-summary { margin: 0 1px 8px; color: #c8ced8; line-height: 1.48; white-space: pre-wrap; }
+    .error { margin: 0 1px 7px; color: #ff918b; font-size: 11px; }
+
+    footer { flex-shrink: 0; padding: 0 7px 7px; background: linear-gradient(to bottom, #191c2100, #191c21 10px); }
+    .changed-files { display: none; margin: 0 1px 6px; padding-top: 6px; border-top: 1px solid #272c33; }
+    .changed-files.on { display: block; }
+    .changed-head { display: flex; align-items: center; justify-content: space-between; min-height: 20px; color: #909aa8; font-size: 10px; }
+    .changed-hint { color: #687382; }
+    .changed-row { margin: 0; border-radius: 4px; }
+    .changed-row summary { display: flex; align-items: center; gap: 5px; min-height: 22px; padding: 0 2px; list-style: none; cursor: pointer; color: #aeb7c3; font-size: 10px; }
+    .changed-row summary::-webkit-details-marker { display: none; }
+    .changed-row summary:hover { background: #22272e; }
+    .changed-icon { width: 17px; color: #778291; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); text-align: center; }
+    .changed-path { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .changed-stats { display: inline-flex; gap: 4px; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }
+    .changed-diff { margin: 2px 2px 5px 24px; padding: 6px 7px; max-height: 180px; overflow: auto; border-left: 1px solid #343b45; background: #15181c; color: #929caa; white-space: pre; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); font-size: 9px; line-height: 1.45; }
+
+    .notice { min-height: 0; margin: 0 2px 4px; color: #d8ad59; font-size: 10px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 2px 5px; }
+    .chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; padding: 2px 4px; border-radius: 4px; background: #22272e; color: #909aa8; font-size: 10px; }
     .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .chip button { border: 0; background: transparent; color: #6b7689; cursor: pointer; padding: 0; }
-    .composer { display: flex; flex-direction: column; min-width: 0; border-radius: 8px; padding: 2px 4px 4px; }
-    .shell.over .composer { outline: 1px solid #7fd3ea88; outline-offset: 2px; background: #7fd3ea10; }
-    textarea { width: 100%; min-height: 56px; max-height: 180px; box-sizing: border-box; border: 0; resize: none; background: transparent; color: #dfe4ec; font: inherit; padding: 6px 4px 2px; outline: none; }
-    .bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
-    .bar button { border: 0; background: transparent; color: #97a3b6; height: 24px; padding: 0 6px; cursor: pointer; font: inherit; font-size: 12px; }
-    #n8n-toggle.on { color: #7fd3ea; }
-    .n8n-panel { display: none; position: absolute; z-index: 30; left: 8px; right: 8px; bottom: 42px; padding: 10px; border: 1px solid #343b46; border-radius: 9px; background: #171b21; box-shadow: 0 12px 28px #0008; }
-    .n8n-panel.on { display: block; }
-    .n8n-title { margin: 0 0 8px; color: #dfe4ec; font-size: 12px; font-weight: 650; }
-    .n8n-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; color: #aeb8c7; font-size: 11px; }
-    .n8n-row input[type="text"], .n8n-row input[type="password"] { flex: 1; min-width: 0; box-sizing: border-box; border: 1px solid #303640; border-radius: 5px; background: #11151a; color: #dfe4ec; padding: 5px 6px; font: inherit; font-size: 10.5px; }
-    .n8n-row button { border: 1px solid #303640; border-radius: 5px; background: #222831; color: #c7ced8; padding: 4px 7px; cursor: pointer; font: inherit; font-size: 10.5px; }
-    .n8n-status { min-height: 14px; margin-top: 5px; color: #7fd3ea; font-size: 10.5px; overflow-wrap: anywhere; }
-    .n8n-divider { margin: 8px 0; border-top: 1px solid #292f38; }
-    #send, #stop { margin-left: auto; color: #7fd3ea; font-weight: 650; }
-    #send[hidden], #stop[hidden] { display: none; }
+    .chip button { border: 0; background: transparent; color: #687382; cursor: pointer; padding: 0; }
+
+    .composer { display: flex; flex-direction: column; min-width: 0; border: 1px solid #343a44; border-radius: 8px; background: #20242a; padding: 2px 4px 4px; box-shadow: 0 1px 0 #0004; }
+    .shell.over .composer { outline: 1px solid #7fc9dd88; outline-offset: 2px; background: #7fc9dd0d; }
+    textarea { width: 100%; min-height: 45px; max-height: 160px; box-sizing: border-box; border: 0; resize: none; background: transparent; color: #e0e4ea; font: inherit; font-size: 12px; line-height: 1.4; padding: 7px 5px 3px; outline: none; }
+    textarea::placeholder { color: #697482; }
+    .bar { display: flex; align-items: center; gap: 3px; min-width: 0; }
+    .bar button, .bar select { border: 0; background: transparent; color: #909aa8; height: 24px; padding: 0 5px; cursor: pointer; font: inherit; font-size: 10px; border-radius: 4px; }
+    .bar button:hover, .bar select:hover { background: #2a2f36; color: #d6dbe3; }
+    .bar button:disabled, .bar select:disabled { opacity: 0.4; cursor: default; }
+    #attach { flex: 0 0 auto; }
+    #mode { flex: 0 0 auto; max-width: 64px; color: #b8c0cb; }
+    #model { min-width: 0; max-width: 118px; color: #b8c0cb; text-overflow: ellipsis; }
+    #model-refresh { flex: 0 0 auto; width: 22px; padding: 0; font-size: 13px; }
+    #model-refresh.loading { animation: codeme-spin 0.8s linear infinite; }
+    @keyframes codeme-spin { to { transform: rotate(360deg); } }
+    #send { margin-left: auto; width: 24px; padding: 0; border-radius: 6px; background: #7fc9dd; color: #172027; font-size: 14px; font-weight: 700; }
+    #send:hover { background: #91d7e8; color: #172027; }
     #send:disabled { opacity: 0.35; }
+    #stop { width: 24px; padding: 0; color: #aab3bf; }
+    #send[hidden], #stop[hidden] { display: none; }
     #mic.on { color: #ff918b; }
-    .perm { margin-left: 2px; color: #6b7689; font-size: 10px; }
-    @media (max-width: 220px) {
-      h1, .perm { display: none; }
-      #model { max-width: 100%; text-align: left; }
+    #n8n-toggle.on { color: #7fc9dd; }
+    .n8n-panel { display: none; margin: 0 0 6px; padding: 8px; border: 1px solid #343a44; border-radius: 7px; background: #1d2127; }
+    .n8n-panel.on { display: block; }
+    .n8n-title { margin: 0 0 6px; color: #d7dce4; font-size: 10.5px; font-weight: 650; }
+    .n8n-row { display: flex; align-items: center; gap: 5px; margin: 5px 0; color: #9da7b4; font-size: 10px; }
+    .n8n-row input[type="text"], .n8n-row input[type="password"] { flex: 1; min-width: 0; border: 1px solid #303640; border-radius: 5px; background: #15191e; color: #dfe4ec; padding: 5px 6px; font: inherit; font-size: 10px; }
+    .n8n-row button { border: 1px solid #303640; border-radius: 5px; background: #252a31; color: #c5ccd6; padding: 4px 7px; cursor: pointer; font: inherit; font-size: 10px; }
+    .n8n-status { min-height: 13px; margin-top: 4px; color: #7fc9dd; font-size: 10px; overflow-wrap: anywhere; }
+    .n8n-divider { margin: 7px 0; border-top: 1px solid #2b3037; }
+    .perm { display: none; }
+
+    @media (max-width: 230px) {
+      h1 { display: none; }
+      #model { max-width: 86px; }
+      #attach { width: 24px; overflow: hidden; white-space: nowrap; }
     }
   </style>
 </head>
@@ -121,15 +148,6 @@ function renderComposer(nonce) {
         <h1>CodeMe</h1>
         <button type="button" class="header-action" id="new-chat" title="New chat" aria-label="New chat">＋</button>
         <button type="button" class="header-action" id="history-toggle" title="Chat history" aria-label="Chat history">History</button>
-      </div>
-      <div class="pickers">
-        <select id="mode" aria-label="Mode">
-          <option value="chat">Chat</option>
-          <option value="ask">Ask</option>
-          <option value="plan">Plan</option>
-          <option value="code">Code</option>
-        </select>
-        <select id="model" aria-label="Model"></select>
       </div>
     </header>
     <div class="history-panel" id="history-panel">
@@ -148,30 +166,39 @@ function renderComposer(nonce) {
       <div class="result" id="result"></div>
     </div>
     <footer>
+      <div class="changed-files" id="changed-files"></div>
       <p class="notice" id="notice"></p>
       <div class="chips" id="chips"></div>
-      <div class="composer" id="drop">
-        <textarea id="prompt" placeholder="Ask, drop a file, or use Voice…" rows="3"></textarea>
-        <div class="bar">
-          <button type="button" id="attach" title="Attach files">Attach</button>
-          <button type="button" id="mic" title="Voice to text" aria-pressed="false">Voice</button>
-          <button type="button" id="enhance" title="Enhance prompt with n8n or local pre-flight">✨</button>
-          <button type="button" id="n8n-toggle" title="n8n MCP tools">n8n</button>
-          <span class="perm" id="perm"></span>
-          <button type="button" id="send">Send</button>
-          <button type="button" id="stop" hidden>Stop</button>
-        </div>
-      </div>
       <div class="n8n-panel" id="n8n-panel">
         <p class="n8n-title">n8n MCP & prompt pre-flight</p>
         <label class="n8n-row"><input type="checkbox" id="n8n-enabled" /> Use n8n workflows as agent tools</label>
         <div class="n8n-row"><input type="text" id="n8n-url" placeholder="http://127.0.0.1:5678/mcp-server/http" /></div>
-        <div class="n8n-row"><input type="password" id="n8n-token" placeholder="MCP token · stored in VS Code SecretStorage" /></div>
+        <div class="n8n-row"><input type="password" id="n8n-token" placeholder="MCP token · stored securely" /></div>
         <div class="n8n-row"><button type="button" id="n8n-save">Save settings</button><button type="button" id="n8n-test">Test connection</button></div>
         <div class="n8n-status" id="n8n-status"></div>
         <div class="n8n-divider"></div>
         <div class="n8n-row"><input type="text" id="n8n-enhance-url" placeholder="Prompt enhancer webhook URL (optional)" /></div>
         <label class="n8n-row"><input type="checkbox" id="n8n-auto" /> Enhance every prompt on send</label>
+      </div>
+      <div class="composer" id="drop">
+        <textarea id="prompt" placeholder="Ask CodeMe anything, @ files or type /" rows="2"></textarea>
+        <div class="bar">
+          <button type="button" id="attach" title="Add context">＋ Context</button>
+          <button type="button" id="mic" title="Voice to text" aria-pressed="false">Mic</button>
+          <button type="button" id="enhance" title="Enhance prompt before running">✨</button>
+          <button type="button" id="n8n-toggle" title="n8n MCP tools">n8n</button>
+          <select id="mode" aria-label="Mode">
+            <option value="chat">Chat</option>
+            <option value="ask">Ask</option>
+            <option value="plan">Plan</option>
+            <option value="code">Code</option>
+          </select>
+          <select id="model" aria-label="Model"></select>
+          <button type="button" id="model-refresh" title="Refresh models" aria-label="Refresh models">↻</button>
+          <span class="perm" id="perm"></span>
+          <button type="button" id="stop" hidden title="Stop run" aria-label="Stop run">■</button>
+          <button type="button" id="send" title="Send" aria-label="Send">↑</button>
+        </div>
       </div>
     </footer>
     <p hidden id="stage">Waiting</p>
@@ -183,6 +210,7 @@ function renderComposer(nonce) {
     const send = document.getElementById("send");
     const stop = document.getElementById("stop");
     const model = document.getElementById("model");
+    const modelRefresh = document.getElementById("model-refresh");
     const mode = document.getElementById("mode");
     const stage = document.getElementById("stage");
     const activity = document.getElementById("activity");
@@ -195,6 +223,7 @@ function renderComposer(nonce) {
     const messages = document.getElementById("messages");
     const tools = document.getElementById("tools");
     const result = document.getElementById("result");
+    const changedFiles = document.getElementById("changed-files");
     const chips = document.getElementById("chips");
     const notice = document.getElementById("notice");
     const empty = document.getElementById("empty");
@@ -215,13 +244,13 @@ function renderComposer(nonce) {
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
     let rec = null;
     let listening = false;
-    let micStarting = false;
     let spoken = "";
     let running = false;
     let sending = false;
     let requestId = "";
     let epoch = 0;
     let shownRun = "";
+    let deferredFinal = "";
     let draft = "";
     let sendTimer = null;
 
@@ -231,11 +260,11 @@ function renderComposer(nonce) {
         sendTimer = null;
       }
       sending = false;
-      send.disabled = running;
+      send.disabled = false;
     }
     function sendPrompt() {
       stopVoice();
-      if (sending || running) return;
+      if (sending) return;
       const text = prompt.value;
       if (!text.trim() && !chips.childElementCount) return;
       sending = true;
@@ -301,32 +330,7 @@ function renderComposer(nonce) {
       }
       setMic(false);
     }
-    async function requestMicrophoneAccess() {
-      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") return true;
-      let stream = null;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        return true;
-      } catch (error) {
-        const name = String(error && error.name || "");
-        if (name === "NotAllowedError" || name === "SecurityError") {
-          notice.textContent = "Microphone permission is blocked. Enable Code - OSS/CodeMe in System Settings → Privacy & Security → Microphone, then restart CodeMe.";
-        } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-          notice.textContent = "No microphone was found.";
-        } else {
-          notice.textContent = "Microphone could not be opened.";
-        }
-        return false;
-      } finally {
-        if (stream) {
-          for (const track of stream.getTracks()) {
-            try { track.stop(); } catch {}
-          }
-        }
-      }
-    }
-    async function startVoice() {
-      if (micStarting) return;
+    function startVoice() {
       const action = composerVoiceAction(listening, Boolean(Speech));
       if (action === "unavailable") {
         notice.textContent = "Voice to text is not available in this window.";
@@ -334,16 +338,6 @@ function renderComposer(nonce) {
       }
       if (action === "stop") {
         stopVoice();
-        return;
-      }
-      micStarting = true;
-      mic.disabled = true;
-      notice.textContent = "Requesting microphone access…";
-      const allowed = await requestMicrophoneAccess();
-      micStarting = false;
-      mic.disabled = false;
-      if (!allowed) {
-        setMic(false);
         return;
       }
       rec = new Speech();
@@ -364,7 +358,7 @@ function renderComposer(nonce) {
         prompt.dispatchEvent(new Event("input"));
       };
       rec.onerror = (event) => {
-        if (event.error === "not-allowed") notice.textContent = "Microphone permission is blocked. Enable Code - OSS/CodeMe in System Settings → Privacy & Security → Microphone, then restart CodeMe.";
+        if (event.error === "not-allowed") notice.textContent = "Microphone access is blocked.";
         else if (event.error !== "aborted" && event.error !== "no-speech") notice.textContent = "Voice to text stopped.";
         setMic(false);
       };
@@ -381,7 +375,7 @@ function renderComposer(nonce) {
     mic.addEventListener("click", startVoice);
     enhance.addEventListener("click", () => {
       const text = prompt.value.trim();
-      if (!text || running || sending) return;
+      if (!text || sending) return;
       enhance.disabled = true;
       n8nStatus.textContent = "Enhancing prompt…";
       vscode.postMessage({ type: "enhance-prompt", text });
@@ -405,8 +399,17 @@ function renderComposer(nonce) {
     });
     model.addEventListener("change", () => {
       const option = model.selectedOptions[0];
-      if (!option) return;
+      if (!option || !option.dataset.provider) return;
       vscode.postMessage({ type: "select-model", provider: option.dataset.provider, id: option.value });
+    });
+    modelRefresh.addEventListener("click", () => {
+      modelRefresh.classList.add("loading");
+      modelRefresh.disabled = true;
+      vscode.postMessage({ type: "refresh-models" });
+      setTimeout(() => {
+        modelRefresh.classList.remove("loading");
+        modelRefresh.disabled = false;
+      }, 1200);
     });
     mode.addEventListener("change", () => vscode.postMessage({ type: "select-mode", mode: mode.value }));
     const shell = document.querySelector(".shell");
@@ -469,10 +472,17 @@ function renderComposer(nonce) {
       stage.dataset.provider = state.selected ? state.selected.provider : "";
       const line = state.activity || "";
       activity.textContent = line;
-      activity.classList.toggle("on", running && Boolean(line));
+      const liveStream = state.stream || state.tools || [];
+      activity.classList.toggle("on", running && !liveStream.length && Boolean(line));
       stop.hidden = !running;
-      send.hidden = running;
-      send.disabled = running || sending;
+      send.hidden = false;
+      send.disabled = sending;
+      send.title = running ? "Add follow-up" : "Send";
+      send.setAttribute("aria-label", running ? "Add follow-up" : "Send");
+      mode.disabled = running;
+      model.disabled = running;
+      modelRefresh.disabled = false;
+      modelRefresh.classList.remove("loading");
       prompt.disabled = false;
       if (!sending) notice.textContent = state.notice || "";
       renderN8n(state.n8n || null);
@@ -480,15 +490,60 @@ function renderComposer(nonce) {
       document.getElementById("perm").textContent = composerModeLabel(picked);
       mode.value = picked;
       model.innerHTML = "";
+      const sourceStates = Array.isArray(state.modelSources) ? state.modelSources : [];
+      const modelsBySource = new Map();
       for (const item of state.models || []) {
+        const source = item.source || (item.provider === "ollama-server" ? "Server" : item.provider === "ollama-local" ? "Local" : "Other");
+        if (!modelsBySource.has(source)) modelsBySource.set(source, []);
+        modelsBySource.get(source).push(item);
+      }
+
+      const renderedSources = new Set();
+      const addSourceGroup = (label, sourceState) => {
+        const items = modelsBySource.get(label) || [];
+        const group = document.createElement("optgroup");
+        group.label = label;
+        if (items.length) {
+          for (const item of items) {
+            const option = document.createElement("option");
+            option.value = item.id;
+            option.dataset.provider = item.provider;
+            option.dataset.source = item.source || label;
+            option.textContent = item.label;
+            option.selected = Boolean(state.selected && state.selected.id === item.id && state.selected.provider === item.provider);
+            group.appendChild(option);
+          }
+        } else {
+          const status = document.createElement("option");
+          status.disabled = true;
+          status.textContent = label + " · " + (
+            sourceState
+              ? (!sourceState.configured ? "not configured" : sourceState.available ? "no models installed" : "unavailable")
+              : "no models"
+          );
+          group.appendChild(status);
+        }
+        model.appendChild(group);
+        renderedSources.add(label);
+      };
+
+      for (const sourceState of sourceStates) addSourceGroup(sourceState.label, sourceState);
+      for (const [label] of modelsBySource) {
+        if (!renderedSources.has(label)) addSourceGroup(label, null);
+      }
+
+      if (!model.children.length) {
         const option = document.createElement("option");
-        option.value = item.id;
-        option.dataset.provider = item.provider;
-        option.dataset.source = "provider";
-        option.textContent = item.label;
-        option.selected = Boolean(state.selected && state.selected.id === item.id && state.selected.provider === item.provider);
+        option.disabled = true;
+        option.textContent = "No models available";
         model.appendChild(option);
       }
+
+      model.title = sourceStates.map((source) => {
+        if (!source.configured) return source.label + ": not configured";
+        if (!source.available) return source.label + ": unavailable";
+        return source.label + ": " + source.count + " model" + (source.count === 1 ? "" : "s");
+      }).join(" · ");
       chips.innerHTML = "";
       for (const item of state.attachments || []) {
         const chip = document.createElement("span");
@@ -504,12 +559,14 @@ function renderComposer(nonce) {
         chip.appendChild(remove);
         chips.appendChild(chip);
       }
-      renderThread(state.thread || []);
+      const streamItems = state.stream || state.tools || [];
+      renderThread(state.thread || [], !running && Boolean(state.runId) && streamItems.length > 0);
       renderHistory(state.conversations || [], state.conversationId || "");
       newChat.disabled = running;
       historyToggle.disabled = running;
       renderProjectDecision(state.projectDecision || null);
-      renderTools(state.tools || []);
+      renderTools(streamItems);
+      renderChangedFiles(state);
       if (running) {
         result.innerHTML = "";
         shownRun = "";
@@ -531,16 +588,16 @@ function renderComposer(nonce) {
       n8nAuto.checked = Boolean(settings.autoEnhance);
       n8nToggle.classList.toggle("on", Boolean(settings.toolCount));
       n8nToggle.title = settings.toolCount
-        ? "n8n MCP · " + settings.toolCount + " workflow" + (settings.toolCount === 1 ? "" : "s") + " discovered"
+        ? "n8n MCP · " + settings.toolCount + " tool" + (settings.toolCount === 1 ? "" : "s") + " discovered"
         : "n8n MCP tools";
       if (!n8nStatus.textContent || /Saving|Checking|Enhancing/.test(n8nStatus.textContent)) {
         if (settings.lastError) n8nStatus.textContent = "MCP: " + settings.lastError;
-        else if (settings.toolCount) n8nStatus.textContent = settings.toolCount + " workflow(s) available";
-        else n8nStatus.textContent = settings.tokenConfigured ? "MCP configured · not tested yet" : "MCP ready to test";
+        else if (settings.toolCount) n8nStatus.textContent = settings.toolCount + " MCP tool(s) available";
+        else n8nStatus.textContent = settings.tokenConfigured ? "MCP configured · press Test connection" : "MCP token not configured";
       }
       n8nToken.placeholder = settings.tokenConfigured
         ? "MCP token stored securely · enter a new token to replace"
-        : "MCP token · stored in VS Code SecretStorage";
+        : "MCP token · stored securely";
     }
 
     function renderProjectDecision(decision) {
@@ -628,12 +685,19 @@ function renderComposer(nonce) {
     function renderTools(items) {
       tools.innerHTML = "";
       if (!items || !items.length) return;
-      for (let index = 0; index < items.length; index++) {
-        const item = items[index];
+      for (const item of items) {
+        if (item.type === "narration") {
+          const note = document.createElement("p");
+          note.className = "work-note";
+          note.textContent = item.text || "";
+          tools.appendChild(note);
+          continue;
+        }
+
         const row = document.createElement("details");
         row.className = "tool-card " + (item.status || "");
         const hasPreview = Boolean((item.name === "file.write" || item.name === "file.patch") && item.preview && item.preview.lines && item.preview.lines.length);
-        row.open = hasPreview && (item.status === "running" || index >= items.length - 3);
+        row.open = item.status === "failed";
 
         const summary = document.createElement("summary");
         const kind = document.createElement("span");
@@ -681,14 +745,12 @@ function renderComposer(nonce) {
           sandboxInfo.push("OS security boundary: " + (item.securityBoundary ? "yes" : "no"));
           if (item.network) sandboxInfo.push("Network: " + item.network);
           if (item.discarded) sandboxInfo.push("Writes discarded: yes");
-          if (item.changedPaths && item.changedPaths.length) {
-            sandboxInfo.push("Temporary changes: " + item.changedPaths.join(", "));
-          }
+          if (item.changedPaths && item.changedPaths.length) sandboxInfo.push("Temporary changes: " + item.changedPaths.join(", "));
           if (sandboxInfo.length) detailParts.push(sandboxInfo.join("\\n"));
         }
         if (item.error) detailParts.push("Error\\n" + item.error);
         if (item.output) detailParts.push("Output\\n" + item.output);
-        if (!hasPreview && detailParts.length) {
+        if (detailParts.length) {
           const detail = document.createElement("pre");
           detail.className = "tool-detail";
           detail.textContent = detailParts.join("\\n\\n");
@@ -728,107 +790,156 @@ function renderComposer(nonce) {
       }
     }
     function toolKind(item) {
-      if (item.name === "file.write" || item.name === "file.patch" || item.name === "file.read") {
-        const name = String(item.path || "");
-        const dot = name.lastIndexOf(".");
-        return dot >= 0 ? name.slice(dot + 1).toUpperCase().slice(0, 4) : "FILE";
-      }
-      if (item.name === "dir.create" || item.name === "dir.list") return "DIR";
-      if (item.name === "workspace.inspect") return "WS";
-      if (item.name === "repo.search") return "FIND";
-      if (item.name === "tests.run") return "TEST";
-      if (item.name === "terminal.run") return "TERM";
-      if (item.name === "sandbox.run") return "SBOX";
-      if (item.name === "process.start" || item.name === "process.status" || item.name === "process.logs") return "PROC";
-      if (item.name === "browser.check" || item.name === "browser.interact") return "WEB";
-      if (item.name === "capability.invoke" || item.name === "capability.list") return "HUB";
+      if (item.name === "file.read" || item.name === "dir.list" || item.name === "workspace.inspect" || item.name === "repo.search") return "›";
+      if (item.name === "file.write" || item.name === "file.patch" || item.name === "dir.create") return "<>";
+      if (item.name === "terminal.run" || item.name === "tests.run" || item.name === "sandbox.run") return "$";
+      if (item.name === "process.start" || item.name === "process.status" || item.name === "process.logs") return "◆";
+      if (item.name === "browser.check" || item.name === "browser.interact") return "◉";
+      if (item.name === "capability.invoke" || item.name === "capability.list") return "◇";
       if (/^mcp_n8n_/.test(String(item.name || ""))) return "N8N";
-      if (item.name === "diagnostics.run") return "DIAG";
-      if (item.name === "git.diff" || item.name === "git.status") return "GIT";
-      return "TOOL";
+      if (item.name === "diagnostics.run") return "✓";
+      if (item.name === "git.diff" || item.name === "git.status") return "↕";
+      return "›";
     }
     function toolLabel(item) {
       const live = item.status === "running";
       if (item.name === "workspace.inspect") return live ? "Inspecting workspace" : "Inspected workspace";
       if (item.name === "dir.list") return (live ? "Listing " : "Listed ") + (item.path || "workspace");
-      if (item.name === "dir.create") return (live ? "Creating folder " : "Created folder ") + (item.path || "");
+      if (item.name === "dir.create") return (live ? "Creating " : "Created ") + (item.path || "folder");
       if (item.name === "file.read") return (live ? "Reading " : "Read ") + (item.path || "file");
-      if (item.name === "file.write") {
-        const verb = item.operation === "create"
-          ? (live ? "Creating " : "Created ")
-          : (live ? "Editing " : "Edited ");
-        return verb + (item.path || "file");
-      }
-      if (item.name === "file.patch") return (live ? "Patching " : "Patched ") + (item.path || "file");
+      if (item.name === "file.write" || item.name === "file.patch") return (live ? "Editing " : "Edited ") + (item.path || "file");
       if (item.name === "repo.search") return (live ? "Searching " : "Searched ") + (item.path || "workspace");
-      if (item.name === "tests.run") return live ? "Running tests" : "Ran tests";
-      if (item.name === "terminal.run") return (live ? "Running " : "Ran ") + (item.command || "command");
-      if (item.name === "sandbox.run") return (live ? "Running in sandbox " : "Sandbox ran ") + (item.command || "command");
+      if (item.name === "tests.run") return live ? "Running tests" : "Tests";
+      if (item.name === "terminal.run") return item.command || (live ? "Running command" : "Command");
+      if (item.name === "sandbox.run") return item.command || (live ? "Running sandbox" : "Sandbox");
       if (item.name === "process.start") {
-        if (!live && item.suppressed && item.reused) return "Reused running preview";
-        if (!live && item.suppressed && item.requiresLogs) return "Skipped restart until logs are read";
-        if (!live && item.suppressed && item.reason === "browser_check_owns_preview") return "Preview start handled by browser check";
-        return live ? "Starting preview process" : "Started preview process";
+        if (!live && item.suppressed && item.reused) return "Reused preview process";
+        if (!live && item.suppressed && item.requiresLogs) return "Preview restart needs logs";
+        return live ? "Starting preview" : "Preview process";
       }
-      if (item.name === "process.status") return live ? "Checking process status" : "Checked process status";
-      if (item.name === "process.logs") return live ? "Reading process logs" : "Read process logs";
-      if (item.name === "browser.check") return live ? "Checking preview" : "Checked preview";
-      if (item.name === "browser.interact") return live ? "Testing browser interaction" : (item.afterText ? "Observed " + item.afterText : "Verified browser interaction");
-      if (item.name === "diagnostics.run") return live ? "Checking diagnostics" : "Checked diagnostics";
+      if (item.name === "process.status") return live ? "Checking preview process" : "Preview status";
+      if (item.name === "process.logs") return live ? "Reading preview logs" : "Preview logs";
+      if (item.name === "browser.check") {
+        if (item.status === "failed") return "Browser check";
+        return (live ? "Checking browser" : "Browser") + (item.path ? "  " + item.path : "");
+      }
+      if (item.name === "browser.interact") {
+        if (item.status === "failed") return "Browser interaction";
+        if (!live && item.targetText && item.afterText) return 'Clicked "' + item.targetText + '" → "' + item.afterText + '"';
+        if (!live && item.afterText) return "Browser → " + item.afterText;
+        return live ? "Testing browser interaction" : "Verified browser interaction";
+      }
+      if (item.name === "diagnostics.run") return live ? "Checking diagnostics" : "Diagnostics";
       if (item.name === "git.diff") return live ? "Reviewing changes" : "Reviewed changes";
-      if (item.name === "git.status") return live ? "Checking Git status" : "Checked Git status";
-      if (item.name === "capability.invoke") return live ? "Researching documentation" : "Researched documentation";
-      if (item.name === "capability.list") return live ? "Checking available capabilities" : "Checked available capabilities";
+      if (item.name === "git.status") return live ? "Checking Git status" : "Git status";
+      if (item.name === "capability.invoke") return live ? "Researching" : "Research";
+      if (item.name === "capability.list") return live ? "Checking capabilities" : "Capabilities";
       if (/^mcp_n8n_/.test(String(item.name || ""))) {
-        const target = item.workflow || String(item.name).replace(/^mcp_n8n_/, "").replace(/_/g, " ");
+        const target = String(item.name).replace(/^mcp_n8n_/, "").replace(/_/g, " ");
         return (live ? "Running n8n workflow " : "Ran n8n workflow ") + target;
       }
       return item.name;
     }
-    function renderResult(state) {
-      result.innerHTML = "";
-      const files = state.fileDiffs && state.fileDiffs.length ? state.fileDiffs : (state.filesChanged || []).map((file) => ({ path: file, diff: "" }));
-      const title = document.createElement("p");
-      title.className = "result-title";
-      title.textContent = state.stage === "Complete" ? "Complete" : (state.stage === "Cancelled" ? "Stopped" : (state.stage || ""));
-      result.appendChild(title);
-      const hasFinalAssistant = (state.thread || []).some((item) => item.role === "assistant" && String(item.text || "").trim());
-      if (state.stage !== "Complete" || !hasFinalAssistant) {
-        const summary = document.createElement("p");
-        summary.className = "result-summary";
-        summary.textContent = outcomeText(state);
-        result.appendChild(summary);
+    function diffCounts(diff) {
+      let additions = 0;
+      let removals = 0;
+      for (const line of String(diff || "").split("\\n")) {
+        if (line.startsWith("+++") || line.startsWith("---")) continue;
+        if (line.startsWith("+")) additions += 1;
+        else if (line.startsWith("-")) removals += 1;
       }
-      if (state.verification && state.verification.status && state.verification.status !== "pending") {
-        const verify = document.createElement("p");
-        verify.className = "result-count";
-        const label = state.verification.status === "passed" ? "Verified" : "Verification issue";
-        verify.textContent = label + (state.verification.summary ? " — " + state.verification.summary : "");
-        result.appendChild(verify);
-      }
-      if (files.length) {
-        const count = document.createElement("p");
-        count.className = "result-count";
-        count.textContent = files.length + (files.length === 1 ? " file changed" : " files changed");
-        result.appendChild(count);
-        for (const file of files) {
-          const row = document.createElement("details");
-          row.className = "file";
-          const header = document.createElement("summary");
-          header.textContent = file.path;
-          row.appendChild(header);
-          if (file.diff) {
-            const pre = document.createElement("pre");
-            pre.textContent = file.diff;
-            row.appendChild(pre);
-          }
-          result.appendChild(row);
+      return { additions, removals };
+    }
+    function renderChangedFiles(state) {
+      changedFiles.innerHTML = "";
+      const files = state.fileDiffs && state.fileDiffs.length
+        ? state.fileDiffs
+        : (state.filesChanged || []).map((file) => ({ path: file, diff: "" }));
+      changedFiles.classList.toggle("on", files.length > 0);
+      if (!files.length) return;
+
+      const head = document.createElement("div");
+      head.className = "changed-head";
+      const count = document.createElement("span");
+      count.textContent = files.length + (files.length === 1 ? " file changed" : " files changed");
+      const hint = document.createElement("span");
+      hint.className = "changed-hint";
+      hint.textContent = "Expand to review";
+      head.appendChild(count);
+      head.appendChild(hint);
+      changedFiles.appendChild(head);
+
+      for (const file of files) {
+        const row = document.createElement("details");
+        row.className = "changed-row";
+        const summary = document.createElement("summary");
+        const icon = document.createElement("span");
+        icon.className = "changed-icon";
+        icon.textContent = "<>";
+        const label = document.createElement("span");
+        label.className = "changed-path";
+        label.textContent = file.path;
+        const counts = diffCounts(file.diff);
+        const stats = document.createElement("span");
+        stats.className = "changed-stats";
+        const add = document.createElement("span");
+        add.className = "tool-add";
+        add.textContent = "+" + counts.additions;
+        const remove = document.createElement("span");
+        remove.className = "tool-remove";
+        remove.textContent = "-" + counts.removals;
+        stats.appendChild(add);
+        stats.appendChild(remove);
+        summary.appendChild(icon);
+        summary.appendChild(label);
+        if (file.diff) summary.appendChild(stats);
+        row.appendChild(summary);
+        if (file.diff) {
+          const pre = document.createElement("pre");
+          pre.className = "changed-diff";
+          pre.textContent = file.diff;
+          row.appendChild(pre);
         }
+        changedFiles.appendChild(row);
       }
     }
-    function renderThread(items) {
+    function renderResult(state) {
+      result.innerHTML = "";
+      if (deferredFinal) {
+        const final = document.createElement("div");
+        final.className = "bubble assistant";
+        final.textContent = deferredFinal;
+        result.appendChild(final);
+      } else if (state.stage !== "Complete") {
+        const summary = document.createElement("p");
+        summary.className = state.stage === "Failed" ? "error" : "result-summary";
+        summary.textContent = outcomeText(state);
+        result.appendChild(summary);
+      } else {
+        const summary = outcomeText(state);
+        if (summary) {
+          const final = document.createElement("div");
+          final.className = "bubble assistant";
+          final.textContent = summary;
+          result.appendChild(final);
+        }
+      }
+
+      if (state.verification && state.verification.status === "failed") {
+        const verify = document.createElement("p");
+        verify.className = "error";
+        verify.textContent = "Verification issue" + (state.verification.summary ? " — " + state.verification.summary : "");
+        result.appendChild(verify);
+      }
+    }
+    function renderThread(items, deferLastAssistant) {
       messages.innerHTML = "";
-      for (const item of items) addMessage(item.role, item.text);
+      deferredFinal = "";
+      const shown = Array.isArray(items) ? items.slice() : [];
+      if (deferLastAssistant && shown.length && shown[shown.length - 1].role === "assistant") {
+        deferredFinal = String(shown.pop().text || "");
+      }
+      for (const item of shown) addMessage(item.role, item.text);
     }
     function addMessage(role, text) {
       const item = document.createElement("div");
@@ -867,7 +978,7 @@ function renderComposer(nonce) {
       if (message.type === "n8n-test-result") {
         n8nTest.disabled = Boolean(message.checking);
         if (message.checking) n8nStatus.textContent = "Checking n8n MCP…";
-        else if (message.ok) n8nStatus.textContent = message.count + " workflow(s) available";
+        else if (message.ok) n8nStatus.textContent = message.count + " MCP tool(s) available";
         else n8nStatus.textContent = "Failed: " + (message.message || "n8n MCP unavailable");
       }
       if (message.type === "enhanced-prompt") {
