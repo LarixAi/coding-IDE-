@@ -292,3 +292,8 @@ function requestJson({ baseUrl, pathname, method, body, timeout, token, signal }
 }
 
 module.exports = { N8nCapabilityProvider, ROUTES, DISCOVERY_PATH };
+
+module.exports = {
+  ...module.exports,
+  ...require("./mcp"),
+};
