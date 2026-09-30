@@ -3,7 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider, ControlledToolProvider } = require("../../../packages/agent-runtime");
-const { composerKeyAction, composerStage, composerActivity, compactTools, linePreview, diffsByFile, formatGoal, droppedPaths, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
+const { composerKeyAction, composerStage, composerActivity, compactTools, compactRunStream, linePreview, diffsByFile, formatGoal, droppedPaths, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
 const { describeFileRead } = require("../image-meta");
 const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels, finalAssistantText } = require("../composer-session");
 const { OllamaModelProvider } = require("../../../packages/agent-runtime/model-provider");
@@ -151,6 +151,25 @@ async function main() {
   assert.strictEqual(processCard[0].name, "process.start");
   assert.strictEqual(processCard[0].status, "running");
 
+  const mixedProtocolStream = compactRunStream({
+    decisions: [{
+      iteration: 1,
+      text: 'First, let\'s check the HTML content.\n{"name":"file_read","arguments":{"path":"public/index.html"}}',
+      toolCalls: [{ name: "file.read", args: { path: "public/index.html" } }],
+    }],
+    toolCalls: [{
+      iteration: 1,
+      name: "file.read",
+      args: { path: "public/index.html" },
+      result: { ok: true, data: { path: "public/index.html", contents: "<h1>Test</h1>" } },
+    }],
+  });
+  const mixedNarration = mixedProtocolStream.find((item) => item.type === "narration");
+  assert.ok(mixedNarration);
+  assert.ok(mixedNarration.text.includes("First, let's check the HTML content."));
+  assert.ok(!mixedNarration.text.includes("file_read"));
+  assert.ok(!mixedNarration.text.includes('"arguments"'));
+
   const repeatedWrite = compactTools({
     workspace: { state: "project" },
     toolCalls: [
@@ -175,6 +194,38 @@ async function main() {
   assert.strictEqual(secondEdit.operation, "edit");
   assert.ok(secondEdit.preview.lines.some((line) => line.type === "remove" && line.text.includes("2")));
   assert.ok(secondEdit.preview.lines.some((line) => line.type === "add" && line.text.includes("3")));
+
+
+  const stream = compactRunStream({
+    decisions: [{
+      iteration: 1,
+      text: "I found the button handler. I’ll update the page and verify it.",
+      toolCalls: [{ name: "file.patch" }],
+    }],
+    toolCalls: [{
+      iteration: 1,
+      directedBy: "model",
+      name: "file.patch",
+      args: { path: "src/app.js", oldText: "old", newText: "new" },
+      result: { ok: true, data: { path: "src/app.js" } },
+    }],
+  });
+  assert.strictEqual(stream[0].type, "narration");
+  assert.ok(stream[0].text.includes("update the page"));
+  assert.strictEqual(stream[1].type, "tool");
+  assert.strictEqual(stream[1].name, "file.patch");
+
+  const quietContextStream = compactRunStream({
+    decisions: [],
+    toolCalls: [{
+      iteration: 0,
+      directedBy: "context",
+      name: "workspace.inspect",
+      args: {},
+      result: { ok: true, data: { state: "project" } },
+    }],
+  });
+  assert.deepStrictEqual(quietContextStream, []);
 
   const files = diffsByFile("diff --git a/src/app.js b/src/app.js\n+ok\n", ["src/app.js"]);
   assert.strictEqual(files[0].path, "src/app.js");
@@ -222,7 +273,7 @@ async function main() {
   const html = renderComposer("nonce-value");
   assert.ok(html.includes("nonce-nonce-value"));
   assert.ok(html.includes("composerKeyAction"));
-  assert.ok(html.includes("Ask, drop a file, or use Voice"));
+  assert.ok(html.includes("Ask CodeMe anything, @ files or type /"));
   assert.ok(html.includes("id=\\\"mic\\\"") || html.includes('id="mic"'));
   assert.ok(html.includes("split(/\\r?\\n/)"));
   assert.ok(html.includes("select-mode"));
@@ -235,13 +286,17 @@ async function main() {
   assert.ok(html.includes("dataset.source"));
   assert.ok(html.includes("code-preview"));
   assert.ok(html.includes("tool-stats"));
+  assert.ok(html.includes("work-note"));
+  assert.ok(html.includes('id="changed-files"'));
+  assert.ok(html.includes("renderChangedFiles"));
+  assert.ok(html.includes('send.title = running ? "Add follow-up" : "Send"'));
+  assert.ok(!html.includes("if (sending || running) return;"));
   assert.ok(html.includes("project-decision"));
   assert.ok(html.includes("renderProjectDecision"));
   assert.ok(html.includes("No dependencies required"));
   assert.ok(html.includes("Created "));
   assert.ok(html.includes("Edited "));
-  assert.ok(html.includes("Patched "));
-  assert.ok(html.includes("Started preview process"));
+  assert.ok(html.includes("Preview process"));
   assert.ok(html.includes('id="new-chat"'));
   assert.ok(html.includes('id="history-toggle"'));
   assert.ok(html.includes('id="history-panel"'));
@@ -251,7 +306,7 @@ async function main() {
   assert.ok(html.includes('message.type === "submitting"'));
   assert.ok(html.includes('message.type === "accepted" && current(message)'));
   assert.ok(!html.includes("sameRequest("));
-  assert.ok(html.includes("Verified"));
+  assert.ok(html.includes("Verification issue"));
   assert.ok(!html.includes("qwen3.5:9b"));
   assert.ok(!html.includes("workbench.action.chat.open"));
 
@@ -528,6 +583,25 @@ async function main() {
     editText,
     "Done — I applied the requested change to `index.html` and verified the result in the browser.",
   );
+
+  const failedWithProtocolNoise = finalAssistantText({
+    lifecycle: "failed",
+    taskClass: "bug-fix",
+    filesChanged: ["public/script.js"],
+    outcome: {
+      summary: [
+        'Verification is still failing.',
+        '',
+        '\`\`\`json',
+        '{"name":"file_write","arguments":{"path":"public/script.js","content":"ignored"}}',
+        '\`\`\`',
+      ].join("\n"),
+    },
+  });
+  assert.ok(failedWithProtocolNoise.includes("Verification is still failing."));
+  assert.ok(!failedWithProtocolNoise.includes("file_write"));
+  assert.ok(!failedWithProtocolNoise.includes('"arguments"'));
+
 
   const layout = sessionFor(root, [
     { toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
