@@ -46,20 +46,15 @@ function patchPermissionPolicy(source) {
   let text = source;
   let count = 0;
 
-  // Workbench -> webview preload iframe.
-  const outerPattern = /const\s+allowRules\s*=\s*\[([^\]]*?local-network-access[^\]]*?)\];/g;
-  text = text.replace(outerPattern, (match, body) => {
+  // Both iframe layers define an allowRules array. The preload's inner
+  // frame keeps semicolons inside each entry, while the outer workbench frame
+  // joins plain feature names with "; ". Preserve whichever convention exists.
+  const allowPattern = /const\s+allowRules\s*=\s*\[([^\]]*?local-network-access[^\]]*?)\];/g;
+  text = text.replace(allowPattern, (match, body) => {
     if (/microphone/.test(body)) return match;
     count += 1;
-    return `const allowRules = [${body}, 'microphone'];`;
-  });
-
-  // Webview preload -> extension content iframe.
-  const innerPattern = /const\s+allowRules\s*=\s*\[([^\]]*?local-network-access;[^\]]*?)\];/g;
-  text = text.replace(innerPattern, (match, body) => {
-    if (/microphone/.test(body)) return match;
-    count += 1;
-    return `const allowRules = [${body}, 'microphone;'];`;
+    const feature = /local-network-access;/.test(body) ? "'microphone;'" : "'microphone'";
+    return `const allowRules = [${body}, ${feature}];`;
   });
 
   return { text, changed: count > 0, count };
