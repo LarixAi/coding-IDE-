@@ -15,8 +15,8 @@ const TOOLS = {
   "git.diff": [],
   "diagnostics.run": [],
   "tests.run": ["command"],
-  "browser.check": ["url"],
-  "browser.interact": ["url", "action"],
+  "browser.check": [],
+  "browser.interact": ["action"],
   "dir.create": ["path"],
   "dir.list": ["path"],
 };
