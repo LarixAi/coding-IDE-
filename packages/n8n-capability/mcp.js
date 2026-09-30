@@ -44,7 +44,7 @@ function parseMcpBody(text, id) {
 function categoryForTool(item) {
   const text = (String(item && item.name || "") + " " + String(item && item.description || "")).toLowerCase();
   if (/image|vision|visual|screenshot|photo|picture|ocr/.test(text)) return "image";
-  if (/pdf|document|document|extract|parse|file reader/.test(text)) return "document";
+  if (/pdf|document|extract|parse|file reader/.test(text)) return "document";
   if (/github|gitlab|repository|pull request|issue/.test(text)) return "github";
   if (/database|postgres|mysql|sqlite|sql|airtable|notion/.test(text)) return "data";
   if (/slack|email|gmail|message|notification|discord|teams/.test(text)) return "communication";
@@ -66,7 +66,8 @@ function imageFieldRecords(schema) {
     const rule = ruleValue && typeof ruleValue === "object" ? ruleValue : {};
     const lower = key.toLowerCase();
     const description = String(rule.description || "").toLowerCase();
-    const imageHint = IMAGE_WORDS.test(lower.replace(/[_-]+/g, " ")) || IMAGE_WORDS.test(description);
+    const imageHint = /(image|vision|visual|screenshot|photo|picture|ocr)/i.test(lower)
+      || IMAGE_WORDS.test(description);
     if (!imageHint) continue;
 
     const type = Array.isArray(rule.type) ? rule.type.find((item) => item !== "null") : rule.type;
