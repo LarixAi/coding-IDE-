@@ -147,13 +147,7 @@ function createBrowserInteractionRunner(options = {}) {
         });
 
         const endpoint = await waitForDevTools(profile, child, CDP_WAIT_MS);
-        const targets = await getJson(`http://127.0.0.1:${endpoint.port}/json/list`);
-        const target = (targets || []).find((item) => (
-          item
-          && item.type === "page"
-          && item.webSocketDebuggerUrl
-          && /^http:\/\/127\.0\.0\.1|^http:\/\/localhost/.test(String(item.url || ""))
-        )) || (targets || []).find((item) => item && item.type === "page" && item.webSocketDebuggerUrl);
+        const target = await waitForPageTarget(endpoint.port, checked.url, child, CDP_WAIT_MS);
 
         if (!target) {
           return {
@@ -617,6 +611,30 @@ async function waitForDevTools(profile, child, timeoutMs) {
   throw Object.assign(new Error("Timed out waiting for the browser automation endpoint."), { code: "browser_driver_timeout" });
 }
 
+async function waitForPageTarget(port, expectedUrl, child, timeoutMs) {
+  const deadline = Date.now() + Math.max(500, Number(timeoutMs || 0));
+  let fallback = null;
+  while (Date.now() < deadline) {
+    if (child && child.exitCode !== null) {
+      throw Object.assign(new Error(`The browser exited before a page target was ready (exit ${child.exitCode}).`), { code: "browser_driver_failed" });
+    }
+    try {
+      const targets = await getJson(`http://127.0.0.1:${port}/json/list`);
+      const pages = (targets || []).filter((item) => item && item.type === "page" && item.webSocketDebuggerUrl);
+      const exact = pages.find((item) => samePreviewUrl(item.url, expectedUrl));
+      if (exact) return exact;
+      const local = pages.find((item) => /^http:\/\/127\.0\.0\.1|^http:\/\/localhost/.test(String(item.url || "")));
+      if (local) fallback = local;
+      else if (pages.length) fallback = pages[0];
+      if (fallback && String(fallback.url || "") && String(fallback.url || "") !== "about:blank") return fallback;
+    } catch {
+      // DevToolsActivePort can appear slightly before /json/list exposes a page.
+    }
+    await delay(80);
+  }
+  return fallback;
+}
+
 function getJson(url) {
   return new Promise((resolve, reject) => {
     const req = http.get(url, { timeout: 2500 }, (res) => {
@@ -776,5 +794,6 @@ module.exports = {
   collectBrowserError,
   waitForObservedResult,
   waitForTextResult,
+  waitForPageTarget,
   createBrowserInteractionRunner,
 };
