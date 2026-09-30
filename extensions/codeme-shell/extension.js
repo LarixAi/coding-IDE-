@@ -13,6 +13,8 @@ const { ConversationStore } = require("./conversation-store");
 const { hasWorkspaceEditorInGroups } = require("./tab-policy");
 const { loadRuntimeEnv } = require("./runtime-config");
 const { N8nIntegration } = require("./n8n-integration");
+const { TerminalObserver } = require("./terminal-observer");
+const { ExternalToolRouter } = require("./external-tool-router");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -90,7 +92,7 @@ function activate(context) {
   });
   refreshModels();
 
-  const refreshHub = () => probeHub(composer.capabilities, composer.externalTools).then((hub) => {
+  const refreshHub = () => probeHub(composer.capabilities, composer.n8n).then((hub) => {
     state.hub = hub;
     applyHub(hubItem, state);
   });
@@ -581,7 +583,9 @@ class ComposerViewProvider {
     this.view = undefined;
     this.capabilities = N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null;
     this.n8n = new N8nIntegration(context);
-    this.externalTools = this.n8n;
+    this.terminalObserver = new TerminalObserver(vscode).start();
+    context.subscriptions.push(this.terminalObserver);
+    this.externalTools = new ExternalToolRouter([this.terminalObserver, this.n8n]);
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
       historyStore: new ConversationStore(path.join(context.globalStorageUri.fsPath, "composer-history")),
