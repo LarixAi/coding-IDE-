@@ -8,6 +8,7 @@ const {
   patchPermissionHandlers,
   patchPermissionPolicy,
   runtimeRoots,
+  patchBuiltFiles,
 } = require("./patch-codeme-microphone");
 
 const permissionFixture = `
@@ -80,5 +81,23 @@ const packagedOut = path.join(
 fs.mkdirSync(packagedOut, { recursive: true });
 const discoveredBoth = runtimeRoots(tempRoot);
 assert.deepStrictEqual(discoveredBoth.roots, [devOut, packagedOut]);
+
+// Full repeat-run regression: the launcher executes this patch on every start.
+// A second run must recognize the already-patched handler/policy as valid.
+const repeatRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-mic-repeat-"));
+const repeatOut = path.join(repeatRoot, "code-oss", "out");
+fs.mkdirSync(repeatOut, { recursive: true });
+fs.writeFileSync(path.join(repeatOut, "electron-main.js"), permissionFixture);
+fs.writeFileSync(path.join(repeatOut, "webview.js"), policyFixture);
+
+const firstRun = patchBuiltFiles(repeatRoot);
+assert.ok(firstRun.permissionHandlerPatches >= 1);
+assert.ok(firstRun.permissionPolicyPatches >= 1);
+assert.ok(firstRun.changedFiles.length >= 2);
+
+const secondRun = patchBuiltFiles(repeatRoot);
+assert.ok(secondRun.permissionHandlerPatches >= 1);
+assert.ok(secondRun.permissionPolicyPatches >= 1);
+assert.strictEqual(secondRun.changedFiles.length, 0);
 
 console.log("ok CodeMe microphone host patch");
