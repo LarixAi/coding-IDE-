@@ -501,6 +501,11 @@ async function executePipelineRun(run, options, followUpQueue) {
     }
   }
   const externalToolNames = new Set(externalDefinitions.map((tool) => tool && tool.name).filter(Boolean));
+  const externalToolMeta = new Map(
+    externalDefinitions
+      .filter((tool) => tool && tool.name)
+      .map((tool) => [tool.name, tool.external && typeof tool.external === "object" ? tool.external : {}]),
+  );
 
   if (
     imageAttachments.length
@@ -612,7 +617,20 @@ async function executePipelineRun(run, options, followUpQueue) {
       } else if (name === "capability.list" || name === "capability.invoke") {
         result = await dispatchCapability(options.capabilities, run, call, signal, capabilityRegistry);
       } else if (externalToolNames.has(name) && options.externalTools && typeof options.externalTools.call === "function") {
-        result = await options.externalTools.call(name, call.args, signal);
+        const meta = externalToolMeta.get(name) || {};
+        if (meta.sideEffect && run.mode !== "controlled") {
+          result = {
+            ok: false,
+            tool: name,
+            trusted: false,
+            error: {
+              code: "external_action_blocked_by_mode",
+              message: "External n8n actions are only available in Code mode and still require n8n action permission.",
+            },
+          };
+        } else {
+          result = await options.externalTools.call(name, call.args, signal);
+        }
       } else if (name === "process.start") {
         const status = await safeContextCall(registry, "process.status", {});
         const data = status && status.ok && status.data;
