@@ -9,6 +9,18 @@ const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const INBOX = ".codeme/inbox";
 
+async function readAttachmentBytes(root, item) {
+  if (!root) throw Object.assign(new Error("No workspace is open"), { code: "no_workspace" });
+  const relative = String(item && item.path || "").replace(/^\/+/, "");
+  if (!relative) throw Object.assign(new Error("Attachment path is missing"), { code: "invalid_attachment" });
+  const base = path.resolve(root);
+  const absolute = path.resolve(base, relative);
+  if (absolute !== base && !absolute.startsWith(base + path.sep)) {
+    throw Object.assign(new Error("Attachment path escaped the workspace"), { code: "path_escape" });
+  }
+  return fs.promises.readFile(absolute);
+}
+
 async function listOllamaModels(baseUrl = "http://127.0.0.1:11434", provider = "ollama", sourceLabel = "", options = {}) {
   const { OllamaModelProvider } = require("../../packages/agent-runtime/model-provider");
   const listed = await new OllamaModelProvider({ baseUrl }).listModels(options);
@@ -498,6 +510,7 @@ class ComposerSession {
           type: item.type,
           size: item.size,
         })),
+        readAttachment: (item) => readAttachmentBytes(this.root, item),
         inferRequirements: true,
         timeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
         maxIterations: this.composerMode === "code" ? 20 : 12,
