@@ -140,9 +140,7 @@ function createBrowserInteractionRunner(options = {}) {
           "--disable-sync",
           "--disable-extensions",
           "--disable-features=Translate",
-          // Start on a neutral page. Navigating here and again through CDP can
-          // make newer Chromium report the replaced first request as ERR_ABORTED.
-          "about:blank",
+          checked.url,
         ], {
           stdio: "ignore",
           detached: false,
@@ -181,7 +179,12 @@ function createBrowserInteractionRunner(options = {}) {
         await client.send("Log.enable");
         await client.send("Page.enable");
         await client.send("Network.enable");
-        await client.send("Page.navigate", { url: checked.url });
+        // Chrome was launched on the requested preview already. A second
+        // navigate to the same URL can cancel the first request and emit
+        // Network.loadingFailed net::ERR_ABORTED on newer Chromium.
+        if (!samePreviewUrl(target.url, checked.url)) {
+          await client.send("Page.navigate", { url: checked.url });
+        }
         await waitForDocumentReady(client, CDP_WAIT_MS);
 
         const stepResults = [];
@@ -262,6 +265,18 @@ function createBrowserInteractionRunner(options = {}) {
       }
     },
   };
+}
+
+function samePreviewUrl(left, right) {
+  try {
+    const a = new URL(String(left || ""));
+    const b = new URL(String(right || ""));
+    a.hash = "";
+    b.hash = "";
+    return a.toString() === b.toString();
+  } catch {
+    return false;
+  }
 }
 
 function canonicalBrowserAction(value) {
@@ -744,6 +759,7 @@ module.exports = {
   browserCandidates,
   findBrowserExecutable,
   validateLocalUrl,
+  samePreviewUrl,
   locateExpression,
   clickExpression,
   observeExpression,
