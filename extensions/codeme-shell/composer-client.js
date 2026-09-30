@@ -103,9 +103,10 @@ function composerActivity(run) {
   if (stage === "Planning") return "Planning…";
   if (stage === "Searching") return target ? `Searching ${target}` : "Searching…";
   if (stage === "Reading") {
-    if (run && run.inFlight && run.inFlight.kind === "vision") {
+    if (run && run.inFlight && (run.inFlight.kind === "vision" || run.inFlight.kind === "n8n-vision")) {
       const count = Number(run.inFlight.imageCount || 1);
-      return "Analyzing " + count + " attached image" + (count === 1 ? "" : "s") + "…";
+      const via = run.inFlight.kind === "n8n-vision" ? " with n8n" : "";
+      return "Analyzing " + count + " attached image" + (count === 1 ? "" : "s") + via + "…";
     }
     const tool = run && run.inFlight && run.inFlight.name;
     if (tool === "workspace.inspect") return "Inspecting workspace…";
