@@ -80,18 +80,37 @@ function walk(root, output = []) {
   return output;
 }
 
-function patchBuiltFiles(root) {
+function runtimeRoots(root) {
   const appBundle = path.join(root, "code-oss", ".build", "electron", "Code - OSS.app");
-  const resourcesOut = path.join(appBundle, "Contents", "Resources", "app", "out");
-  if (!fs.existsSync(resourcesOut)) {
-    throw new Error(`Code - OSS built resources were not found at ${resourcesOut}`);
+  const candidates = [
+    // CodeMe currently launches the pinned Code - OSS development build with
+    // VSCODE_DEV=1. In that mode the Electron binary lives in .build/electron,
+    // while compiled application code is loaded from code-oss/out.
+    path.join(root, "code-oss", "out"),
+    // Keep packaged production builds supported for later distribution work.
+    path.join(appBundle, "Contents", "Resources", "app", "out"),
+  ];
+  return {
+    appBundle,
+    roots: candidates.filter((candidate, index) => (
+      fs.existsSync(candidate) && candidates.indexOf(candidate) === index
+    )),
+  };
+}
+
+function patchBuiltFiles(root) {
+  const discovered = runtimeRoots(root);
+  const appBundle = discovered.appBundle;
+  if (!discovered.roots.length) {
+    throw new Error(`Code - OSS runtime output was not found. Expected development output at ${path.join(root, "code-oss", "out")} or packaged output under ${path.join(appBundle, "Contents", "Resources", "app", "out")}`);
   }
 
   let permissionHandlerPatches = 0;
   let permissionPolicyPatches = 0;
   const changedFiles = [];
 
-  for (const file of walk(resourcesOut)) {
+  for (const runtimeRoot of discovered.roots) {
+    for (const file of walk(runtimeRoot)) {
     let source;
     try {
       const stat = fs.statSync(file);
@@ -108,15 +127,22 @@ function patchBuiltFiles(root) {
 
     const handler = patchPermissionHandlers(source);
     const policy = patchPermissionPolicy(handler.text);
-    if (handler.changed || policy.changed) {
-      fs.writeFileSync(file, policy.text);
-      changedFiles.push(path.relative(root, file));
-      permissionHandlerPatches += handler.count;
-      permissionPolicyPatches += policy.count;
+      if (handler.changed || policy.changed) {
+        fs.writeFileSync(file, policy.text);
+        changedFiles.push(path.relative(root, file));
+        permissionHandlerPatches += handler.count;
+        permissionPolicyPatches += policy.count;
+      }
     }
   }
 
-  return { appBundle, permissionHandlerPatches, permissionPolicyPatches, changedFiles };
+  return {
+    appBundle,
+    runtimeRoots: discovered.roots.map((item) => path.relative(root, item)),
+    permissionHandlerPatches,
+    permissionPolicyPatches,
+    changedFiles,
+  };
 }
 
 function ensureMicrophoneUsageDescription(appBundle) {
@@ -144,6 +170,7 @@ function main() {
     extensionId: EXTENSION_ID,
     permissionHandlerPatches: result.permissionHandlerPatches,
     permissionPolicyPatches: result.permissionPolicyPatches,
+    runtimeRoots: result.runtimeRoots,
     changedFiles: result.changedFiles,
     at: new Date().toISOString(),
   }, null, 2));
@@ -173,5 +200,6 @@ module.exports = {
   MICROPHONE_DESCRIPTION,
   patchPermissionHandlers,
   patchPermissionPolicy,
+  runtimeRoots,
   patchBuiltFiles,
 };
