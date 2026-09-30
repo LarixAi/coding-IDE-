@@ -4,7 +4,7 @@ const {
   MARKER,
   patchPermissionHandlers,
   patchPermissionPolicy,
-} = require("../patch-codeme-microphone");
+} = require("./patch-codeme-microphone");
 
 const permissionFixture = `
 const allowedPermissionsInWebview = new Set([
