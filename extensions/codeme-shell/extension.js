@@ -633,7 +633,7 @@ class ComposerViewProvider {
           if (!baseUrl) {
             throw Object.assign(new Error("Remote Ollama server is not configured"), { code: "unknown_provider" });
           }
-          return wrapToolCallCompat(new OllamaModelProvider({ baseUrl }));
+          return wrapResponsePolicy(wrapToolCallCompat(new OllamaModelProvider({ baseUrl })));
         }
         throw Object.assign(new Error(`Provider ${selection.provider} is not connected`), { code: "unknown_provider" });
       },
