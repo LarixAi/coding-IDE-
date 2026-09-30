@@ -165,6 +165,7 @@ class ComposerSession {
     this.createProvider = options.createProvider;
     this.createRegistry = options.createRegistry;
     this.capabilities = options.capabilities || null;
+    this.n8n = options.n8n || null;
     this.root = options.root || "";
     this.attachments = [];
     this.models = [];
@@ -218,6 +219,7 @@ class ComposerSession {
       attachments: this.attachments.map((item) => ({ ...item })),
       conversationId: this.conversationId,
       conversations: this.historyStore ? this.historyStore.list(this.root) : [],
+      n8n: this.n8n && typeof this.n8n.snapshot === "function" ? this.n8n.snapshot() : null,
     };
   }
 
@@ -342,6 +344,56 @@ class ComposerSession {
     return { ok: true };
   }
 
+  async configureN8n(patch) {
+    if (!this.n8n || typeof this.n8n.update !== "function") return reject("n8n_unavailable", "n8n integration is not configured.");
+    try {
+      const settings = await this.n8n.update(patch || {});
+      this.notice = "";
+      this.emit();
+      return { ok: true, settings };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.notice = `n8n settings failed: ${message}`;
+      this.emit();
+      return reject("n8n_settings_failed", message);
+    }
+  }
+
+  async testN8n() {
+    if (!this.n8n || typeof this.n8n.test !== "function") return reject("n8n_unavailable", "n8n integration is not configured.");
+    try {
+      const result = await this.n8n.test();
+      this.notice = `${result.count} workflow${result.count === 1 ? "" : "s"} available`;
+      this.emit();
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.notice = `n8n connection failed: ${message}`;
+      this.emit();
+      return reject("n8n_connection_failed", message);
+    }
+  }
+
+  async enhanceDraft(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return reject("empty", "Enter a prompt first.");
+    if (!this.n8n || typeof this.n8n.enhance !== "function") return { ok: true, prompt: raw, source: "none" };
+    try {
+      const result = await this.n8n.enhance(raw, {
+        conversation: this.thread,
+        workspace: typeof this.n8n.workspaceContext === "function" ? this.n8n.workspaceContext(this.root) : {},
+      });
+      this.notice = result.source === "n8n" ? "Prompt enhanced by n8n" : "Prompt enhanced locally";
+      this.emit();
+      return { ok: true, prompt: result.prompt, source: result.source };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.notice = `Prompt enhancement failed: ${message}`;
+      this.emit();
+      return reject("enhance_failed", message);
+    }
+  }
+
   ensureConversation(title) {
     if (this.conversationId || !this.historyStore) return;
     const conversation = this.historyStore.create(this.root, title);
@@ -350,12 +402,32 @@ class ComposerSession {
 
   async submit(text, epoch) {
     if (this.running) return reject("busy", "A run is already in progress.");
-    const goal = formatGoal(text, this.attachments);
-    if (!goal.trim()) return reject("empty", "Enter a message first.");
+    const originalGoal = formatGoal(text, this.attachments);
+    if (!originalGoal.trim()) return reject("empty", "Enter a message first.");
     if (!this.selected) return reject("no_model", "No local model is installed.");
 
-    const visibleText = String(text || "").trim() || goal;
+    const visibleText = String(text || "").trim() || originalGoal;
     const priorThread = this.thread.map((item) => ({ ...item }));
+    let goal = originalGoal;
+    let promptEnhancement = null;
+    if (this.n8n && typeof this.n8n.enhanceIfEnabled === "function") {
+      try {
+        const enhanced = await this.n8n.enhanceIfEnabled(originalGoal, {
+          conversation: priorThread,
+          workspace: typeof this.n8n.workspaceContext === "function" ? this.n8n.workspaceContext(this.root) : {},
+        });
+        if (enhanced && enhanced.source !== "none" && String(enhanced.prompt || "").trim()) {
+          goal = String(enhanced.prompt).trim();
+          promptEnhancement = {
+            source: enhanced.source === "n8n" ? "external" : "local",
+            original: originalGoal.slice(0, 12000),
+            enhanced: goal.slice(0, 12000),
+          };
+        }
+      } catch (error) {
+        this.notice = `Prompt enhancement skipped: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
     this.ensureConversation(visibleText);
 
     let baseThread = priorThread.concat([{ role: "user", text: visibleText }]);
@@ -371,7 +443,7 @@ class ComposerSession {
     const requestId = crypto.randomBytes(8).toString("hex");
     if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
     const provider = this.createProvider(this.selected);
-    const registry = this.createRegistry(this.mode);
+    const registry = await this.createRegistry(this.mode);
     this.requestId = requestId;
     this.runId = "";
     this.running = true;
@@ -401,6 +473,8 @@ class ComposerSession {
     try {
       handle = startAgentRun({
         goal,
+        originalGoal,
+        promptEnhancement,
         model: this.selected.id,
         providerName: provider.name || "ollama",
         provider,

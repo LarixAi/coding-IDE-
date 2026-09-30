@@ -193,7 +193,7 @@ function resolveRuleDecision(input = {}) {
   }
 
   if (facts.dependencyFreeStatic) {
-    if (!isStaticScaffoldTool(name)) {
+    if (!isStaticScaffoldTool(name) && !facts.externalReadOnlyTool) {
       candidates.push(candidate(
         "strategy",
         "strategy.static_site",

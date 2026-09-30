@@ -1,5 +1,5 @@
 const { ModelProvider, OllamaModelProvider } = require("./model-provider");
-const { ToolProvider, ReadOnlyToolProvider, ControlledToolProvider, ToolRegistry } = require("./tool-registry");
+const { ToolProvider, ReadOnlyToolProvider, ControlledToolProvider, CompositeToolProvider, ToolRegistry } = require("./tool-registry");
 const { ExternalCapabilityProvider, CapabilityRegistry } = require("./capability");
 const { RunStore } = require("./run-store");
 const { createRun, startAgentRun, resumeRun, applyFollowUp } = require("./agent-run");
@@ -16,6 +16,7 @@ module.exports = {
   ToolProvider,
   ReadOnlyToolProvider,
   ControlledToolProvider,
+  CompositeToolProvider,
   ToolRegistry,
   ExternalCapabilityProvider,
   CapabilityRegistry,

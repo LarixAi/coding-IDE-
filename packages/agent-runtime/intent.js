@@ -1,7 +1,7 @@
 // Negation-aware intent helpers.
 // Keep explicit "do not edit" language separate from real edit intent.
 
-const EDIT_VERBS = "(?:edit|change|modify|update|patch|write|rewrite|implement|fix|repair|refactor|create|add|remove|delete|apply|touch)";
+const EDIT_VERBS = "(?:edit|change|modify|update|patch|write|rewrite|implement|fix|repair|refactor|create|recreate|add|remove|delete|apply|touch|improve|restyle|redesign|scaffold)";
 const NEGATION = "(?:do\\s+not|don[\'’]?t|dont|never|must\\s+not|should\\s+not|shouldn[\'’]?t|will\\s+not|won[\'’]?t)";
 
 function normalize(goal) {

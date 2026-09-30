@@ -326,6 +326,35 @@ async function runRejectsInvalidArguments() {
   });
 }
 
+async function runQwenContextProfile() {
+  let request = null;
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      request = JSON.parse(body);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ message: { role: "assistant", content: "ok" } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const provider = new OllamaModelProvider({ baseUrl: `http://127.0.0.1:${server.address().port}` });
+    await provider.complete({
+      model: "qwen3.5:9b",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [toolDefinition()],
+    });
+    assert.strictEqual(request.options.num_ctx, 32768);
+    assert.strictEqual(request.options.num_predict, 8192);
+    assert.strictEqual(request.options.temperature, 0);
+    assert.strictEqual(request.think, false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 async function main() {
   await runNativeToolCall();
   await runJsonContentFallback();
@@ -336,6 +365,7 @@ async function main() {
   await runRejectsUnofferedQwenShorthand();
   await runRejectsUnofferedTool();
   await runRejectsInvalidArguments();
+  await runQwenContextProfile();
   console.log("model provider tool-call compatibility passed");
 }
 

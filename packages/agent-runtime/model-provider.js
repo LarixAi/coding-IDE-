@@ -97,8 +97,18 @@ function chatBody(input) {
     think: false,
     messages: (input.messages || []).map(toOllamaMessage),
     tools: (input.tools || []).map(toOllamaTool),
-    options: { temperature: 0 },
+    options: {
+      temperature: 0,
+      num_ctx: boundedGenerationNumber(process.env.CODEME_OLLAMA_NUM_CTX, 32768, 8192, 262144),
+      num_predict: boundedGenerationNumber(process.env.CODEME_OLLAMA_NUM_PREDICT, 8192, 1024, 16384),
+    },
   };
+}
+
+function boundedGenerationNumber(raw, fallback, min, max) {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(value)));
 }
 
 function toOllamaMessage(message) {
