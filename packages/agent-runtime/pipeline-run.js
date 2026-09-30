@@ -153,6 +153,14 @@ function isInteractiveGoal(goal) {
   return /\b(click|button|form|submit|interaction|interact|dropdown|input|working|works)\b/i.test(String(goal || ""));
 }
 
+function isRunGoal(run) {
+  if (run && run.taskClass === "run") return true;
+  const goal = String(run && run.goal || "");
+  if (hasEditIntent(goal)) return false;
+  return /\b(run|start|launch|serve|open)\b/i.test(goal)
+    && /\b(existing|current|website|site|web app|app|application|project|server|preview|it|this|that)\b/i.test(goal);
+}
+
 function successfulCallAfter(run, startIndex, names) {
   for (let index = startIndex + 1; index < run.toolCalls.length; index += 1) {
     const call = run.toolCalls[index];
@@ -289,6 +297,38 @@ async function createVerifier(run, context) {
         detail: ok ? "npm test passed" : summarize(tests),
       });
       if (ok) evidence.push("tests.run");
+    }
+
+    if (isRunGoal(run)) {
+      const browserRequired = isWebGoal(run.goal);
+      const browserName = isInteractiveGoal(run.goal) ? "browser.interact" : "browser.check";
+      const browserCall = browserRequired
+        ? latestSuccessfulCallBefore(run, run.toolCalls.length, browserName)
+        : null;
+      const processCall = latestSuccessfulCallBefore(run, run.toolCalls.length, "process.start")
+        || latestSuccessfulCallBefore(run, run.toolCalls.length, "process.status");
+
+      if (browserRequired) {
+        items.push({
+          id: "run-browser",
+          label: browserName === "browser.interact" ? "Running website interaction" : "Running website preview",
+          ok: Boolean(browserCall),
+          detail: browserCall
+            ? "The existing website was verified in the CodeMe-owned browser preview"
+            : "Start or reuse the existing application process, then run " + browserName + " against the CodeMe-owned preview before finishing.",
+        });
+        if (browserCall) evidence.push(browserName);
+      } else {
+        items.push({
+          id: "run-process",
+          label: "Running application process",
+          ok: Boolean(processCall),
+          detail: processCall
+            ? "The existing application process is running"
+            : "Start or confirm the existing application process with process.start or process.status before finishing.",
+        });
+        if (processCall) evidence.push(processCall.name);
+      }
     }
 
     const webChanged = run.filesChanged.some((path) => WEB_FILE.test(path));
