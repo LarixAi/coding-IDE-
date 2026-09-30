@@ -3,6 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { N8nIntegration, listWorkspaceHints } = require("../n8n-integration");
+const { renderComposer } = require("../composer-view");
 
 function fakeContext() {
   const state = new Map();
@@ -66,6 +67,18 @@ async function main() {
 
   await n8n.update({ mcpToken: "" });
   assert.strictEqual(await context.secrets.get("codeme.n8n.mcpToken"), undefined);
+
+  const html = renderComposer("n8n-test-nonce");
+  assert.ok(html.includes('id="n8n-toggle"'));
+  assert.ok(html.includes('id="n8n-panel"'));
+  assert.ok(html.includes('id="n8n-test"'));
+  assert.ok(html.includes('id="n8n-auto"'));
+  assert.ok(html.includes('id="enhance"'));
+  assert.ok(html.includes('type: "n8n-test"'));
+  assert.ok(html.includes('type: "enhance-prompt"'));
+  const scripts = [...html.matchAll(/<script[^>]*>([\\s\\S]*?)<\\/script>/g)];
+  assert.ok(scripts.length >= 1);
+  for (const script of scripts) new Function(script[1]);
 
   console.log("n8n integration settings and preflight passed");
 }
