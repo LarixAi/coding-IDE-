@@ -1,23 +1,28 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { startAgentRun } = require("../../packages/agent-runtime");
+const { startAgentRun, startPipelineRun } = require("../../packages/agent-runtime");
 const { stripNegatedEditing } = require("../../packages/agent-runtime/intent");
-const { composerStage, composerActivity, compactTools, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
+const { composerStage, composerActivity, compactTools, compactRunStream, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
 
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const INBOX = ".codeme/inbox";
 
-async function listOllamaModels(baseUrl = "http://127.0.0.1:11434", provider = "ollama", sourceLabel = "") {
+async function listOllamaModels(baseUrl = "http://127.0.0.1:11434", provider = "ollama", sourceLabel = "", options = {}) {
   const { OllamaModelProvider } = require("../../packages/agent-runtime/model-provider");
-  const listed = await new OllamaModelProvider({ baseUrl }).listModels();
+  const listed = await new OllamaModelProvider({ baseUrl }).listModels(options);
   return listed.map((model) => modelRecord(provider || model.provider || "ollama", model.id, sourceLabel));
 }
 
 function modelRecord(provider, id, sourceLabel = "") {
   const label = modelLabel(id);
-  return { provider, id, label: sourceLabel ? `${sourceLabel} · ${label}` : label };
+  return {
+    provider,
+    id,
+    source: sourceLabel || "",
+    label: sourceLabel ? `${sourceLabel} · ${label}` : label,
+  };
 }
 
 function modelLabel(id) {
@@ -165,10 +170,11 @@ class ComposerSession {
     this.createProvider = options.createProvider;
     this.createRegistry = options.createRegistry;
     this.capabilities = options.capabilities || null;
-    this.n8n = options.n8n || null;
+    this.externalTools = options.externalTools || null;
     this.root = options.root || "";
     this.attachments = [];
     this.models = [];
+    this.modelSources = [];
     this.selected = null;
     this.composerMode = normalizeComposerMode(this.selectionStore.getMode ? this.selectionStore.getMode() : "ask");
     this.mode = agentModeFor(this.composerMode);
@@ -182,6 +188,7 @@ class ComposerSession {
     this.filesChanged = [];
     this.fileDiffs = [];
     this.tools = [];
+    this.stream = [];
     this.thread = [];
     this.verification = null;
     this.projectDecision = null;
@@ -208,18 +215,19 @@ class ComposerSession {
       filesChanged: this.filesChanged.slice(),
       fileDiffs: this.fileDiffs.map((item) => ({ ...item })),
       tools: this.tools.map((item) => ({ ...item })),
+      stream: this.stream.map((item) => ({ ...item })),
       thread: this.thread.map((item) => ({ ...item })),
       verification: this.verification,
       projectDecision: this.projectDecision ? { ...this.projectDecision } : null,
       diff: this.diff,
       models: this.models.map((model) => ({ ...model })),
+      modelSources: this.modelSources.map((source) => ({ ...source })),
       selected: this.selected ? { ...this.selected } : null,
       mode: this.mode,
       composerMode: this.composerMode,
       attachments: this.attachments.map((item) => ({ ...item })),
       conversationId: this.conversationId,
       conversations: this.historyStore ? this.historyStore.list(this.root) : [],
-      n8n: this.n8n && typeof this.n8n.snapshot === "function" ? this.n8n.snapshot() : null,
     };
   }
 
@@ -288,6 +296,7 @@ class ComposerSession {
     this.filesChanged = [];
     this.fileDiffs = [];
     this.tools = [];
+    this.stream = [];
     this.verification = null;
     this.projectDecision = null;
     this.diff = "";
@@ -296,11 +305,44 @@ class ComposerSession {
   }
 
   async refreshModels() {
-    this.models = await this.listModels();
+    let discovered;
+    try {
+      discovered = await this.listModels();
+    } catch (error) {
+      discovered = {
+        models: [],
+        sources: [{
+          id: "models",
+          label: "Models",
+          configured: true,
+          available: false,
+          count: 0,
+          message: error instanceof Error ? error.message : String(error),
+        }],
+      };
+    }
+
+    const nextModels = Array.isArray(discovered)
+      ? discovered
+      : Array.isArray(discovered && discovered.models) ? discovered.models : [];
+    const nextSources = Array.isArray(discovered && discovered.sources) ? discovered.sources : [];
+
     const saved = this.selectionStore.get();
-    const match = saved && this.models.find((model) => model.provider === saved.provider && model.id === saved.id);
-    this.selected = match || this.models[0] || null;
-    if (this.selected) this.selectionStore.set({ provider: this.selected.provider, id: this.selected.id });
+    const savedMatch = saved && nextModels.find((model) => model.provider === saved.provider && model.id === saved.id);
+    const currentMatch = this.selected && nextModels.find((model) => (
+      model.provider === this.selected.provider && model.id === this.selected.id
+    ));
+
+    this.models = nextModels;
+    this.modelSources = nextSources;
+    this.selected = savedMatch || currentMatch || nextModels[0] || null;
+
+    // Only overwrite the persisted preference when it still exists, or when
+    // there was no previous preference. A temporarily offline remote server
+    // must not silently replace the user's chosen Server model with Local.
+    if (this.selected && (savedMatch || !saved)) {
+      this.selectionStore.set({ provider: this.selected.provider, id: this.selected.id });
+    }
     this.emit();
     return this.selected;
   }
@@ -344,56 +386,6 @@ class ComposerSession {
     return { ok: true };
   }
 
-  async configureN8n(patch) {
-    if (!this.n8n || typeof this.n8n.update !== "function") return reject("n8n_unavailable", "n8n integration is not configured.");
-    try {
-      const settings = await this.n8n.update(patch || {});
-      this.notice = "";
-      this.emit();
-      return { ok: true, settings };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.notice = `n8n settings failed: ${message}`;
-      this.emit();
-      return reject("n8n_settings_failed", message);
-    }
-  }
-
-  async testN8n() {
-    if (!this.n8n || typeof this.n8n.test !== "function") return reject("n8n_unavailable", "n8n integration is not configured.");
-    try {
-      const result = await this.n8n.test();
-      this.notice = `${result.count} workflow${result.count === 1 ? "" : "s"} available`;
-      this.emit();
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.notice = `n8n connection failed: ${message}`;
-      this.emit();
-      return reject("n8n_connection_failed", message);
-    }
-  }
-
-  async enhanceDraft(text) {
-    const raw = String(text || "").trim();
-    if (!raw) return reject("empty", "Enter a prompt first.");
-    if (!this.n8n || typeof this.n8n.enhance !== "function") return { ok: true, prompt: raw, source: "none" };
-    try {
-      const result = await this.n8n.enhance(raw, {
-        conversation: this.thread,
-        workspace: typeof this.n8n.workspaceContext === "function" ? this.n8n.workspaceContext(this.root) : {},
-      });
-      this.notice = result.source === "n8n" ? "Prompt enhanced by n8n" : "Prompt enhanced locally";
-      this.emit();
-      return { ok: true, prompt: result.prompt, source: result.source };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.notice = `Prompt enhancement failed: ${message}`;
-      this.emit();
-      return reject("enhance_failed", message);
-    }
-  }
-
   ensureConversation(title) {
     if (this.conversationId || !this.historyStore) return;
     const conversation = this.historyStore.create(this.root, title);
@@ -401,33 +393,44 @@ class ComposerSession {
   }
 
   async submit(text, epoch) {
-    if (this.running) return reject("busy", "A run is already in progress.");
-    const originalGoal = formatGoal(text, this.attachments);
-    if (!originalGoal.trim()) return reject("empty", "Enter a message first.");
-    if (!this.selected) return reject("no_model", "No local model is installed.");
+    const goal = formatGoal(text, this.attachments);
+    if (!goal.trim()) return reject("empty", "Enter a message first.");
 
-    const visibleText = String(text || "").trim() || originalGoal;
-    const priorThread = this.thread.map((item) => ({ ...item }));
-    let goal = originalGoal;
-    let promptEnhancement = null;
-    if (this.n8n && typeof this.n8n.enhanceIfEnabled === "function") {
-      try {
-        const enhanced = await this.n8n.enhanceIfEnabled(originalGoal, {
-          conversation: priorThread,
-          workspace: typeof this.n8n.workspaceContext === "function" ? this.n8n.workspaceContext(this.root) : {},
-        });
-        if (enhanced && enhanced.source !== "none" && String(enhanced.prompt || "").trim()) {
-          goal = String(enhanced.prompt).trim();
-          promptEnhancement = {
-            source: enhanced.source === "n8n" ? "external" : "local",
-            original: originalGoal.slice(0, 12000),
-            enhanced: goal.slice(0, 12000),
-          };
-        }
-      } catch (error) {
-        this.notice = `Prompt enhancement skipped: ${error instanceof Error ? error.message : String(error)}`;
+    const visibleText = String(text || "").trim() || goal;
+    if (this.running) {
+      if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
+      if (!this.active || !this.active.handle || typeof this.active.handle.followUp !== "function") {
+        return reject("busy", "The active run cannot accept a follow-up.");
       }
+      this.active.handle.followUp(goal);
+      let baseThread = (this.active.baseThread || this.thread).concat([{ role: "user", text: visibleText }]);
+      if (this.historyStore && this.conversationId) {
+        const saved = this.historyStore.append(this.conversationId, this.root, {
+          role: "user",
+          text: visibleText,
+          runId: this.active.runId,
+        });
+        if (saved) baseThread = conversationMessages(saved);
+      }
+      this.active.baseThread = baseThread.map((item) => ({ ...item }));
+      this.thread = baseThread;
+      this.notice = "Follow-up added to the active run";
+      this.emit();
+      return {
+        ok: true,
+        requestId: this.active.requestId,
+        runId: this.active.runId,
+        conversationId: this.conversationId,
+        followUp: true,
+        model: this.selected ? this.selected.id : "",
+        provider: this.selected ? this.selected.provider : "",
+        mode: this.mode,
+        composerMode: this.composerMode,
+      };
     }
+
+    if (!this.selected) return reject("no_model", "No local model is installed.");
+    const priorThread = this.thread.map((item) => ({ ...item }));
     this.ensureConversation(visibleText);
 
     let baseThread = priorThread.concat([{ role: "user", text: visibleText }]);
@@ -443,7 +446,7 @@ class ComposerSession {
     const requestId = crypto.randomBytes(8).toString("hex");
     if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
     const provider = this.createProvider(this.selected);
-    const registry = await this.createRegistry(this.mode);
+    const registry = this.createRegistry(this.mode);
     this.requestId = requestId;
     this.runId = "";
     this.running = true;
@@ -457,6 +460,7 @@ class ComposerSession {
     this.filesChanged = [];
     this.fileDiffs = [];
     this.tools = [];
+    this.stream = [];
     this.verification = null;
     this.projectDecision = null;
     this.diff = "";
@@ -471,16 +475,18 @@ class ComposerSession {
     const publishing = new PublishingStore(this.store, (run) => this.publish(requestId, run));
     let handle;
     try {
-      handle = startAgentRun({
+      const runAgent = process.env.CODEME_AGENT_PIPELINE === "legacy"
+        ? startAgentRun
+        : startPipelineRun;
+      handle = runAgent({
         goal,
-        originalGoal,
-        promptEnhancement,
         model: this.selected.id,
-        providerName: provider.name || "ollama",
+        providerName: this.selected.provider || provider.name || "ollama",
         provider,
         registry,
         store: publishing,
         capabilities: this.capabilities,
+        externalTools: this.externalTools,
         mode: this.mode,
         composerMode: this.composerMode,
         taskClass: taskClassFor(this.composerMode) || undefined,
@@ -492,8 +498,11 @@ class ComposerSession {
           type: item.type,
           size: item.size,
         })),
+        inferRequirements: true,
         timeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
-        maxIterations: this.composerMode === "code" ? 40 : 12,
+        maxIterations: this.composerMode === "code" ? 20 : 12,
+        maxRepairRounds: 2,
+        maxToolCallsPerTurn: 8,
         maxIdenticalActions: this.composerMode === "code" ? 12 : 4,
       });
     } catch (error) {
@@ -541,6 +550,7 @@ class ComposerSession {
     this.diff = diffText(run);
     this.fileDiffs = diffsByFile(this.diff, this.filesChanged);
     this.tools = compactTools(run);
+    this.stream = compactRunStream(run);
 
     const assistantItems = threadFrom(run).filter((item) => item.role === "assistant");
     this.thread = (this.active.baseThread || []).concat(assistantItems);
@@ -687,8 +697,41 @@ function lastMeaningfulDecision(run) {
   return "";
 }
 
-function cleanAssistantText(value) {
+function isToolProtocolJson(value) {
   const text = String(value || "").trim();
+  if (!text || !text.startsWith("{") || !text.endsWith("}")) return false;
+  try {
+    const parsed = JSON.parse(text);
+    return Boolean(
+      parsed
+      && typeof parsed === "object"
+      && !Array.isArray(parsed)
+      && (parsed.name || parsed.tool)
+      && (parsed.arguments !== undefined || parsed.args !== undefined)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function stripToolProtocolText(value) {
+  let text = String(value || "");
+  text = text.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
+  text = text.replace(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/gi, (whole, body) => {
+    const toolLike = /"(?:name|tool)"\s*:/.test(body) && /"(?:arguments|args)"\s*:/.test(body);
+    return toolLike ? "" : whole;
+  });
+  text = text
+    .split(/\r?\n/)
+    .filter((line) => !isToolProtocolJson(line))
+    .join("\n");
+  const trimmed = text.trim();
+  if (isToolProtocolJson(trimmed)) return "";
+  return trimmed;
+}
+
+function cleanAssistantText(value) {
+  const text = stripToolProtocolText(value);
   if (!text) return "";
   const paragraphs = text.split(/\n\s*\n/).map((item) => item.trim()).filter(Boolean);
   const seen = new Set();
