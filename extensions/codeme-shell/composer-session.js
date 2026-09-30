@@ -419,7 +419,7 @@ class ComposerSession {
         if (enhanced && enhanced.source !== "none" && String(enhanced.prompt || "").trim()) {
           goal = String(enhanced.prompt).trim();
           promptEnhancement = {
-            source: enhanced.source,
+            source: enhanced.source === "n8n" ? "external" : "local",
             original: originalGoal.slice(0, 12000),
             enhanced: goal.slice(0, 12000),
           };
