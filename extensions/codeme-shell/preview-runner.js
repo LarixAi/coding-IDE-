@@ -11,14 +11,38 @@ function previewPlan(root, requestedUrl) {
   const origin = `http://127.0.0.1:${port}`;
   const resolved = resolvePreviewUrl(root, requestedUrl, origin);
   if (!resolved.ok) return resolved;
+
+  const staticPath = !start.command ? staticPreviewPath(root) : "/";
+  let url = resolved.url;
+  const raw = String(requestedUrl || "").trim();
+  if (!start.command && staticPath !== "/" && (!raw || raw === "index.html" || raw === "./index.html" || /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\/?$/i.test(raw))) {
+    url = new URL(staticPath, origin).toString();
+  }
+
   return {
     ok: true,
     origin,
-    url: resolved.url,
+    url,
     command: start.command,
     shouldStart: resolved.local && resolved.port === port,
     port,
+    staticPath,
   };
+}
+
+function staticPreviewPath(root) {
+  const candidates = [
+    ["index.html", "/"],
+    [path.join("public", "index.html"), "/public/"],
+    [path.join("dist", "index.html"), "/dist/"],
+    [path.join("build", "index.html"), "/build/"],
+  ];
+  for (const [file, pathname] of candidates) {
+    try {
+      if (fs.statSync(path.join(root, file)).isFile()) return pathname;
+    } catch {}
+  }
+  return "/";
 }
 
 function readStartScript(root) {
@@ -149,6 +173,29 @@ function resolvePreviewUrl(root, requestedUrl, origin) {
     port: Number(new URL(origin).port || 80),
     canonicalizedFromAsset: requestedAsset ? raw : "",
   };
+}
+
+function resolveOwnedPreviewUrl(session, requestedUrl) {
+  const requested = String(requestedUrl || "").trim();
+  const owned = session && session.status === "running"
+    ? String(session.url || session.origin || "")
+    : "";
+  if (!owned) return requested;
+  if (!requested) return owned;
+
+  try {
+    const parsed = new URL(requested);
+    if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(parsed.hostname)) return requested;
+    const pathname = parsed.pathname || "/";
+    if (pathname === "/" || pathname === "/index.html") return owned;
+    const target = new URL(owned);
+    target.pathname = pathname;
+    target.search = parsed.search;
+    target.hash = parsed.hash;
+    return target.toString();
+  } catch {
+    return owned;
+  }
 }
 
 function workspaceFilePath(root, candidate) {
@@ -538,7 +585,9 @@ function isAssetFailure(result) {
 module.exports = {
   PREVIEW_TERMINAL,
   previewPlan,
+  staticPreviewPath,
   resolvePreviewUrl,
+  resolveOwnedPreviewUrl,
   isPreviewAssetPath,
   portFromText,
   entryPointFromStartScript,
