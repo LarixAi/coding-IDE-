@@ -903,9 +903,10 @@ function renderComposer(nonce) {
     }
     function appendInlineMarkdown(parent, value) {
       let rest = String(value || "");
+      const inlineCodeTick = String.fromCharCode(96);
       while (rest) {
         const boldAt = rest.indexOf("**");
-        const codeAt = rest.indexOf("`");
+        const codeAt = rest.indexOf(inlineCodeTick);
         let next = -1;
         let kind = "";
         if (boldAt >= 0 && (codeAt < 0 || boldAt < codeAt)) { next = boldAt; kind = "bold"; }
@@ -920,7 +921,7 @@ function renderComposer(nonce) {
           parent.appendChild(strong);
           rest = rest.slice(end + 2);
         } else {
-          const end = rest.indexOf("`", 1);
+          const end = rest.indexOf(inlineCodeTick, 1);
           if (end < 0) { parent.appendChild(document.createTextNode(rest)); break; }
           const code = document.createElement("code");
           code.textContent = rest.slice(1, end);
@@ -933,6 +934,7 @@ function renderComposer(nonce) {
     function renderMarkdownText(container, value) {
       container.innerHTML = "";
       const lines = String(value || "").replace(/\r\n/g, "\n").split("\n");
+      const codeFence = String.fromCharCode(96, 96, 96);
       let list = null;
       let listKind = "";
       let pre = null;
@@ -949,7 +951,7 @@ function renderComposer(nonce) {
       };
       for (const rawLine of lines) {
         const line = String(rawLine || "");
-        if (line.trim().startsWith("```")) {
+        if (line.trim().startsWith(codeFence)) {
           closeList();
           if (pre) flushCode();
           else pre = document.createElement("pre");
@@ -1032,7 +1034,9 @@ function renderComposer(nonce) {
     function addMessage(role, text) {
       const item = document.createElement("div");
       item.className = "bubble " + role;
-      if (role === "assistant") renderMarkdownText(item, text);\n      else item.textContent = text;\n      messages.appendChild(item);
+      if (role === "assistant") renderMarkdownText(item, text);
+      else item.textContent = text;
+      messages.appendChild(item);
       empty.hidden = true;
     }
     let sawState = false;
