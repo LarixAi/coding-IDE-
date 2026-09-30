@@ -33,10 +33,16 @@ export VSCODE_SKIP_PRELAUNCH=1
 # in the built app so Finder and the Dock show the CodeMe mark.
 app_bundle="$root/code-oss/.build/electron/Code - OSS.app"
 
-# CodeMe voice runs inside an extension webview. The pinned Code - OSS build
-# denies media to webviews by default and its unsigned dev app may lack the
-# microphone usage string that macOS needs before it can prompt the user.
-"$node_bin/node" "$root/scripts/patch-codeme-microphone.js" "$root"
+# The previous experimental microphone patch modified the live Code - OSS
+# webview runtime and can leave extension webviews blank. Keep the normal
+# launcher on the known-good runtime by restoring those generated files first.
+# Microphone patching can still be tested explicitly by setting
+# CODEME_EXPERIMENTAL_MICROPHONE_PATCH=1.
+if [ "${CODEME_EXPERIMENTAL_MICROPHONE_PATCH:-0}" = "1" ]; then
+	"$node_bin/node" "$root/scripts/patch-codeme-microphone.js" "$root"
+else
+	"$node_bin/node" "$root/scripts/restore-codeme-webview.js" "$root"
+fi
 
 icon_src="$root/branding/macos/CodeMe.icns"
 icon_dest="$app_bundle/Contents/Resources/Code - OSS.icns"
