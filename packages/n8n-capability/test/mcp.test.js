@@ -24,6 +24,7 @@ async function main() {
 
   const calls = [];
   const server = await listen(async (req, res) => {
+    assert.strictEqual(req.headers["mcp-protocol-version"], "2025-03-26");
     if (req.headers.authorization !== "Bearer test-token") {
       res.statusCode = 401;
       res.end("unauthorized");
