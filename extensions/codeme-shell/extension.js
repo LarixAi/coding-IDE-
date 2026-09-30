@@ -14,6 +14,7 @@ const { hasWorkspaceEditorInGroups } = require("./tab-policy");
 const { loadRuntimeEnv } = require("./runtime-config");
 const { N8nIntegration } = require("./n8n-integration");
 const { wrapToolCallCompat } = require("./model-tool-compat");
+const { wrapResponsePolicy } = require("./model-response-policy");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -625,7 +626,7 @@ class ComposerViewProvider {
         }
         if (selection.provider === "ollama-local" || selection.provider === "ollama") {
           const baseUrl = process.env.CODEME_LOCAL_OLLAMA_URL || process.env.CODEME_OLLAMA_URL || "http://127.0.0.1:11434";
-          return wrapToolCallCompat(new OllamaModelProvider({ baseUrl }));
+          return wrapResponsePolicy(wrapToolCallCompat(new OllamaModelProvider({ baseUrl })));
         }
         if (selection.provider === "ollama-server") {
           const baseUrl = process.env.CODEME_SERVER_OLLAMA_URL;
