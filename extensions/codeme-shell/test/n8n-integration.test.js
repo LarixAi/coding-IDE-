@@ -76,7 +76,7 @@ async function main() {
   assert.ok(html.includes('id="enhance"'));
   assert.ok(html.includes('type: "n8n-test"'));
   assert.ok(html.includes('type: "enhance-prompt"'));
-  const scripts = [...html.matchAll(/<script[^>]*>([\\s\\S]*?)<\\/script>/g)];
+  const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
   assert.ok(scripts.length >= 1);
   for (const script of scripts) new Function(script[1]);
 
