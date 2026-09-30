@@ -185,7 +185,7 @@ function createBrowserInteractionRunner(options = {}) {
         if (!samePreviewUrl(target.url, checked.url)) {
           await client.send("Page.navigate", { url: checked.url });
         }
-        await waitForDocumentReady(client, CDP_WAIT_MS);
+        await waitForDocumentReady(client, CDP_WAIT_MS, checked.url);
 
         const stepResults = [];
         for (let index = 0; index < steps.length; index += 1) {
@@ -741,14 +741,20 @@ async function waitForObservedResult(client, expectedText, timeoutMs) {
   return observed;
 }
 
-async function waitForDocumentReady(client, timeoutMs) {
+async function waitForDocumentReady(client, timeoutMs, expectedUrl = "") {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const state = await client.evaluate("document.readyState");
-    if (state === "complete" || state === "interactive") return true;
+    try {
+      const snapshot = await client.evaluate("({ state: document.readyState, href: location.href, hasBody: Boolean(document.body) })");
+      const ready = snapshot && (snapshot.state === "complete" || snapshot.state === "interactive") && snapshot.hasBody;
+      const correctDocument = !expectedUrl || samePreviewUrl(snapshot && snapshot.href, expectedUrl);
+      if (ready && correctDocument) return true;
+    } catch {
+      // A navigation commit can briefly replace the execution context.
+    }
     await delay(80);
   }
-  throw Object.assign(new Error("The page did not finish loading for interaction verification."), { code: "browser_driver_timeout" });
+  throw Object.assign(new Error("The preview document did not finish loading at the expected URL for interaction verification."), { code: "browser_driver_timeout" });
 }
 
 function delay(ms) {
