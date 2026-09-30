@@ -215,6 +215,7 @@ function renderComposer(nonce) {
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
     let rec = null;
     let listening = false;
+    let micStarting = false;
     let spoken = "";
     let running = false;
     let sending = false;
@@ -300,7 +301,32 @@ function renderComposer(nonce) {
       }
       setMic(false);
     }
-    function startVoice() {
+    async function requestMicrophoneAccess() {
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") return true;
+      let stream = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        return true;
+      } catch (error) {
+        const name = String(error && error.name || "");
+        if (name === "NotAllowedError" || name === "SecurityError") {
+          notice.textContent = "Microphone permission is blocked. Enable Code - OSS/CodeMe in System Settings → Privacy & Security → Microphone, then restart CodeMe.";
+        } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+          notice.textContent = "No microphone was found.";
+        } else {
+          notice.textContent = "Microphone could not be opened.";
+        }
+        return false;
+      } finally {
+        if (stream) {
+          for (const track of stream.getTracks()) {
+            try { track.stop(); } catch {}
+          }
+        }
+      }
+    }
+    async function startVoice() {
+      if (micStarting) return;
       const action = composerVoiceAction(listening, Boolean(Speech));
       if (action === "unavailable") {
         notice.textContent = "Voice to text is not available in this window.";
@@ -308,6 +334,16 @@ function renderComposer(nonce) {
       }
       if (action === "stop") {
         stopVoice();
+        return;
+      }
+      micStarting = true;
+      mic.disabled = true;
+      notice.textContent = "Requesting microphone access…";
+      const allowed = await requestMicrophoneAccess();
+      micStarting = false;
+      mic.disabled = false;
+      if (!allowed) {
+        setMic(false);
         return;
       }
       rec = new Speech();
@@ -328,7 +364,7 @@ function renderComposer(nonce) {
         prompt.dispatchEvent(new Event("input"));
       };
       rec.onerror = (event) => {
-        if (event.error === "not-allowed") notice.textContent = "Microphone access is blocked.";
+        if (event.error === "not-allowed") notice.textContent = "Microphone permission is blocked. Enable Code - OSS/CodeMe in System Settings → Privacy & Security → Microphone, then restart CodeMe.";
         else if (event.error !== "aborted" && event.error !== "no-speech") notice.textContent = "Voice to text stopped.";
         setMic(false);
       };
