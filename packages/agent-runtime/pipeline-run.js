@@ -569,7 +569,10 @@ async function executePipelineRun(run, options, followUpQueue) {
   const baseDefinitions = run.mode === "chat_only"
     ? []
     : registry.definitions().filter((tool) => run.mode !== "read_only" || !READ_ONLY_BLOCKED.has(tool.name));
-  const definitions = [...baseDefinitions, ...capabilityDefinitions, ...externalDefinitions];
+  const modeSafeExternalDefinitions = run.mode === "read_only"
+    ? externalDefinitions.filter((tool) => !(tool && tool.external && tool.external.sideEffect))
+    : externalDefinitions;
+  const definitions = [...baseDefinitions, ...capabilityDefinitions, ...modeSafeExternalDefinitions];
   const context = buildModelContext({
     goal: run.goal,
     system: instructionsForMode(run.mode, run.composerMode),
