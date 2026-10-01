@@ -187,6 +187,23 @@ class PaperclipAgentRegistry {
     return Object.values(this.keys).some((value) => Boolean(String(value || "")));
   }
 
+  agentForRole(roleKey) {
+    const wanted = normalizeRoleKey(roleKey);
+    for (const [agentId, configuredRole] of Object.entries(this.roles)) {
+      if (normalizeRoleKey(configuredRole) === wanted) {
+        return {
+          agentId,
+          role: rolePolicy(wanted),
+          configured: Boolean(
+            this.keys[agentId]
+            || ((!this.controllerAgentId || agentId === this.controllerAgentId) && this.defaultApiKey)
+          ),
+        };
+      }
+    }
+    return null;
+  }
+
   summary() {
     const ids = Object.keys(this.roles);
     if (!ids.length) {
