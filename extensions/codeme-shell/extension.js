@@ -726,6 +726,40 @@ class ComposerViewProvider {
       }
       return;
     }
+    if (message.type === "clarification-submit") {
+      this.view.webview.postMessage({ type: "clarification-submitting", epoch: message.epoch });
+      try {
+        const result = await this.session.submitClarification(
+          Array.isArray(message.answers) ? message.answers : [],
+          String(message.text || ""),
+          message.epoch,
+        );
+        if (!result.ok) {
+          this.view.webview.postMessage({
+            type: "clarification-rejected",
+            epoch: message.epoch,
+            code: result.code,
+            message: result.message,
+          });
+          return;
+        }
+        this.view.webview.postMessage({
+          type: "clarification-accepted",
+          epoch: message.epoch,
+          requestId: result.requestId,
+          runId: result.runId,
+          status: result.status || "",
+        });
+      } catch (error) {
+        this.view.webview.postMessage({
+          type: "clarification-rejected",
+          epoch: message.epoch,
+          code: "clarification_failed",
+          message: error && error.message ? error.message : "Could not continue.",
+        });
+      }
+      return;
+    }
     if (message.type === "cancel") {
       if (message.requestId && this.session.requestId && message.requestId !== this.session.requestId) return;
       this.session.cancel();
