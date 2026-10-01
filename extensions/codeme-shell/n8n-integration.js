@@ -69,7 +69,7 @@ function normalizeQuestions(value) {
       };
     })
     .filter(Boolean)
-    .slice(0, 5);
+    .slice(0, 3);
 }
 
 function parseEnhancementResponse(value) {
@@ -114,6 +114,17 @@ function parseEnhancementResponse(value) {
     projectId: parsed.projectId == null ? null : String(parsed.projectId),
     promptEnhancementVersion: clip(parsed.promptEnhancementVersion, 80),
   };
+
+  // A clarification response is not authorization to build. Keep unresolved
+  // model suggestions out of the confirmed requirement/constraint channels.
+  // The original prompt is sent again on the next pass, so confirmed user
+  // requirements are still available without trusting speculative list items.
+  if (status === "NEEDS_CLARIFICATION") {
+    decision.requirements = [];
+    decision.constraints = [];
+    decision.acceptanceCriteria = [];
+    decision.enhancedPrompt = "";
+  }
 
   if (status === "READY" && !decision.enhancedPrompt) {
     throw enhancementError("prompt_enhancement_invalid", "Prompt enhancement marked the task READY without an enhanced prompt.");
