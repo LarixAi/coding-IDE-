@@ -102,6 +102,16 @@ async function main() {
     () => registry.resolve("unknown-agent"),
     (error) => error && error.code === "paperclip_agent_not_registered",
   );
+  const invalidRoleRegistry = new PaperclipAgentRegistry({
+    defaultApiKey: "controller-token",
+    controllerAgentId: "controller-id",
+    roles: { "bad-role-id": "superuser" },
+    keys: { "bad-role-id": "bad-role-token" },
+  });
+  assert.throws(
+    () => invalidRoleRegistry.resolve("bad-role-id"),
+    (error) => error && error.code === "paperclip_agent_role_invalid",
+  );
 
   const summary = registry.summary();
   assert.strictEqual(summary.mode, "multi-agent");
