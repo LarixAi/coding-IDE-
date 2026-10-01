@@ -221,6 +221,8 @@ class PaperclipController {
       throw error;
     }
 
+    let resolveCompletion;
+    const completion = new Promise((resolve) => { resolveCompletion = resolve; });
     const record = {
       id: crypto.randomUUID(),
       paperclipRunId: request.runId,
@@ -232,6 +234,9 @@ class PaperclipController {
       codemeRunId: "",
       startedAt: Date.now(),
       repeat: null,
+      completion,
+      resolveCompletion,
+      completionResolved: false,
     };
     this.records.set(request.runId, record);
 
@@ -255,6 +260,7 @@ class PaperclipController {
       record.status = "blocked";
       const reason = submitted && (submitted.message || submitted.code) || "CodeMe rejected the task";
       await this.safeUpdate(record, "blocked", "CodeMe could not start this task: " + reason);
+      this.resolveRecord(record);
       return { ok: false, status: record.status, taskId: record.taskId, reason };
     }
 
@@ -269,6 +275,7 @@ class PaperclipController {
         "blocked",
         "CodeMe needs clarification before continuing:\n" + text,
       );
+      this.resolveRecord(record);
       return { ok: true, status: record.status, taskId: record.taskId, needsClarification: true };
     }
 
@@ -281,6 +288,7 @@ class PaperclipController {
         "blocked",
         "CodeMe stopped for external research" + (queries ? ": " + queries : "."),
       );
+      this.resolveRecord(record);
       return { ok: true, status: record.status, taskId: record.taskId, needsResearch: true };
     }
 
@@ -296,12 +304,45 @@ class PaperclipController {
     };
   }
 
+  completionResult(record) {
+    return {
+      ok: record.status === "done",
+      accepted: true,
+      completed: ["done", "blocked", "rejected"].includes(record.status),
+      status: record.status,
+      taskId: record.taskId,
+      codemeRunId: record.codemeRunId || "",
+      repeat: record.repeat || null,
+    };
+  }
+
+  resolveRecord(record) {
+    if (!record || record.completionResolved) return;
+    record.completionResolved = true;
+    try { record.resolveCompletion(this.completionResult(record)); } catch {}
+  }
+
+  async waitForCompletion(runId) {
+    const record = this.records.get(String(runId || ""));
+    if (!record) {
+      const error = new Error("Unknown Paperclip run");
+      error.code = "paperclip_run_not_found";
+      error.statusCode = 404;
+      throw error;
+    }
+    if (["done", "blocked", "rejected"].includes(record.status)) {
+      return this.completionResult(record);
+    }
+    return record.completion;
+  }
+
   async watch(record) {
     while (!this.disposed && record.status === "running") {
       const snapshot = this.session.snapshot();
       if (record.codemeRunId && snapshot.runId && snapshot.runId !== record.codemeRunId) {
         record.status = "blocked";
         await this.safeUpdate(record, "blocked", "CodeMe switched to a different run before this Paperclip task completed.");
+        this.resolveRecord(record);
         return;
       }
 
@@ -315,6 +356,7 @@ class PaperclipController {
           "blocked",
           "CodeMe stopped a repeated-action loop after " + repeat.count + " identical actions: " + repeat.signature + ". A new hypothesis or re-plan is required before retrying.",
         );
+        this.resolveRecord(record);
         return;
       }
 
@@ -322,6 +364,7 @@ class PaperclipController {
         record.status = "blocked";
         try { this.session.cancel(); } catch {}
         await this.safeUpdate(record, "blocked", "CodeMe stopped because the Paperclip task exceeded its heartbeat execution limit.");
+        this.resolveRecord(record);
         return;
       }
 
@@ -347,6 +390,7 @@ class PaperclipController {
             "CodeMe stopped before verified completion.\n\n" + conciseOutcome(snapshot),
           );
         }
+        this.resolveRecord(record);
         return;
       }
 

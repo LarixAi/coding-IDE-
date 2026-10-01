@@ -107,8 +107,11 @@ class PaperclipBridge {
 
       try {
         const result = await this.controller.handleHeartbeat(body);
-        const statusCode = result.accepted ? 202 : 200;
-        return sendJson(res, statusCode, result);
+        if (result.accepted && result.status === "running") {
+          const terminal = await this.controller.waitForCompletion(body.runId);
+          return sendJson(res, 200, terminal);
+        }
+        return sendJson(res, 200, result);
       } catch (error) {
         return sendJson(res, error.statusCode || 500, {
           ok: false,
