@@ -163,7 +163,7 @@ function renderComposer(nonce) {
     .bar button:disabled, .bar select:disabled { opacity: 0.4; cursor: default; }
     #attach { flex: 0 0 auto; }
     #mode { flex: 0 0 auto; max-width: 64px; color: #b8c0cb; }
-    #model { min-width: 0; max-width: 118px; color: #b8c0cb; text-overflow: ellipsis; }
+    #model { flex: 1 1 128px; min-width: 96px; max-width: 160px; color: #b8c0cb; text-overflow: ellipsis; overflow: hidden; }
     #model-refresh { flex: 0 0 auto; width: 22px; padding: 0; font-size: 13px; }
     #model-refresh.loading { animation: codeme-spin 0.8s linear infinite; }
     @keyframes codeme-spin { to { transform: rotate(360deg); } }
@@ -408,7 +408,11 @@ function renderComposer(nonce) {
     model.addEventListener("change", () => {
       const option = model.selectedOptions[0];
       if (!option || !option.dataset.provider) return;
-      vscode.postMessage({ type: "select-model", provider: option.dataset.provider, id: option.value });
+      vscode.postMessage({
+        type: "select-model",
+        provider: option.dataset.provider,
+        id: option.dataset.modelId || option.value,
+      });
     });
     modelRefresh.addEventListener("click", () => {
       modelRefresh.classList.add("loading");
@@ -513,10 +517,11 @@ function renderComposer(nonce) {
         if (items.length) {
           for (const item of items) {
             const option = document.createElement("option");
-            option.value = item.id;
+            option.value = item.provider + "::" + item.id;
             option.dataset.provider = item.provider;
+            option.dataset.modelId = item.id;
             option.dataset.source = item.source || label;
-            option.textContent = item.label;
+            option.textContent = item.label || item.id;
             option.selected = Boolean(state.selected && state.selected.id === item.id && state.selected.provider === item.provider);
             group.appendChild(option);
           }
@@ -546,6 +551,12 @@ function renderComposer(nonce) {
         model.appendChild(option);
       }
 
+      if (state.selected) {
+        const selectedValue = state.selected.provider + "::" + state.selected.id;
+        if (Array.from(model.options).some((option) => option.value === selectedValue)) {
+          model.value = selectedValue;
+        }
+      }
       model.title = sourceStates.map((source) => {
         if (!source.configured) return source.label + ": not configured";
         if (!source.available) return source.label + ": unavailable";
