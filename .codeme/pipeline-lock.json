@@ -1,9 +1,9 @@
 {
   "version": 1,
   "name": "CodeMe Pipeline v2 Canonical Lock",
-  "baselineCommit": "15031552820524819bbdf97b9b4b150a9f642669",
+  "baselineCommit": "f9bceb249134c7aea71291fb5b32be5408b17f94",
   "baselineBranch": "pipeline-v2-locked-baseline",
-  "lockedAt": "2026-09-30",
+  "lockedAt": "2026-10-01",
   "policy": {
     "owner": "LarixAi",
     "rule": "Do not modify protected pipeline files or update this manifest unless the repository owner has explicitly approved a pipeline change.",
@@ -22,7 +22,7 @@
     "packages/agent-runtime/strategy.js": "cc9eaa7a197d43c8dc9d0f88f9923fc43ebda4c9",
     "packages/agent-runtime/intent.js": "e78006ef754dc3a3e80eeb48a0975eadc4eae74f",
     "packages/agent-runtime/project-decision.js": "85a493becad2e193f19c09fd42420c28f945a9e6",
-    "extensions/codeme-shell/composer-session.js": "82ecb17891567a7535d8799fa0c4b7edf8d6b2ec",
+    "extensions/codeme-shell/composer-session.js": "e10c566c72866bd3c0ca398028fcad711aa8d3ed",
     "packages/agent-runtime/test/pipeline-v2.test.js": "855a1f4f2c465a8945f09ccb408427cb48600718",
     "extensions/codeme-shell/test/composer-pipeline-v2.test.js": "71f6062c045cb84fc5d1af7c2e3fbe36422c8ab1"
   },
