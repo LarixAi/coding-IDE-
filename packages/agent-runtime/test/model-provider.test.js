@@ -31,6 +31,23 @@ function fileWriteDefinition() {
   };
 }
 
+function capabilityInvokeDefinition() {
+  return {
+    name: "capability.invoke",
+    description: "Call a discovered external capability",
+    capabilityNames: ["knowledge.lookup"],
+    parameters: {
+      type: "object",
+      properties: {
+        capability: { type: "string" },
+        input: { type: "object" },
+        context: { type: "object" },
+      },
+      required: ["capability"],
+    },
+  };
+}
+
 
 async function withServer(responses, run) {
   const queue = responses.slice();
@@ -266,6 +283,80 @@ async function runQwenRecoveryJsonFallback() {
   });
 }
 
+async function runDirectCapabilityJsonFallback() {
+  const note = "The secret CodeMe test animal is otter.";
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: ````json
+{"name":"knowledge.lookup","arguments":{"input":{"note":"${note}"}}}
+```
+
+```json
+{"name":"knowledge.lookup","arguments":{"input":{"note":"${note}"}}}
+````,
+      },
+    },
+  ], async (baseUrl) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "qwen3.5:9b",
+      messages: [{ role: "user", content: "Remember this project note using the external memory hub." }],
+      tools: [capabilityInvokeDefinition()],
+    });
+
+    assert.strictEqual(result.text, "");
+    assert.deepStrictEqual(result.toolCalls, [
+      {
+        name: "capability.invoke",
+        args: {
+          capability: "knowledge.lookup",
+          input: { note },
+        },
+      },
+    ]);
+  });
+}
+
+async function runDirectCapabilityNativeFallback() {
+  const note = "The secret CodeMe test animal is otter.";
+  await withServer([
+    {
+      message: {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            function: {
+              name: "knowledge.lookup",
+              arguments: { input: { note } },
+            },
+          },
+        ],
+      },
+    },
+  ], async (baseUrl) => {
+    const provider = new OllamaModelProvider({ baseUrl });
+    const result = await provider.complete({
+      model: "qwen3.5:9b",
+      messages: [{ role: "user", content: "Remember this project note using the external memory hub." }],
+      tools: [capabilityInvokeDefinition()],
+    });
+
+    assert.strictEqual(result.text, "");
+    assert.deepStrictEqual(result.toolCalls, [
+      {
+        name: "capability.invoke",
+        args: {
+          capability: "knowledge.lookup",
+          input: { note },
+        },
+      },
+    ]);
+  });
+}
+
 async function runRejectsUnofferedQwenShorthand() {
   const raw = JSON.stringify({
     tool: "terminal.run",
@@ -333,6 +424,8 @@ async function main() {
   await runProseWrappedFencedJsonFallback();
   await runMultipleFencedJsonFallback();
   await runQwenRecoveryJsonFallback();
+  await runDirectCapabilityJsonFallback();
+  await runDirectCapabilityNativeFallback();
   await runRejectsUnofferedQwenShorthand();
   await runRejectsUnofferedTool();
   await runRejectsInvalidArguments();
