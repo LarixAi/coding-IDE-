@@ -1,5 +1,9 @@
 const http = require("http");
-const { PaperclipApi, PaperclipController } = require("../../packages/paperclip-control");
+const {
+  PaperclipApi,
+  PaperclipAgentRegistry,
+  PaperclipController,
+} = require("../../packages/paperclip-control");
 
 function envFlag(value, fallback = false) {
   if (value == null || value === "") return fallback;
@@ -18,9 +22,25 @@ class PaperclipBridge {
       baseUrl: options.paperclipApiUrl || process.env.PAPERCLIP_API_URL,
       apiKey: options.paperclipApiKey || process.env.PAPERCLIP_API_KEY,
     });
+    this.agentRegistry = options.agentRegistry || new PaperclipAgentRegistry({
+      defaultApiKey: this.api.apiKey,
+      controllerAgentId: options.controllerAgentId || process.env.PAPERCLIP_CONTROLLER_AGENT_ID,
+      rolesJson: options.rolesJson !== undefined
+        ? options.rolesJson
+        : process.env.CODEME_PAPERCLIP_AGENT_ROLES_JSON,
+      keysJson: options.keysJson !== undefined
+        ? options.keysJson
+        : process.env.CODEME_PAPERCLIP_AGENT_KEYS_JSON,
+    });
     this.controller = options.controller || new PaperclipController({
       session: this.session,
       api: this.api,
+      agentRegistry: this.agentRegistry,
+      apiFactory: (identity) => new PaperclipApi({
+        baseUrl: this.api.baseUrl,
+        apiKey: identity.apiKey,
+        timeoutMs: this.api.timeoutMs,
+      }),
       pollMs: options.pollMs,
       repeatThreshold: options.repeatThreshold,
       maxRunMs: options.maxRunMs,
@@ -30,7 +50,7 @@ class PaperclipBridge {
   }
 
   configured() {
-    return Boolean(this.bridgeToken && this.api.apiKey);
+    return Boolean(this.bridgeToken && this.agentRegistry.hasCredential());
   }
 
   status() {
@@ -41,12 +61,13 @@ class PaperclipBridge {
       host: this.host,
       port: this.port,
       controller: this.controller.snapshot(),
+      team: this.agentRegistry.summary(),
       reason: !this.enabled
         ? "disabled"
         : !this.bridgeToken
           ? "bridge_token_missing"
-          : !this.api.apiKey
-            ? "paperclip_api_key_missing"
+          : !this.agentRegistry.hasCredential()
+            ? "paperclip_agent_keys_missing"
             : "",
     };
   }
@@ -86,7 +107,7 @@ class PaperclipBridge {
         return sendJson(res, 503, {
           ok: false,
           code: "paperclip_not_configured",
-          message: "Set CODEME_PAPERCLIP_BRIDGE_TOKEN and PAPERCLIP_API_KEY before accepting Paperclip work.",
+          message: "Set CODEME_PAPERCLIP_BRIDGE_TOKEN and the Paperclip agent credentials before accepting Paperclip work.",
         });
       }
       const token = String(req.headers["x-codeme-paperclip-token"] || "");
