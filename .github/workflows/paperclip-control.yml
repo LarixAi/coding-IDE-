@@ -32,6 +32,7 @@ jobs:
         run: |
           node --check packages/paperclip-control/index.js
           node --check packages/paperclip-control/roles.js
+          node --check packages/paperclip-control/team-orchestrator.js
           node --check extensions/codeme-shell/paperclip-bridge.js
           node --check extensions/codeme-shell/extension.js
           node --check scripts/setup-paperclip-team.js
@@ -39,4 +40,5 @@ jobs:
         run: |
           node packages/paperclip-control/test/paperclip-control.test.js
           node packages/paperclip-control/test/multi-agent.test.js
+          node packages/paperclip-control/test/team-orchestrator.test.js
           node extensions/codeme-shell/test/paperclip-bridge.test.js

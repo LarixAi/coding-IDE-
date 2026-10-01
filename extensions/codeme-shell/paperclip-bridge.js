@@ -3,6 +3,7 @@ const {
   PaperclipApi,
   PaperclipAgentRegistry,
   PaperclipController,
+  PaperclipTeamOrchestrator,
 } = require("../../packages/paperclip-control");
 
 function envFlag(value, fallback = false) {
@@ -45,6 +46,16 @@ class PaperclipBridge {
       repeatThreshold: options.repeatThreshold,
       maxRunMs: options.maxRunMs,
     });
+    this.teamOrchestrationEnabled = options.teamOrchestrationEnabled
+      ?? envFlag(process.env.CODEME_PAPERCLIP_TEAM_ORCHESTRATION, true);
+    this.teamOrchestrator = options.teamOrchestrator || new PaperclipTeamOrchestrator({
+      api: this.api,
+      agentRegistry: this.agentRegistry,
+      pollMs: options.teamPollMs,
+      maxChildMs: options.teamMaxChildMs,
+      maxWorkflowMs: options.teamMaxWorkflowMs,
+      maxRepairCycles: options.maxRepairCycles,
+    });
     this.server = null;
     this.started = false;
   }
@@ -62,6 +73,10 @@ class PaperclipBridge {
       port: this.port,
       controller: this.controller.snapshot(),
       team: this.agentRegistry.summary(),
+      orchestration: {
+        enabled: this.teamOrchestrationEnabled,
+        ...this.teamOrchestrator.snapshot(),
+      },
       reason: !this.enabled
         ? "disabled"
         : !this.bridgeToken
@@ -127,9 +142,16 @@ class PaperclipBridge {
       }
 
       try {
-        const result = await this.controller.handleHeartbeat(body);
+        const identity = this.agentRegistry.resolve(body.agentId);
+        const useTeamOrchestration = (
+          this.teamOrchestrationEnabled
+          && this.agentRegistry.summary().mode === "multi-agent"
+          && identity.role.key === "controller"
+        );
+        const runtime = useTeamOrchestration ? this.teamOrchestrator : this.controller;
+        const result = await runtime.handleHeartbeat(body);
         if (result.accepted && result.status === "running") {
-          const terminal = await this.controller.waitForCompletion(body.runId);
+          const terminal = await runtime.waitForCompletion(body.runId);
           return sendJson(res, 200, terminal);
         }
         return sendJson(res, 200, result);
@@ -147,6 +169,7 @@ class PaperclipBridge {
 
   dispose() {
     this.controller.dispose();
+    this.teamOrchestrator.dispose();
     if (this.server) {
       try { this.server.close(); } catch {}
     }
