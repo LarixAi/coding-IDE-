@@ -562,6 +562,7 @@ class ComposerSession {
   async submitClarification(answers, visibleText, epoch) {
     const pending = this.clarification;
     if (!pending) return reject("no_clarification", "There is no clarification request waiting for answers.");
+    if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
     if (!this.n8n || typeof this.n8n.enhanceForSubmit !== "function") {
       return reject("prompt_enhancement_unavailable", "Prompt enhancement is not available.");
     }
