@@ -30,10 +30,13 @@ jobs:
           node --check extensions/codeme-shell/n8n-integration.js
           node --check extensions/codeme-shell/composer-session.js
           node --check extensions/codeme-shell/composer-view.js
+          node --check extensions/codeme-shell/model-tool-compat.js
           node --check extensions/codeme-shell/extension.js
           sh -n scripts/launch-codeme.sh
 
       - name: Run prompt enhancement gate tests
         env:
           CODEME_SKIP_LIVE: "1"
-        run: node extensions/codeme-shell/test/prompt-enhancement-gate.test.js
+        run: |
+          node extensions/codeme-shell/test/prompt-enhancement-gate.test.js
+          node extensions/codeme-shell/test/model-tool-compat.test.js
