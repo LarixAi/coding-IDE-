@@ -366,12 +366,11 @@ function normalizeHeartbeat(payload) {
   }
   const runId = String(payload.runId || "").trim();
   const agentId = String(payload.agentId || "").trim();
-  const companyId = String(payload.companyId || "").trim();
   const context = payload.context && typeof payload.context === "object" ? payload.context : {};
+  const companyId = String(payload.companyId || context.companyId || "").trim();
   const taskId = String(context.taskId || payload.taskId || "").trim();
   if (!runId) throw invalid("runId is required");
   if (!agentId) throw invalid("agentId is required");
-  if (!companyId) throw invalid("companyId is required");
   if (!taskId) throw invalid("context.taskId is required");
   return { runId, agentId, companyId, taskId, context };
 }
