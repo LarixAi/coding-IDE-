@@ -145,14 +145,8 @@ function normalizeMessage(message, offeredTools = []) {
   const nativeCalls = calls.map((call) => {
     const providerName = call.function && call.function.name;
     const rawArgs = call.function ? call.function.arguments || {} : {};
-    let args = {};
-    try {
-      args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
-    } catch {
-      args = {};
-    }
-    return { name: CONTRACT_NAMES[providerName] || providerName, args };
-  }).filter((call) => call.name);
+    return normalizeNativeToolCall(providerName, rawArgs, offeredTools);
+  }).filter(Boolean);
 
   if (nativeCalls.length) {
     return {
@@ -173,6 +167,62 @@ function normalizeMessage(message, offeredTools = []) {
     text: stripThinking(message.content || ""),
     toolCalls: [],
   };
+}
+
+function parseToolArguments(rawArgs) {
+  if (typeof rawArgs !== "string") {
+    return rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs) ? rawArgs : {};
+  }
+  try {
+    const parsed = JSON.parse(rawArgs);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function directCapabilityCall(providerName, args, offeredTools) {
+  if (!providerName) return null;
+  const invoke = (offeredTools || []).find((tool) => tool && tool.name === "capability.invoke");
+  if (!invoke) return null;
+  const names = Array.isArray(invoke.capabilityNames) ? invoke.capabilityNames : [];
+  const capability = names.find((name) => (
+    name === providerName
+    || String(name).replace(/\./g, "_") === providerName
+  ));
+  if (!capability) return null;
+
+  const source = args && typeof args === "object" && !Array.isArray(args) ? args : {};
+  const wrapped = {
+    capability,
+    input: source.input && typeof source.input === "object" && !Array.isArray(source.input)
+      ? source.input
+      : { ...source },
+  };
+  if (source.context && typeof source.context === "object" && !Array.isArray(source.context)) {
+    wrapped.context = source.context;
+  }
+  if (wrapped.input === source) delete wrapped.input.context;
+  if (!validToolArguments(wrapped, invoke.parameters)) return null;
+  return { name: "capability.invoke", args: wrapped };
+}
+
+function normalizeNativeToolCall(providerName, rawArgs, offeredTools) {
+  if (!providerName) return null;
+  const args = parseToolArguments(rawArgs);
+  const contractName = CONTRACT_NAMES[providerName] || providerName;
+  const offered = (offeredTools || []).find((tool) => (
+    tool
+    && (
+      tool.name === contractName
+      || (PROVIDER_NAMES[tool.name] || tool.name) === providerName
+    )
+  ));
+  if (offered) {
+    if (!validToolArguments(args, offered.parameters)) return null;
+    return { name: offered.name, args };
+  }
+  return directCapabilityCall(providerName, args, offeredTools);
 }
 
 function contentToolCalls(content, offeredTools) {
@@ -218,15 +268,6 @@ function parseContentToolCall(text, offeredTools) {
       : "";
   if (!providerName) return null;
 
-  const offered = (offeredTools || []).find((tool) => (
-    tool
-    && (
-      tool.name === providerName
-      || (PROVIDER_NAMES[tool.name] || tool.name) === providerName
-    )
-  ));
-  if (!offered) return null;
-
   let args = parsed.arguments ?? parsed.args;
   if (typeof args === "string") {
     try {
@@ -234,6 +275,20 @@ function parseContentToolCall(text, offeredTools) {
     } catch {
       return null;
     }
+  }
+
+  const contractName = CONTRACT_NAMES[providerName] || providerName;
+  const offered = (offeredTools || []).find((tool) => (
+    tool
+    && (
+      tool.name === contractName
+      || (PROVIDER_NAMES[tool.name] || tool.name) === providerName
+    )
+  ));
+
+  if (!offered) {
+    const direct = directCapabilityCall(providerName, args === undefined ? {} : args, offeredTools);
+    return direct || null;
   }
 
   if (args === undefined) {
