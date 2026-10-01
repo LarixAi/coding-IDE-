@@ -3,6 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, startAgentRun, ToolRegistry, ReadOnlyToolProvider, ControlledToolProvider, selectCapability, isSiteLayoutGoal } = require("../index.js");
+const { normalizeCapabilityInput } = require("../capability");
 
 const LIVE = [
   { name: "hub.health", category: "hub", risk: "read", permissions: ["evidence"], description: "Echo a short token and report hub health" },
@@ -33,6 +34,7 @@ function liveHub(state) {
     },
     async invoke(request) {
       state.invocations.push(request.capability);
+      if (Array.isArray(state.requests)) state.requests.push(request);
       return {
         protocolVersion: 1,
         requestId: request.requestId,
@@ -113,6 +115,12 @@ async function main() {
     const lookup = selectCapability("What did we save in the project notes about the webhook", LIVE);
     assert.strictEqual(lookup && lookup.name, "knowledge.lookup");
 
+    const remember = selectCapability("Remember this project note using the external memory hub: deploy on Friday", LIVE);
+    assert.strictEqual(remember && remember.name, "knowledge.lookup");
+
+    const recall = selectCapability("Recall the project memory about deployment", LIVE);
+    assert.strictEqual(recall && recall.name, "knowledge.lookup");
+
     const none = selectCapability("Explain the readme", LIVE);
     assert.strictEqual(none, null);
 
@@ -127,6 +135,64 @@ async function main() {
 
     assert.strictEqual(isSiteLayoutGoal("can you find me a better layout for my website"), true);
     assert.strictEqual(selectCapability("can you find me a better layout for my website", LIVE, { composerMode: "code" }), null);
+  });
+
+  await test("knowledge input aliases normalize into canonical remember and lookup requests", async () => {
+    const schema = {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        action: { type: "string" },
+        entry: { type: "object" },
+      },
+      required: [],
+    };
+
+    assert.deepStrictEqual(
+      normalizeCapabilityInput(schema, { note: "The secret CodeMe test animal is otter." }, "knowledge.lookup").input,
+      {
+        action: "remember",
+        entry: { content: "The secret CodeMe test animal is otter." },
+      },
+    );
+
+    assert.deepStrictEqual(
+      normalizeCapabilityInput(schema, { action: "recall", text: "What is the CodeMe test animal?" }, "knowledge.lookup").input,
+      {
+        action: "lookup",
+        query: "What is the CodeMe test animal?",
+      },
+    );
+  });
+
+  await test("remember prompts are routed directly to knowledge.lookup as a store request", async () => {
+    const state = { invocations: [], requests: [] };
+    const provider = new ScriptedModelProvider([
+      { text: "The project note was stored." },
+    ]);
+    const run = await start({
+      goal: "Remember this project note using the external memory hub: The secret CodeMe test animal is otter. Do not edit any files.",
+      provider,
+      capabilities: liveHub(state),
+      composerMode: "ask",
+    }).done;
+
+    assert.strictEqual(run.lifecycle, "completed", JSON.stringify({ error: run.error, outcome: run.outcome }, null, 2));
+    const invoked = run.toolCalls.find((call) => (
+      call.name === "capability.invoke"
+      && call.args
+      && call.args.capability === "knowledge.lookup"
+    ));
+    assert.ok(invoked, "knowledge.lookup was not invoked");
+    assert.strictEqual(invoked.directedBy, "runtime");
+    assert.deepStrictEqual(invoked.args.input, {
+      action: "remember",
+      entry: { content: "The secret CodeMe test animal is otter." },
+    });
+    assert.strictEqual(state.requests.length, 1);
+    assert.strictEqual(state.requests[0].input.action, "remember");
+    assert.strictEqual(state.requests[0].input.entry.content, "The secret CodeMe test animal is otter.");
+    assert.strictEqual(state.requests[0].context.workspaceName, "ws");
   });
 
   await test("a research-style goal with a live hub list is invoked once when the model does not call it", async () => {
