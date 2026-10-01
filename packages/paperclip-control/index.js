@@ -193,12 +193,15 @@ class PaperclipController {
       throw error;
     }
 
+    // Paperclip is deliberately model-agnostic. It never selects, pins,
+    // ranks, or routes a model. CodeMe owns provider/model selection.
+    // The controller only checks that CodeMe is able to accept work.
     if (!current || !current.selected) {
       await this.session.refreshModels();
       const refreshed = this.session.snapshot();
       if (!refreshed.selected) {
-        const error = new Error("CodeMe has no available model");
-        error.code = "no_model";
+        const error = new Error("CodeMe cannot accept work because no model is currently available");
+        error.code = "execution_unavailable";
         error.statusCode = 503;
         throw error;
       }
