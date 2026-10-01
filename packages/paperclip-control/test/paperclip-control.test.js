@@ -141,7 +141,7 @@ async function main() {
     states: [
       {
         running: false,
-        selected: { provider: "fixture", id: "model", label: "Fixture" },
+        selected: { provider: "fixture-provider", id: "fixture-model", label: "Fixture Model" },
       },
       {
         running: true,
