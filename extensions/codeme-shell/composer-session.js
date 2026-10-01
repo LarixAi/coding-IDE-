@@ -193,6 +193,8 @@ class ComposerSession {
     this.thread = [];
     this.verification = null;
     this.projectDecision = null;
+    this.clarification = null;
+    this.researchRequest = null;
     this.diff = "";
     this.runId = "";
     this.requestId = "";
@@ -220,6 +222,17 @@ class ComposerSession {
       thread: this.thread.map((item) => ({ ...item })),
       verification: this.verification,
       projectDecision: this.projectDecision ? { ...this.projectDecision } : null,
+      clarification: this.clarification ? {
+        ...this.clarification,
+        questions: (this.clarification.questions || []).map((item) => ({ ...item })),
+        previousEnrichment: this.clarification.previousEnrichment
+          ? { ...this.clarification.previousEnrichment }
+          : null,
+      } : null,
+      researchRequest: this.researchRequest ? {
+        ...this.researchRequest,
+        queries: (this.researchRequest.queries || []).slice(),
+      } : null,
       diff: this.diff,
       models: this.models.map((model) => ({ ...model })),
       modelSources: this.modelSources.map((source) => ({ ...source })),
@@ -301,6 +314,8 @@ class ComposerSession {
     this.stream = [];
     this.verification = null;
     this.projectDecision = null;
+    this.clarification = null;
+    this.researchRequest = null;
     this.diff = "";
     this.runId = "";
     this.requestId = "";
@@ -438,31 +453,234 @@ class ComposerSession {
     }
   }
 
+  recordUserMessage(text, runId = "") {
+    const visible = String(text || "").trim();
+    if (!visible) return this.thread.map((item) => ({ ...item }));
+    this.ensureConversation(visible);
+    let next = this.thread.concat([{ role: "user", text: visible }]);
+    if (this.historyStore && this.conversationId) {
+      const saved = this.historyStore.append(this.conversationId, this.root, {
+        role: "user",
+        text: visible,
+        ...(runId ? { runId } : {}),
+      });
+      if (saved) next = conversationMessages(saved);
+    }
+    this.thread = next;
+    return next.map((item) => ({ ...item }));
+  }
+
+  recordAssistantMessage(text, runId = "") {
+    const visible = String(text || "").trim();
+    if (!visible) return this.thread.map((item) => ({ ...item }));
+    let next = this.thread.concat([{ role: "assistant", text: visible }]);
+    if (this.historyStore && this.conversationId) {
+      const saved = this.historyStore.append(this.conversationId, this.root, {
+        role: "assistant",
+        text: visible,
+        ...(runId ? { runId } : {}),
+      });
+      if (saved) next = conversationMessages(saved);
+    }
+    this.thread = next;
+    return next.map((item) => ({ ...item }));
+  }
+
+  beginClarification(originalGoal, visibleText, decision, epoch) {
+    this.recordUserMessage(visibleText);
+    this.resetRunView();
+    const requestId = crypto.randomBytes(8).toString("hex");
+    if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
+    this.requestId = requestId;
+    this.stage = "Waiting";
+    this.activity = "Waiting for your answers";
+    this.clarification = {
+      originalPrompt: String(originalGoal || ""),
+      visiblePrompt: String(visibleText || ""),
+      summary: String(decision.summary || "I need a little more information before I start."),
+      questions: (decision.clarifyingQuestions || []).slice(0, 5).map((item) => ({ ...item })),
+      previousEnrichment: {
+        status: decision.status,
+        summary: decision.summary || "",
+        intent: decision.intent || { goal: "", taskType: "" },
+        requirements: (decision.requirements || []).slice(),
+        constraints: (decision.constraints || []).slice(),
+        knownContext: (decision.knownContext || []).slice(),
+        assumptions: (decision.assumptions || []).slice(),
+        missingInformation: (decision.missingInformation || []).slice(),
+        clarifyingQuestions: (decision.clarifyingQuestions || []).map((item) => ({ ...item })),
+        researchQueries: (decision.researchQueries || []).slice(),
+        suggestedCapabilities: (decision.suggestedCapabilities || []).slice(),
+        suggestedAgents: (decision.suggestedAgents || []).slice(),
+        acceptanceCriteria: (decision.acceptanceCriteria || []).slice(),
+        enhancedPrompt: "",
+        confidence: decision.confidence,
+      },
+    };
+    this.notice = "";
+    this.emit();
+    return {
+      ok: true,
+      requestId,
+      runId: "",
+      conversationId: this.conversationId,
+      clarification: true,
+      status: "NEEDS_CLARIFICATION",
+      mode: this.mode,
+      composerMode: this.composerMode,
+    };
+  }
+
+  beginResearchStop(originalGoal, visibleText, decision, epoch, options = {}) {
+    if (options.recordUser !== false) this.recordUserMessage(visibleText);
+    this.resetRunView();
+    const requestId = crypto.randomBytes(8).toString("hex");
+    if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
+    this.requestId = requestId;
+    const queries = (decision.researchQueries || []).slice(0, 10);
+    const summary = String(decision.summary || "I need current or external information before I can safely continue.");
+    this.researchRequest = { originalPrompt: String(originalGoal || ""), summary, queries };
+    this.stage = "Waiting";
+    this.activity = "Research required";
+    this.notice = "Research is required before CodeMe can start this task.";
+    this.recordAssistantMessage(
+      summary + (queries.length ? "\n\nResearch needed:\n" + queries.map((item) => "• " + item).join("\n") : "")
+    );
+    this.emit();
+    return {
+      ok: true,
+      requestId,
+      runId: "",
+      conversationId: this.conversationId,
+      researchRequired: true,
+      status: "NEEDS_RESEARCH",
+      mode: this.mode,
+      composerMode: this.composerMode,
+    };
+  }
+
+  async submitClarification(answers, visibleText, epoch) {
+    const pending = this.clarification;
+    if (!pending) return reject("no_clarification", "There is no clarification request waiting for answers.");
+    if (!this.n8n || typeof this.n8n.enhanceForSubmit !== "function") {
+      return reject("prompt_enhancement_unavailable", "Prompt enhancement is not available.");
+    }
+
+    const normalized = (Array.isArray(answers) ? answers : [])
+      .map((item) => ({
+        id: String(item && item.id || "answer").trim().slice(0, 120),
+        answer: String(item && item.answer || "").trim().slice(0, 6000),
+      }))
+      .filter((item) => item.answer)
+      .slice(0, 5);
+    const freeform = normalized.find((item) => item.id === "freeform");
+    const answerById = new Map(normalized.map((item) => [item.id, item.answer]));
+    const missing = (pending.questions || []).filter((item) => item.required !== false && !answerById.get(item.id));
+    if (missing.length && !freeform) {
+      return reject("clarification_incomplete", "Please answer the required clarification questions before continuing.");
+    }
+
+    const answerText = String(visibleText || "").trim()
+      || normalized.map((item) => item.answer).filter(Boolean).join("\n");
+    if (!answerText) return reject("clarification_empty", "Enter an answer before continuing.");
+
+    let decision;
+    try {
+      decision = await this.n8n.enhanceForSubmit(pending.originalPrompt, {
+        conversation: this.thread,
+        workspace: typeof this.n8n.workspaceContext === "function" ? this.n8n.workspaceContext(this.root) : {},
+        mode: this.composerMode,
+        projectId: this.root ? path.basename(this.root) : null,
+        conversationId: this.conversationId || null,
+        taskId: this.requestId || null,
+      }, {
+        clarificationAnswers: normalized,
+        previousEnrichment: pending.previousEnrichment,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.notice = "Prompt enhancement failed: " + message;
+      this.emit();
+      return reject(error && error.code ? String(error.code) : "prompt_enhancement_failed", message);
+    }
+
+    if (decision.status === "NEEDS_CLARIFICATION") {
+      this.recordUserMessage(answerText);
+      this.clarification = {
+        ...pending,
+        summary: String(decision.summary || pending.summary || ""),
+        questions: (decision.clarifyingQuestions || []).slice(0, 5).map((item) => ({ ...item })),
+        previousEnrichment: {
+          status: decision.status,
+          summary: decision.summary || "",
+          intent: decision.intent || { goal: "", taskType: "" },
+          requirements: (decision.requirements || []).slice(),
+          constraints: (decision.constraints || []).slice(),
+          knownContext: (decision.knownContext || []).slice(),
+          assumptions: (decision.assumptions || []).slice(),
+          missingInformation: (decision.missingInformation || []).slice(),
+          clarifyingQuestions: (decision.clarifyingQuestions || []).map((item) => ({ ...item })),
+          researchQueries: (decision.researchQueries || []).slice(),
+          suggestedCapabilities: (decision.suggestedCapabilities || []).slice(),
+          suggestedAgents: (decision.suggestedAgents || []).slice(),
+          acceptanceCriteria: (decision.acceptanceCriteria || []).slice(),
+          enhancedPrompt: "",
+          confidence: decision.confidence,
+        },
+      };
+      this.notice = "";
+      this.emit();
+      return {
+        ok: true,
+        requestId: this.requestId,
+        runId: "",
+        conversationId: this.conversationId,
+        clarification: true,
+        status: "NEEDS_CLARIFICATION",
+        mode: this.mode,
+        composerMode: this.composerMode,
+      };
+    }
+
+    if (decision.status === "NEEDS_RESEARCH") {
+      this.recordUserMessage(answerText);
+      this.clarification = null;
+      return this.beginResearchStop(pending.originalPrompt, "", decision, epoch, { recordUser: false });
+    }
+
+    if (decision.status !== "READY" || !String(decision.prompt || "").trim()) {
+      return reject("prompt_enhancement_invalid", "Prompt enhancement did not return a READY task.");
+    }
+
+    this.clarification = null;
+    this.researchRequest = null;
+    return this.submit(answerText, epoch, {
+      skipEnhancement: true,
+      goalOverride: String(decision.prompt).trim(),
+      resumeFromClarification: true,
+    });
+  }
+
   ensureConversation(title) {
     if (this.conversationId || !this.historyStore) return;
     const conversation = this.historyStore.create(this.root, title);
     this.conversationId = conversation.id;
   }
 
-  async submit(text, epoch) {
+  async submit(text, epoch, options = {}) {
     const originalGoal = formatGoal(text, this.attachments);
     if (!originalGoal.trim()) return reject("empty", "Enter a message first.");
 
     const visibleText = String(text || "").trim() || originalGoal;
-    let goal = originalGoal;
-    if (this.n8n && typeof this.n8n.enhanceIfEnabled === "function") {
-      try {
-        const enhanced = await this.n8n.enhanceIfEnabled(originalGoal, {
-          conversation: this.thread,
-          workspace: typeof this.n8n.workspaceContext === "function" ? this.n8n.workspaceContext(this.root) : {},
-        });
-        if (enhanced && enhanced.source !== "none" && String(enhanced.prompt || "").trim()) {
-          goal = String(enhanced.prompt).trim();
-        }
-      } catch (error) {
-        this.notice = "Prompt enhancement skipped: " + (error instanceof Error ? error.message : String(error));
-      }
+
+    if (this.clarification && !options.resumeFromClarification) {
+      return this.submitClarification([{ id: "freeform", answer: visibleText }], visibleText, epoch);
     }
+
+    let goal = options.goalOverride ? String(options.goalOverride).trim() : originalGoal;
+
+    // Follow-ups belong to an already-running agent. Do not start a second
+    // prompt-enhancement gate while that run is in progress.
     if (this.running) {
       if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
       if (!this.active || !this.active.handle || typeof this.active.handle.followUp !== "function") {
@@ -495,6 +713,43 @@ class ComposerSession {
       };
     }
 
+    if (!options.skipEnhancement && this.n8n && typeof this.n8n.enhanceForSubmit === "function") {
+      let decision;
+      const enhancementTaskId = crypto.randomBytes(8).toString("hex");
+      try {
+        decision = await this.n8n.enhanceForSubmit(originalGoal, {
+          conversation: this.thread,
+          workspace: typeof this.n8n.workspaceContext === "function" ? this.n8n.workspaceContext(this.root) : {},
+          mode: this.composerMode,
+          projectId: this.root ? path.basename(this.root) : null,
+          conversationId: this.conversationId || null,
+          taskId: enhancementTaskId,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.notice = "Prompt enhancement failed: " + message;
+        this.emit();
+        return reject(error && error.code ? String(error.code) : "prompt_enhancement_failed", message);
+      }
+
+      if (decision && decision.status === "NEEDS_CLARIFICATION") {
+        return this.beginClarification(originalGoal, visibleText, decision, epoch);
+      }
+      if (decision && decision.status === "NEEDS_RESEARCH") {
+        return this.beginResearchStop(originalGoal, visibleText, decision, epoch);
+      }
+      if (decision && decision.status === "READY") {
+        if (!String(decision.prompt || "").trim()) {
+          return reject("prompt_enhancement_invalid", "Prompt enhancement marked the task READY without an enhanced prompt.");
+        }
+        goal = String(decision.prompt).trim();
+      } else if (decision && decision.status !== "DISABLED") {
+        return reject("prompt_enhancement_invalid", "Prompt enhancement returned an unsupported state.");
+      }
+    }
+
+    this.clarification = null;
+    this.researchRequest = null;
     if (!this.selected) return reject("no_model", "No local model is installed.");
     const priorThread = this.thread.map((item) => ({ ...item }));
     this.ensureConversation(visibleText);
