@@ -83,17 +83,37 @@ async function main() {
     status: "NEEDS_CLARIFICATION",
     summary: "More detail is needed.",
     intent: { goal: "build a booking system", taskType: "code" },
-    requirements: [],
-    constraints: [],
+    requirements: ["Define the type of booking system."],
+    constraints: ["Preserve the user's actual intent."],
     knownContext: [],
     assumptions: [],
     missingInformation: ["What is being booked"],
-    clarifyingQuestions: [{
-      id: "q1",
-      question: "What is being booked?",
-      reason: "This changes the data model.",
-      required: true,
-    }],
+    clarifyingQuestions: [
+      {
+        id: "q1",
+        question: "What is being booked?",
+        reason: "This changes the data model.",
+        required: true,
+      },
+      {
+        id: "q2",
+        question: "Who will use it?",
+        reason: "This changes permissions.",
+        required: true,
+      },
+      {
+        id: "q3",
+        question: "What must the booking flow support?",
+        reason: "This changes the core workflow.",
+        required: true,
+      },
+      {
+        id: "q4",
+        question: "Any optional integrations?",
+        reason: "This can be decided later.",
+        required: false,
+      },
+    ],
     researchQueries: [],
     suggestedCapabilities: [],
     suggestedAgents: [],
@@ -102,7 +122,9 @@ async function main() {
     confidence: 0.9,
   }));
   assert.strictEqual(parsed.status, "NEEDS_CLARIFICATION");
-  assert.strictEqual(parsed.clarifyingQuestions.length, 1);
+  assert.strictEqual(parsed.clarifyingQuestions.length, 3, "clarification UI should ask at most three questions at a time");
+  assert.deepStrictEqual(parsed.requirements, [], "unresolved suggestions must not become requirements");
+  assert.deepStrictEqual(parsed.constraints, [], "enhancer instructions must not become project constraints");
   assert.throws(
     () => parseEnhancementResponse(JSON.stringify({ status: "READY", enhancedPrompt: "" })),
     /READY without an enhanced prompt/i,
