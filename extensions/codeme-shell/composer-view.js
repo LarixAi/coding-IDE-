@@ -723,7 +723,7 @@ function renderComposer(nonce) {
         button.disabled = true;
         button.textContent = "Checking…";
         error.textContent = "";
-        const text = answers.map((item) => item.answer).join("\n");
+        const text = answers.map((item) => item.answer).join("\\n");
         vscode.postMessage({ type: "clarification-submit", answers, text, epoch });
       });
 
