@@ -3695,13 +3695,39 @@ async function prepareResearch(run, capabilityRegistry, options, signal, store) 
   run.progress.focus = false;
 }
 
+function memoryIntent(question) {
+  const text = String(question || "");
+  const lookup = /\b(recall|retrieve|look up|lookup|find|what did we|what was|what is|show me)\b/i.test(text);
+  const remember = /\b(remember|store|save|keep|project note|note this)\b/i.test(text);
+  return remember && !lookup ? "remember" : "lookup";
+}
+
+function memoryContent(question) {
+  const raw = String(question || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "";
+  let content = raw;
+  const colon = content.indexOf(":");
+  if (colon >= 0 && /\b(remember|store|save|note)\b/i.test(content.slice(0, colon))) {
+    content = content.slice(colon + 1).trim();
+  }
+  content = content
+    .replace(/\s*\bdo not (?:edit|change) (?:any )?files?\.?\s*$/i, "")
+    .trim();
+  return content || raw;
+}
+
 function capabilityInput(record, question) {
   const schema = record && record.inputSchema && typeof record.inputSchema === "object" ? record.inputSchema : {};
   const properties = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
   const category = String(record && record.category || "");
 
   if (category === "task" && properties.goal) return { goal: question };
-  if (category === "knowledge" && properties.query) return { query: question };
+  if (category === "knowledge") {
+    if (memoryIntent(question) === "remember" && properties.entry) {
+      return { action: "remember", entry: { content: memoryContent(question) } };
+    }
+    if (properties.query) return { action: "lookup", query: question };
+  }
   if (category === "research" && properties.problem) return { problem: question };
 
   const input = {};
