@@ -251,7 +251,10 @@ async function main() {
       await request(
         "PATCH",
         "/api/agents/" + encodeURIComponent(agent.id) + "/permissions",
-        { canAssignTasks: true },
+        {
+          canCreateAgents: false,
+          canAssignTasks: true,
+        },
       );
       console.log("Granted task assignment permission to " + definition.name);
     }
