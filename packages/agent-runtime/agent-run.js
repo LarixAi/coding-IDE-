@@ -2685,6 +2685,22 @@ function defaultVerify(run, text) {
     };
   }
 
+  const knowledgeCall = successfulKnowledgeCapability(run);
+  if (run.mode === "read_only" && String(text || "").trim() && knowledgeCall) {
+    if (writes.length) {
+      return {
+        status: "failed",
+        summary: "A memory-only run must not change the workspace, but a file was written.",
+        evidence: ["capability.invoke", "file.write"],
+      };
+    }
+    return {
+      status: "passed",
+      summary: "The answer follows the successful external memory capability result.",
+      evidence: ["capability.invoke"],
+    };
+  }
+
   if ((run.mode === "read_only" || run.taskClass === "plan") && String(text || "").trim() && (trustedObservation(run) || run.workspaceInspected)) {
     const evidence = run.observations.length ? run.observations.map((item) => item.tool).filter(Boolean) : ["workspace.inspect"];
     if (run.taskClass === "plan" && !hasSequencedPlan(text)) {
@@ -3931,6 +3947,19 @@ function closeIteration(run, registry) {
 
 function trustedObservation(run) {
   return (run.observations || []).some((item) => item && item.trusted !== false);
+}
+
+function successfulKnowledgeCapability(run) {
+  return (run.toolCalls || []).find((call) => (
+    call
+    && call.name === "capability.invoke"
+    && call.result
+    && call.result.ok
+    && (
+      call.result.capability === "knowledge.lookup"
+      || (call.args && call.args.capability === "knowledge.lookup")
+    )
+  )) || null;
 }
 
 function hasSequencedPlan(text) {
