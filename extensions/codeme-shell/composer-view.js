@@ -1232,6 +1232,7 @@ function renderComposer(nonce) {
         if (error) error.textContent = message.message || "Could not continue.";
       }
       if (message.type === "clarification-accepted" && current(message)) {
+        if (message.status === "NEEDS_CLARIFICATION") return;
         const button = document.getElementById("clarification-continue");
         if (button) {
           button.disabled = true;
