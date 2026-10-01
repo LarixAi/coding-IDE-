@@ -457,6 +457,80 @@ async function probeHub(capabilityProvider, mcpProvider) {
   };
 }
 
+function modelDisplayName(id) {
+  if (id === "qwen3.5:9b") return "Qwen 3.5 9B";
+  const parts = String(id || "").split(":");
+  const name = parts[0] || "";
+  const tag = parts[1] || "";
+  const words = name
+    .replace(/[._-]+/g, " ")
+    .replace(/(\d)/g, " $1 ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const titled = words.replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return tag ? titled + " " + tag.toUpperCase() : titled;
+}
+
+async function discoverOllamaEndpoint(endpoint) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch(new URL("/api/tags", endpoint.url), {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error("model list returned HTTP " + response.status);
+    }
+    const body = await response.json();
+    const models = (Array.isArray(body.models) ? body.models : [])
+      .map((model) => String(model && model.name || "").trim())
+      .filter(Boolean)
+      .map((id) => ({
+        provider: endpoint.provider,
+        id,
+        source: endpoint.label,
+        label: endpoint.label + " · " + modelDisplayName(id),
+      }));
+    return {
+      source: {
+        id: endpoint.id,
+        label: endpoint.label,
+        configured: true,
+        available: true,
+        count: models.length,
+        message: models.length
+          ? models.length + " model" + (models.length === 1 ? "" : "s")
+          : "No models installed",
+        url: endpoint.url,
+      },
+      models,
+    };
+  } catch (error) {
+    const timedOut = error && (error.name === "AbortError" || error.name === "TimeoutError");
+    const message = timedOut
+      ? "Timed out after 6s"
+      : error instanceof Error
+        ? error.message
+        : String(error);
+    return {
+      source: {
+        id: endpoint.id,
+        label: endpoint.label,
+        configured: true,
+        available: false,
+        count: 0,
+        message,
+        url: endpoint.url,
+      },
+      models: [],
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function discoverConfiguredModels() {
   const localUrl = process.env.CODEME_LOCAL_OLLAMA_URL || process.env.CODEME_OLLAMA_URL || "http://127.0.0.1:11434";
   const serverUrl = process.env.CODEME_SERVER_OLLAMA_URL || "";
@@ -475,41 +549,12 @@ async function discoverConfiguredModels() {
           available: false,
           count: 0,
           message: "Not configured",
+          url: "",
         },
         models: [],
       };
     }
-    try {
-      const models = await listOllamaModels(
-        endpoint.url,
-        endpoint.provider,
-        endpoint.label,
-        { strict: true },
-      );
-      return {
-        source: {
-          id: endpoint.id,
-          label: endpoint.label,
-          configured: true,
-          available: true,
-          count: models.length,
-          message: models.length ? `${models.length} model${models.length === 1 ? "" : "s"}` : "No models installed",
-        },
-        models,
-      };
-    } catch (error) {
-      return {
-        source: {
-          id: endpoint.id,
-          label: endpoint.label,
-          configured: true,
-          available: false,
-          count: 0,
-          message: error instanceof Error ? error.message : String(error),
-        },
-        models: [],
-      };
-    }
+    return discoverOllamaEndpoint(endpoint);
   }));
 
   return {
@@ -523,7 +568,9 @@ function modelDiscoveryDetail(snapshot) {
   if (!sources.length) return "No model sources have been checked yet.";
   return sources.map((source) => {
     if (!source.configured) return `${source.label}: not configured`;
-    if (!source.available) return `${source.label}: unavailable`;
+    if (!source.available) {
+      return `${source.label}: unavailable${source.message ? " (" + source.message + ")" : ""}`;
+    }
     return `${source.label}: ${source.count} model${source.count === 1 ? "" : "s"}`;
   }).join(" · ");
 }
