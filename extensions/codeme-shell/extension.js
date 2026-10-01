@@ -15,6 +15,7 @@ const { loadRuntimeEnv } = require("./runtime-config");
 const { N8nIntegration } = require("./n8n-integration");
 const { wrapToolCallCompat } = require("./model-tool-compat");
 const { wrapResponsePolicy } = require("./model-response-policy");
+const { PaperclipBridge } = require("./paperclip-bridge");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -41,7 +42,20 @@ function activate(context) {
     hub: { connected: false, capabilities: [], detail: "Checking the intelligence hub." },
   };
   const composer = new ComposerViewProvider(context, state);
+  const paperclip = new PaperclipBridge({ session: composer.session });
+  paperclip.start().then((status) => {
+    if (status.enabled) {
+      console.log(
+        "CodeMe Paperclip bridge " +
+        (status.started ? "started" : "not started") +
+        " (" + (status.reason || "ready") + ")",
+      );
+    }
+  }).catch((error) => {
+    console.error("CodeMe Paperclip bridge failed to start", error);
+  });
   context.subscriptions.push(
+    paperclip,
     vscode.window.registerWebviewViewProvider("codeme.agent", composer, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
