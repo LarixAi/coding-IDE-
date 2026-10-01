@@ -502,49 +502,53 @@ function renderComposer(nonce) {
       mode.value = picked;
       model.innerHTML = "";
       const sourceStates = Array.isArray(state.modelSources) ? state.modelSources : [];
-      const modelsBySource = new Map();
-      for (const item of state.models || []) {
-        const source = item.source || (item.provider === "ollama-server" ? "Server" : item.provider === "ollama-local" ? "Local" : "Other");
-        if (!modelsBySource.has(source)) modelsBySource.set(source, []);
-        modelsBySource.get(source).push(item);
+      const availableModels = Array.isArray(state.models) ? state.models : [];
+
+      // Keep the native select flat. Electron/Chromium can render a selected
+      // option from an optgroup as visually blank in a narrow VS Code webview.
+      // Prefix each label instead so Local and Server stay obvious.
+      for (const item of availableModels) {
+        const source = item.source
+          || (item.provider === "ollama-server" ? "Server"
+            : item.provider === "ollama-local" ? "Local"
+            : "Model");
+        const option = document.createElement("option");
+        option.value = item.provider + "::" + item.id;
+        option.dataset.provider = item.provider;
+        option.dataset.modelId = item.id;
+        option.dataset.source = source;
+        const rawLabel = item.label || item.id;
+        option.textContent = rawLabel.startsWith(source + " · ")
+          ? rawLabel
+          : source + " · " + rawLabel;
+        model.appendChild(option);
       }
 
-      const renderedSources = new Set();
-      const addSourceGroup = (label, sourceState) => {
-        const items = modelsBySource.get(label) || [];
-        const group = document.createElement("optgroup");
-        group.label = label;
-        if (items.length) {
-          for (const item of items) {
-            const option = document.createElement("option");
-            option.value = item.provider + "::" + item.id;
-            option.dataset.provider = item.provider;
-            option.dataset.modelId = item.id;
-            option.dataset.source = item.source || label;
-            option.textContent = item.label || item.id;
-            option.selected = Boolean(state.selected && state.selected.id === item.id && state.selected.provider === item.provider);
-            group.appendChild(option);
-          }
-        } else {
-          const status = document.createElement("option");
-          status.disabled = true;
-          status.textContent = label + " · " + (
-            sourceState
-              ? (!sourceState.configured ? "not configured" : sourceState.available ? "no models installed" : "unavailable")
-              : "no models"
-          );
-          group.appendChild(status);
-        }
-        model.appendChild(group);
-        renderedSources.add(label);
-      };
-
-      for (const sourceState of sourceStates) addSourceGroup(sourceState.label, sourceState);
-      for (const [label] of modelsBySource) {
-        if (!renderedSources.has(label)) addSourceGroup(label, null);
+      // Surface discovery failures directly in the dropdown rather than
+      // leaving it blank and making the user guess whether a source failed.
+      for (const sourceState of sourceStates) {
+        const hasModels = availableModels.some((item) => {
+          const source = item.source
+            || (item.provider === "ollama-server" ? "Server"
+              : item.provider === "ollama-local" ? "Local"
+              : "Model");
+          return source === sourceState.label;
+        });
+        if (hasModels) continue;
+        const status = document.createElement("option");
+        status.disabled = true;
+        status.value = "status::" + sourceState.id;
+        status.textContent = sourceState.label + " · " + (
+          !sourceState.configured
+            ? "not configured"
+            : sourceState.available
+              ? "no models installed"
+              : "unavailable"
+        );
+        model.appendChild(status);
       }
 
-      if (!model.children.length) {
+      if (!model.options.length) {
         const option = document.createElement("option");
         option.disabled = true;
         option.textContent = "No models available";
@@ -553,8 +557,17 @@ function renderComposer(nonce) {
 
       if (state.selected) {
         const selectedValue = state.selected.provider + "::" + state.selected.id;
-        if (Array.from(model.options).some((option) => option.value === selectedValue)) {
+        const match = Array.from(model.options).find((option) => option.value === selectedValue);
+        if (match) {
           model.value = selectedValue;
+        } else {
+          const fallback = document.createElement("option");
+          fallback.value = selectedValue;
+          fallback.dataset.provider = state.selected.provider;
+          fallback.dataset.modelId = state.selected.id;
+          fallback.textContent = state.selected.label || state.selected.id;
+          fallback.selected = true;
+          model.insertBefore(fallback, model.firstChild);
         }
       }
       model.title = sourceStates.map((source) => {
