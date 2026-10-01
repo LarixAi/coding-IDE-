@@ -289,13 +289,15 @@ async function runDirectCapabilityJsonFallback() {
     {
       message: {
         role: "assistant",
-        content: ````json
-{"name":"knowledge.lookup","arguments":{"input":{"note":"${note}"}}}
-```
-
-```json
-{"name":"knowledge.lookup","arguments":{"input":{"note":"${note}"}}}
-````,
+        content: [
+          "```json",
+          JSON.stringify({ name: "knowledge.lookup", arguments: { input: { note } } }),
+          "```",
+          "",
+          "```json",
+          JSON.stringify({ name: "knowledge.lookup", arguments: { input: { note } } }),
+          "```",
+        ].join("\n"),
       },
     },
   ], async (baseUrl) => {
