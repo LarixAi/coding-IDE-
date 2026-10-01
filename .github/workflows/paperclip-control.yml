@@ -7,6 +7,7 @@ on:
       - "extensions/codeme-shell/paperclip-bridge.js"
       - "extensions/codeme-shell/extension.js"
       - ".env.example"
+      - "scripts/setup-paperclip-team.js"
       - ".github/workflows/paperclip-control.yml"
   push:
     branches:
@@ -16,6 +17,7 @@ on:
       - "extensions/codeme-shell/paperclip-bridge.js"
       - "extensions/codeme-shell/extension.js"
       - ".env.example"
+      - "scripts/setup-paperclip-team.js"
       - ".github/workflows/paperclip-control.yml"
 
 jobs:
@@ -29,9 +31,12 @@ jobs:
       - name: Syntax check Paperclip bridge
         run: |
           node --check packages/paperclip-control/index.js
+          node --check packages/paperclip-control/roles.js
           node --check extensions/codeme-shell/paperclip-bridge.js
           node --check extensions/codeme-shell/extension.js
+          node --check scripts/setup-paperclip-team.js
       - name: Run Paperclip control tests
         run: |
           node packages/paperclip-control/test/paperclip-control.test.js
+          node packages/paperclip-control/test/multi-agent.test.js
           node extensions/codeme-shell/test/paperclip-bridge.test.js

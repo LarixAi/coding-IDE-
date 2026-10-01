@@ -1,4 +1,9 @@
 const crypto = require("crypto");
+const {
+  PaperclipAgentRegistry,
+  deniedToolUse,
+  rolePolicy,
+} = require("./roles");
 
 class PaperclipHttpError extends Error {
   constructor(statusCode, message, body = null) {
@@ -91,7 +96,7 @@ class PaperclipApi {
   }
 }
 
-function paperclipTaskPrompt(issue) {
+function paperclipTaskPrompt(issue, policy = rolePolicy("controller")) {
   const title = String(issue && (issue.title || issue.identifier) || "Paperclip task").trim();
   const identifier = String(issue && issue.identifier || issue && issue.id || "").trim();
   const description = String(issue && issue.description || "").trim();
@@ -103,8 +108,14 @@ function paperclipTaskPrompt(issue) {
   const parts = [
     "Paperclip assigned task" + (identifier ? " " + identifier : "") + ": " + title,
     "",
+    "Paperclip role: " + policy.label + " (" + policy.key + ")",
+    "",
     "Work only on this assigned task. Do not expand the scope into unrelated cleanup or redesign.",
   ];
+  if (Array.isArray(policy.instructions) && policy.instructions.length) {
+    parts.push("", "Role boundaries:");
+    for (const instruction of policy.instructions) parts.push("- " + instruction);
+  }
   if (description) parts.push("", "Task description:", description);
   if (goal) parts.push("", "Parent goal:", goal);
   if (plan) parts.push("", "Approved/current plan:", plan);
@@ -153,6 +164,8 @@ class PaperclipController {
     if (!options.session) throw new Error("PaperclipController requires a CodeMe session");
     this.session = options.session;
     this.api = options.api || new PaperclipApi(options);
+    this.agentRegistry = options.agentRegistry || null;
+    this.apiFactory = options.apiFactory || null;
     this.pollMs = options.pollMs || 750;
     this.repeatThreshold = options.repeatThreshold || 3;
     this.maxRunMs = options.maxRunMs || 30 * 60 * 1000;
@@ -166,6 +179,8 @@ class PaperclipController {
       .map((record) => ({
         paperclipRunId: record.paperclipRunId,
         taskId: record.taskId,
+        agentId: record.agentId,
+        role: record.role && record.role.key || "controller",
         status: record.status,
         codemeRunId: record.codemeRunId || "",
       }));
@@ -184,6 +199,8 @@ class PaperclipController {
         codemeRunId: existing.codemeRunId || "",
       };
     }
+
+    const runtime = this.resolveAgentRuntime(request.agentId);
 
     const current = this.session.snapshot();
     if (current && current.running) {
@@ -207,9 +224,9 @@ class PaperclipController {
       }
     }
 
-    const issue = await this.api.getIssue(request.taskId);
+    const issue = await runtime.api.getIssue(request.taskId);
     try {
-      await this.api.checkout({
+      await runtime.api.checkout({
         issueId: request.taskId,
         agentId: request.agentId,
         runId: request.runId,
@@ -234,6 +251,8 @@ class PaperclipController {
       codemeRunId: "",
       startedAt: Date.now(),
       repeat: null,
+      role: runtime.role,
+      api: runtime.api,
       completion,
       resolveCompletion,
       completionResolved: false,
@@ -244,7 +263,7 @@ class PaperclipController {
     // Leave that trace before the HTTP adapter returns 2xx, because CodeMe continues
     // asynchronously after the webhook has been accepted.
     try {
-      await this.api.updateIssue({
+      await runtime.api.updateIssue({
         issueId: record.taskId,
         runId: record.paperclipRunId,
         comment: "CodeMe accepted this Paperclip run and is starting local execution. Final status will be posted when CodeMe finishes.",
@@ -253,8 +272,8 @@ class PaperclipController {
       record.lastSyncError = error instanceof Error ? error.message : String(error);
     }
 
-    this.session.selectMode("code");
-    const submitted = await this.session.submit(paperclipTaskPrompt(issue), Date.now());
+    this.session.selectMode(runtime.role.mode);
+    const submitted = await this.session.submit(paperclipTaskPrompt(issue, runtime.role), Date.now());
 
     if (!submitted || submitted.ok === false) {
       record.status = "blocked";
@@ -346,6 +365,19 @@ class PaperclipController {
         return;
       }
 
+      const denied = deniedToolUse(snapshot.tools, record.role);
+      if (denied) {
+        record.status = "blocked";
+        try { this.session.cancel(); } catch {}
+        await this.safeUpdate(
+          record,
+          "blocked",
+          record.role.label + " attempted a tool outside its role boundary: " + denied.name + ". The run was stopped instead of widening this agent's authority.",
+        );
+        this.resolveRecord(record);
+        return;
+      }
+
       const repeat = repeatedTool(snapshot.tools, this.repeatThreshold);
       if (repeat) {
         record.repeat = repeat;
@@ -400,7 +432,7 @@ class PaperclipController {
 
   async safeUpdate(record, status, comment) {
     try {
-      return await this.api.updateIssue({
+      return await record.api.updateIssue({
         issueId: record.taskId,
         runId: record.paperclipRunId,
         status,
@@ -410,6 +442,39 @@ class PaperclipController {
       record.lastSyncError = error instanceof Error ? error.message : String(error);
       return null;
     }
+  }
+
+  resolveAgentRuntime(agentId) {
+    if (!this.agentRegistry) {
+      return {
+        role: rolePolicy("controller"),
+        api: this.api,
+      };
+    }
+
+    const identity = this.agentRegistry.resolve(agentId);
+    if (this.apiFactory) {
+      return {
+        role: identity.role,
+        api: this.apiFactory(identity),
+      };
+    }
+
+    if (identity.apiKey === this.api.apiKey) {
+      return {
+        role: identity.role,
+        api: this.api,
+      };
+    }
+
+    return {
+      role: identity.role,
+      api: new PaperclipApi({
+        baseUrl: this.api.baseUrl,
+        apiKey: identity.apiKey,
+        timeoutMs: this.api.timeoutMs,
+      }),
+    };
   }
 
   dispose() {
@@ -447,6 +512,7 @@ module.exports = {
   PaperclipApi,
   PaperclipController,
   PaperclipHttpError,
+  PaperclipAgentRegistry,
   normalizeHeartbeat,
   paperclipTaskPrompt,
   repeatedTool,
