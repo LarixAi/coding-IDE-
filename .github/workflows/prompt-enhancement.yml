@@ -1,0 +1,38 @@
+name: Prompt Enhancement Gate
+
+on:
+  pull_request:
+    paths:
+      - "extensions/codeme-shell/**"
+      - ".env.example"
+      - "scripts/test-ci.sh"
+      - ".codeme/pipeline-lock.json"
+  workflow_dispatch:
+
+jobs:
+  prompt-enhancement:
+    name: Prompt enhancement and Composer UX
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Syntax check changed runtime files
+        run: |
+          node --check extensions/codeme-shell/n8n-integration.js
+          node --check extensions/codeme-shell/composer-session.js
+          node --check extensions/codeme-shell/composer-view.js
+          node --check extensions/codeme-shell/extension.js
+
+      - name: Run prompt enhancement gate tests
+        env:
+          CODEME_SKIP_LIVE: "1"
+        run: node extensions/codeme-shell/test/prompt-enhancement-gate.test.js
