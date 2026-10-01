@@ -83,15 +83,45 @@ class PaperclipApi {
     );
   }
 
-  updateIssue({ issueId, runId, status, comment }) {
+  updateIssue({ issueId, runId, status, comment, assigneeAgentId, parentId }) {
     const body = {};
     if (status) body.status = status;
     if (comment) body.comment = comment;
+    if (assigneeAgentId !== undefined) body.assigneeAgentId = assigneeAgentId;
+    if (parentId !== undefined) body.parentId = parentId;
     return this.request(
       "PATCH",
       "/api/issues/" + encodeURIComponent(issueId),
       body,
       runId,
+    );
+  }
+
+  createIssue({ companyId, runId, issue }) {
+    return this.request(
+      "POST",
+      "/api/companies/" + encodeURIComponent(companyId) + "/issues",
+      issue,
+      runId,
+    );
+  }
+
+  listIssues({ companyId, query, assigneeAgentId, status }) {
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (assigneeAgentId) params.set("assigneeAgentId", assigneeAgentId);
+    if (status) params.set("status", status);
+    const suffix = params.toString() ? "?" + params.toString() : "";
+    return this.request(
+      "GET",
+      "/api/companies/" + encodeURIComponent(companyId) + "/issues" + suffix,
+    );
+  }
+
+  getIssueComments(issueId) {
+    return this.request(
+      "GET",
+      "/api/issues/" + encodeURIComponent(issueId) + "/comments",
     );
   }
 }
