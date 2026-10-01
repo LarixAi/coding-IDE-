@@ -4,6 +4,7 @@ const {
   deniedToolUse,
   rolePolicy,
 } = require("./roles");
+const { PaperclipTeamOrchestrator } = require("./team-orchestrator");
 
 class PaperclipHttpError extends Error {
   constructor(statusCode, message, body = null) {
@@ -543,6 +544,7 @@ module.exports = {
   PaperclipController,
   PaperclipHttpError,
   PaperclipAgentRegistry,
+  PaperclipTeamOrchestrator,
   normalizeHeartbeat,
   paperclipTaskPrompt,
   repeatedTool,
