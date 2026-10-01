@@ -98,8 +98,8 @@ function isLargeMultiPart(rawText, options = {}) {
 }
 
 function isKnowledgeLookup(text) {
-  return /\b(remembered|project notes|our notes|knowledge base|prior note|stored notes)\b/.test(text)
-    || /\b(what did we (save|store|note)|look up .*(note|knowledge))\b/.test(text);
+  return /\b(remember|remembered|recall|memory|project note|project notes|our notes|knowledge base|prior note|stored notes)\b/.test(text)
+    || /\b(what did we (save|store|note)|look up .*(note|knowledge)|retrieve .*(note|memory))\b/.test(text);
 }
 
 function wantsCreatedFile(goal) {
@@ -129,11 +129,11 @@ function capabilityGuidance(records) {
   for (const item of records || []) {
     if (!item || !item.name) continue;
     if (item.category === "research") {
-      lines.push(`Use ${item.name} for an unknown technical problem (research, how/why, failing API, algorithm).`);
+      lines.push(`Use capability.invoke with capability "${item.name}" for an unknown technical problem (research, how/why, failing API, algorithm).`);
     } else if (item.category === "task") {
-      lines.push(`Use ${item.name} for a large multi-part goal.`);
+      lines.push(`Use capability.invoke with capability "${item.name}" for a large multi-part goal.`);
     } else if (item.category === "knowledge") {
-      lines.push(`Use ${item.name} when the goal asks for remembered or project notes.`);
+      lines.push(`Use capability.invoke with capability "${item.name}" for remembered or project notes. To save memory use input.action "remember" with input.entry.content; to recall memory use input.action "lookup" with input.query.`);
     }
   }
   return lines.join(" ");
