@@ -32,4 +32,6 @@ jobs:
           node --check extensions/codeme-shell/paperclip-bridge.js
           node --check extensions/codeme-shell/extension.js
       - name: Run Paperclip control tests
-        run: node packages/paperclip-control/test/paperclip-control.test.js
+        run: |
+          node packages/paperclip-control/test/paperclip-control.test.js
+          node extensions/codeme-shell/test/paperclip-bridge.test.js
