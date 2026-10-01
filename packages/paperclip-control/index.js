@@ -235,6 +235,19 @@ class PaperclipController {
     };
     this.records.set(request.runId, record);
 
+    // Paperclip requires every issue-bound run to leave a run-attributed comment.
+    // Leave that trace before the HTTP adapter returns 2xx, because CodeMe continues
+    // asynchronously after the webhook has been accepted.
+    try {
+      await this.api.updateIssue({
+        issueId: record.taskId,
+        runId: record.paperclipRunId,
+        comment: "CodeMe accepted this Paperclip run and is starting local execution. Final status will be posted when CodeMe finishes.",
+      });
+    } catch (error) {
+      record.lastSyncError = error instanceof Error ? error.message : String(error);
+    }
+
     this.session.selectMode("code");
     const submitted = await this.session.submit(paperclipTaskPrompt(issue), Date.now());
 
