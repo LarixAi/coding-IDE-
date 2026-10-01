@@ -48,6 +48,31 @@ function enhancementError(code, message) {
   return Object.assign(new Error(message), { code });
 }
 
+function timedSignal(parentSignal, timeoutMs = 75000) {
+  const controller = new AbortController();
+  let parentAbort = null;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, Math.max(1000, Number(timeoutMs) || 75000));
+
+  if (parentSignal) {
+    parentAbort = () => controller.abort(parentSignal.reason);
+    if (parentSignal.aborted) parentAbort();
+    else parentSignal.addEventListener("abort", parentAbort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    cleanup() {
+      clearTimeout(timer);
+      if (parentSignal && parentAbort) parentSignal.removeEventListener("abort", parentAbort);
+    },
+  };
+}
+
 function normalizeTextList(value, limit = 20) {
   return (Array.isArray(value) ? value : [])
     .map((item) => clip(item, 1200))
@@ -347,6 +372,7 @@ class N8nIntegration {
       : [];
 
     let response;
+    const request = timedSignal(options.signal, options.timeoutMs || 75000);
     try {
       response = await fetch(url, {
         method: "POST",
@@ -368,12 +394,19 @@ class N8nIntegration {
           clarificationAnswers,
           previousEnrichment: options.previousEnrichment || null,
         }),
-        signal: options.signal,
+        signal: request.signal,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = request.didTimeout()
+        ? "Prompt enhancement timed out after 75 seconds."
+        : "Prompt enhancement could not reach n8n: " + (error instanceof Error ? error.message : String(error));
       this.lastError = message;
-      throw enhancementError("prompt_enhancement_unavailable", "Prompt enhancement could not reach n8n: " + message);
+      throw enhancementError(
+        request.didTimeout() ? "prompt_enhancement_timeout" : "prompt_enhancement_unavailable",
+        message,
+      );
+    } finally {
+      request.cleanup();
     }
 
     if (!response.ok) {
@@ -498,4 +531,4 @@ function listWorkspaceHints(root) {
   return found;
 }
 
-module.exports={N8nIntegration,listWorkspaceHints,localEnhance,attachmentRefs,parseEnhancementResponse};
+module.exports={N8nIntegration,listWorkspaceHints,localEnhance,attachmentRefs,parseEnhancementResponse,timedSignal};
