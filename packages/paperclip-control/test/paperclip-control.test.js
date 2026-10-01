@@ -197,6 +197,12 @@ async function main() {
   assert.strictEqual(completeSession.submitCalls.length, 1);
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.ok(completeApi.checkoutCalls.length === 1);
+  assert.ok(
+    completeApi.updateCalls.some((call) => (
+      !call.status && /starting local execution/i.test(call.comment || "")
+    )),
+    "Paperclip run must leave a run-attributed comment before async CodeMe work continues",
+  );
   assert.ok(completeApi.updateCalls.some((call) => call.status === "done"));
   const duplicate = await complete.handleHeartbeat({
     runId: "pc-run-1",
