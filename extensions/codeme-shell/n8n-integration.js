@@ -11,11 +11,16 @@ function clip(value, limit) {
 }
 
 function publicDefaults() {
+  const configuredEnhanceUrl = process.env.CODEME_N8N_ENHANCE_URL || "http://127.0.0.1:5678/webhook/prompt.enrich";
+  const autoEnhanceEnv = String(process.env.CODEME_N8N_AUTO_ENHANCE || "").trim().toLowerCase();
+  const autoEnhance = autoEnhanceEnv
+    ? !["0", "false", "off", "no"].includes(autoEnhanceEnv)
+    : true;
   return {
     mcpEnabled: true,
     mcpUrl: process.env.CODEME_N8N_MCP_URL || defaultMcpUrl(),
-    autoEnhance: false,
-    enhanceWebhookUrl: process.env.CODEME_N8N_ENHANCE_URL || "",
+    autoEnhance,
+    enhanceWebhookUrl: configuredEnhanceUrl,
   };
 }
 
@@ -37,6 +42,90 @@ function attachmentRefs(prompt) {
     } catch {}
   }
   return out.slice(0,4);
+}
+
+function enhancementError(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
+function normalizeTextList(value, limit = 20) {
+  return (Array.isArray(value) ? value : [])
+    .map((item) => clip(item, 1200))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function normalizeQuestions(value) {
+  return (Array.isArray(value) ? value : [])
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const question = clip(item.question, 1200);
+      if (!question) return null;
+      return {
+        id: clip(item.id || ("q" + (index + 1)), 120) || ("q" + (index + 1)),
+        question,
+        reason: clip(item.reason, 1200),
+        required: item.required !== false,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+function parseEnhancementResponse(value) {
+  let parsed = value;
+  if (typeof parsed === "string") {
+    try { parsed = JSON.parse(parsed); } catch {
+      throw enhancementError("prompt_enhancement_invalid", "Prompt enhancement returned invalid JSON.");
+    }
+  }
+  if (Array.isArray(parsed)) parsed = parsed[0];
+  if (parsed && typeof parsed === "object" && parsed.response && !parsed.status) parsed = parsed.response;
+  if (!parsed || typeof parsed !== "object") {
+    throw enhancementError("prompt_enhancement_invalid", "Prompt enhancement returned an invalid response.");
+  }
+
+  const status = String(parsed.status || "").trim().toUpperCase();
+  if (!["READY", "NEEDS_CLARIFICATION", "NEEDS_RESEARCH"].includes(status)) {
+    throw enhancementError("prompt_enhancement_invalid", "Prompt enhancement returned an unknown status.");
+  }
+
+  const decision = {
+    status,
+    ok: parsed.ok !== false,
+    summary: clip(parsed.summary, 2400),
+    intent: parsed.intent && typeof parsed.intent === "object"
+      ? { goal: clip(parsed.intent.goal, 2400), taskType: clip(parsed.intent.taskType, 120) }
+      : { goal: "", taskType: "" },
+    requirements: normalizeTextList(parsed.requirements),
+    constraints: normalizeTextList(parsed.constraints),
+    knownContext: normalizeTextList(parsed.knownContext),
+    assumptions: normalizeTextList(parsed.assumptions),
+    missingInformation: normalizeTextList(parsed.missingInformation),
+    clarifyingQuestions: normalizeQuestions(parsed.clarifyingQuestions),
+    researchQueries: normalizeTextList(parsed.researchQueries, 10),
+    suggestedCapabilities: normalizeTextList(parsed.suggestedCapabilities, 20),
+    suggestedAgents: normalizeTextList(parsed.suggestedAgents, 20),
+    acceptanceCriteria: normalizeTextList(parsed.acceptanceCriteria, 30),
+    enhancedPrompt: String(parsed.enhancedPrompt || parsed.enhanced_prompt || "").trim().slice(0, 24000),
+    confidence: Number.isFinite(Number(parsed.confidence)) ? Number(parsed.confidence) : null,
+    taskId: parsed.taskId == null ? null : String(parsed.taskId),
+    conversationId: parsed.conversationId == null ? null : String(parsed.conversationId),
+    projectId: parsed.projectId == null ? null : String(parsed.projectId),
+    promptEnhancementVersion: clip(parsed.promptEnhancementVersion, 80),
+  };
+
+  if (status === "READY" && !decision.enhancedPrompt) {
+    throw enhancementError("prompt_enhancement_invalid", "Prompt enhancement marked the task READY without an enhanced prompt.");
+  }
+  if (status === "NEEDS_CLARIFICATION" && !decision.clarifyingQuestions.length) {
+    throw enhancementError("prompt_enhancement_invalid", "Prompt enhancement requested clarification without any questions.");
+  }
+  if (status === "NEEDS_RESEARCH" && !decision.researchQueries.length) {
+    throw enhancementError("prompt_enhancement_invalid", "Prompt enhancement requested research without any research query.");
+  }
+
+  return decision;
 }
 
 function localEnhance(prompt, context = {}) {
@@ -221,6 +310,79 @@ class N8nIntegration {
     return {ok:true,count:status.toolCount,names:status.tools,settings:this.snapshot()};
   }
 
+  async enhanceForSubmit(rawPrompt, context = {}, options = {}) {
+    const settings = this.settings();
+    const original = String(rawPrompt || "").trim();
+    if (!settings.autoEnhance) {
+      return { status: "DISABLED", prompt: original, source: "none" };
+    }
+
+    const url = String(settings.enhanceWebhookUrl || "").trim();
+    if (!url) {
+      throw enhancementError("prompt_enhancement_unavailable", "Prompt enhancement is enabled but no n8n webhook URL is configured.");
+    }
+
+    const token = await this.secret();
+    const clarificationAnswers = Array.isArray(options.clarificationAnswers)
+      ? options.clarificationAnswers
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const answer = String(item.answer || "").trim().slice(0, 6000);
+          if (!answer) return null;
+          return { id: clip(item.id, 120) || "answer", answer };
+        })
+        .filter(Boolean)
+        .slice(0, 5)
+      : [];
+
+    let response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          ...(token ? { authorization: "Bearer " + token } : {}),
+        },
+        body: JSON.stringify({
+          prompt: original,
+          mode: context.mode || "code",
+          projectId: context.projectId || (context.workspace && context.workspace.rootName) || null,
+          conversationId: context.conversationId || null,
+          taskId: context.taskId || null,
+          context: {
+            recentConversation: recentConversation(context.conversation || context.history),
+            workspace: context.workspace && typeof context.workspace === "object" ? context.workspace : {},
+          },
+          clarificationAnswers,
+          previousEnrichment: options.previousEnrichment || null,
+        }),
+        signal: options.signal,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.lastError = message;
+      throw enhancementError("prompt_enhancement_unavailable", "Prompt enhancement could not reach n8n: " + message);
+    }
+
+    if (!response.ok) {
+      const detail = clip(await response.text().catch(() => ""), 500);
+      const message = "Prompt enhancement failed with HTTP " + response.status + (detail ? ": " + detail : "");
+      this.lastError = message;
+      throw enhancementError("prompt_enhancement_failed", message);
+    }
+
+    const raw = await response.text();
+    const decision = parseEnhancementResponse(raw);
+    this.lastError = "";
+    this.lastEnhancementSource = "n8n";
+    return {
+      ...decision,
+      prompt: decision.status === "READY" ? decision.enhancedPrompt : "",
+      source: "n8n",
+    };
+  }
+
   async enhance(rawPrompt,context={},options={}) {
     const settings=this.settings();
     const token=await this.secret();
@@ -325,4 +487,4 @@ function listWorkspaceHints(root) {
   return found;
 }
 
-module.exports={N8nIntegration,listWorkspaceHints,localEnhance,attachmentRefs};
+module.exports={N8nIntegration,listWorkspaceHints,localEnhance,attachmentRefs,parseEnhancementResponse};
