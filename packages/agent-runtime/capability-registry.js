@@ -54,7 +54,7 @@ const OPERATIONAL_DEFAULTS = {
   }),
   "knowledge.lookup": contractDefaults({
     name: "knowledge.lookup",
-    description: "Find a prior note by query, or remember a short note.",
+    description: "Find a prior note by query, or remember a short note. Use action=lookup with query for recall; use action=remember with entry.content for storage.",
     inputSchema: {
       type: "object",
       properties: { query: { type: "string" }, action: { type: "string" }, entry: { type: "object" } },
