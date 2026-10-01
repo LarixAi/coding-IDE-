@@ -240,6 +240,12 @@ async function main() {
   assert.strictEqual(failedProvider.calls.length, 0, "enhancement failure must not silently bypass the gate");
 
   const html = renderComposer("prompt-gate-nonce");
+  const renderedScript = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+  assert.ok(renderedScript, "rendered Composer must contain a script block");
+  assert.doesNotThrow(
+    () => new Function(renderedScript[1]),
+    "rendered Composer JavaScript must be syntactically valid",
+  );
   assert.ok(html.includes('id="clarification"'));
   assert.ok(html.includes("clarification-submit"));
   assert.ok(html.includes('id="work-panel"'));
