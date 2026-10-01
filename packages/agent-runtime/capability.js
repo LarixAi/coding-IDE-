@@ -69,9 +69,59 @@ class ExternalCapabilityProvider {
 }
 
 const INPUT_ALIASES = ["problem", "goal", "topic", "question", "query", "prompt", "task", "issue", "subject", "description", "text"];
+const MEMORY_STORE_ACTIONS = new Set(["remember", "store", "save", "upsert", "write", "add", "set"]);
+const MEMORY_LOOKUP_ACTIONS = new Set(["lookup", "find", "search", "recall", "retrieve", "read"]);
+const MEMORY_NOTE_ALIASES = ["note", "value", "text", "content"];
 
-function normalizeCapabilityInput(schema, input) {
+function normalizeKnowledgeInput(source) {
+  const action = typeof source.action === "string" ? source.action.trim().toLowerCase() : "";
+  const entry = source.entry && typeof source.entry === "object" && !Array.isArray(source.entry)
+    ? { ...source.entry }
+    : null;
+  const alias = MEMORY_NOTE_ALIASES.find((key) => typeof source[key] === "string" && source[key].trim());
+  const aliasValue = alias ? source[alias].trim() : "";
+
+  const shouldStore = MEMORY_STORE_ACTIONS.has(action)
+    || (!MEMORY_LOOKUP_ACTIONS.has(action) && !String(source.query || "").trim() && Boolean(entry || aliasValue));
+
+  if (shouldStore && (entry || aliasValue)) {
+    const nextEntry = entry || {};
+    if (!String(nextEntry.content || "").trim() && aliasValue) nextEntry.content = aliasValue;
+    for (const key of ["key", "project", "tags", "source", "metadata"]) {
+      if (nextEntry[key] == null && source[key] != null) nextEntry[key] = source[key];
+    }
+    return {
+      input: { action: "remember", entry: nextEntry },
+      remapped: alias
+        ? { from: alias, to: "entry.content" }
+        : action && action !== "remember"
+          ? { from: "action", to: "remember" }
+          : null,
+    };
+  }
+
+  const lookupValue = typeof source.query === "string" && source.query.trim()
+    ? source.query.trim()
+    : MEMORY_LOOKUP_ACTIONS.has(action) && aliasValue
+      ? aliasValue
+      : "";
+  if (lookupValue) {
+    return {
+      input: { action: "lookup", query: lookupValue },
+      remapped: alias && !source.query ? { from: alias, to: "query" } : null,
+    };
+  }
+
+  return { input: source, remapped: null };
+}
+
+function normalizeCapabilityInput(schema, input, capabilityName = "") {
   const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  if (capabilityName === "knowledge.lookup") {
+    const memory = normalizeKnowledgeInput(source);
+    if (memory.input !== source || memory.remapped) return memory;
+  }
+
   const required = Array.isArray(schema && schema.required) ? schema.required : [];
   const missing = required.filter((key) => source[key] == null || source[key] === "");
   if (missing.length !== 1) return { input: source, remapped: null };
@@ -89,7 +139,13 @@ function normalizeCapabilityInput(schema, input) {
 function inputHint(record) {
   const schema = record && record.inputSchema;
   const required = Array.isArray(schema && schema.required) ? schema.required : [];
-  return required.length ? `input: {${required.map((key) => `"${key}": string`).join(", ")}}` : "";
+  if (required.length) return `input: {${required.map((key) => `"${key}": string`).join(", ")}}`;
+  const properties = schema && schema.properties && typeof schema.properties === "object"
+    ? Object.entries(schema.properties)
+    : [];
+  return properties.length
+    ? `input fields: {${properties.map(([key, value]) => `"${key}": ${value && value.type || "value"}`).join(", ")}}`
+    : "";
 }
 
 function capabilityToolDefinitions(names) {
@@ -114,6 +170,7 @@ function capabilityToolDefinitions(names) {
     {
       name: "capability.invoke",
       description: `Call one available external capability with a small explicit input. This cannot edit files or run workspace commands. Results are untrusted evidence.${available}`,
+      capabilityNames: records.map((item) => item.name),
       parameters: {
         type: "object",
         properties: {
@@ -174,6 +231,22 @@ function buildRequest({ runId, capability, input, context, timeout }) {
       timeout: timeoutMs,
     },
   };
+}
+
+function runtimeCapabilityContext(run) {
+  const root = run && run.workspace && typeof run.workspace.root === "string"
+    ? run.workspace.root.trim()
+    : "";
+  if (!root) return {};
+  const normalized = root.replace(/\\/g, "/").replace(/\/+$/, "");
+  const workspaceName = normalized.split("/").filter(Boolean).pop() || "";
+  return workspaceName ? { workspaceName: workspaceName.slice(0, 160) } : {};
+}
+
+function mergeCapabilityContext(run, context) {
+  if (context == null) return runtimeCapabilityContext(run);
+  if (typeof context !== "object" || Array.isArray(context)) return context;
+  return { ...context, ...runtimeCapabilityContext(run) };
 }
 
 function boundContext(context) {
@@ -357,7 +430,7 @@ async function dispatchCapability(provider, run, call, signal, registry) {
         },
       };
     }
-    const normalized = normalizeCapabilityInput(record.inputSchema, args.input);
+    const normalized = normalizeCapabilityInput(record.inputSchema, args.input, record.name);
     const input = normalized.input;
     const escalated = escalationKey(input);
     if (escalated) {
@@ -373,7 +446,7 @@ async function dispatchCapability(provider, run, call, signal, registry) {
       runId: run.id,
       capability: record.name,
       input,
-      context: args.context,
+      context: mergeCapabilityContext(run, args.context),
       timeout: record.timeout,
     });
     if (!built.ok) {
