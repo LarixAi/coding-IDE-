@@ -21,6 +21,7 @@ const ROLE_POLICIES = Object.freeze({
       "Do not edit source files or implement the task yourself.",
       "Break complex work into bounded implementation, research, test, and review responsibilities.",
       "Identify dependencies, risks, acceptance criteria, and the next concrete owner.",
+      "End a completed planning response with exactly: PLAN: READY",
     ],
   }),
   research: Object.freeze({
@@ -45,6 +46,7 @@ const ROLE_POLICIES = Object.freeze({
       "Make the smallest sufficient workspace change and verify it.",
       "If verification disproves a file-edit hypothesis, revert any now-unnecessary edit before completion.",
       "Do not leave unrelated or superseded changes in the workspace.",
+      "End a completed implementation or repair response with exactly: DEV: COMPLETE",
     ],
   }),
   test: Object.freeze({
@@ -56,7 +58,8 @@ const ROLE_POLICIES = Object.freeze({
       "Own verification and reproduction, not implementation.",
       "Do not write, patch, create, or delete source files.",
       "Use diagnostics, sandbox/tests, the owned preview process, and browser verification to gather evidence.",
-      "If the product is wrong, report the exact failure and block; do not repair the implementation.",
+      "If the product is wrong, report the exact failure; do not repair the implementation.",
+      "End with TEST: PASS when verified, otherwise TEST: FAIL - <specific reason>.",
     ],
   }),
   reviewer: Object.freeze({
@@ -69,6 +72,7 @@ const ROLE_POLICIES = Object.freeze({
       "Do not edit source files or silently repair defects.",
       "Reject unrelated, duplicate, or superseded changes and identify exactly what must be corrected.",
       "Approve only when the requested outcome is supported by verification evidence.",
+      "End with REVIEW: APPROVED when clean, otherwise REVIEW: CHANGES_REQUIRED - <specific reason>.",
     ],
   }),
 });
