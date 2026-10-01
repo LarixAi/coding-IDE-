@@ -217,6 +217,55 @@ async function main() {
   assert.strictEqual(duplicate.duplicate, true);
   assert.strictEqual(completeSession.submitCalls.length, 1, "duplicate Paperclip run must not start CodeMe twice");
 
+  const syncFailureSession = fakeSession({
+    states: [
+      {
+        running: false,
+        selected: { provider: "fixture-provider", id: "fixture-model", label: "Fixture Model" },
+      },
+      {
+        running: false,
+        runId: "run_codeme_sync_failure",
+        stage: "Complete",
+        filesChanged: ["public/index.html"],
+        verification: { status: "passed" },
+        outcome: { summary: "Work completed locally." },
+      },
+    ],
+    submitResult: { ok: true, runId: "run_codeme_sync_failure" },
+  });
+  const syncFailureApi = fakeApi();
+  let dispositionAttempts = 0;
+  syncFailureApi.updateIssue = async function updateIssue(input) {
+    this.updateCalls.push(input);
+    if (input.status === "done") {
+      dispositionAttempts += 1;
+      const error = new Error("simulated Paperclip disposition failure");
+      error.statusCode = 503;
+      throw error;
+    }
+    return { ok: true };
+  };
+  const syncFailure = new PaperclipController({
+    session: syncFailureSession,
+    api: syncFailureApi,
+    pollMs: 1,
+    maxRunMs: 1000,
+    dispositionRetryDelays: [0, 0, 0],
+  });
+  await syncFailure.handleHeartbeat({
+    runId: "pc-run-sync-failure",
+    agentId: "agent-1",
+    companyId: "company-1",
+    context: { taskId: "issue-sync-failure" },
+  });
+  const syncFailureResult = await syncFailure.waitForCompletion("pc-run-sync-failure");
+  assert.strictEqual(syncFailureResult.status, "sync_failed");
+  assert.strictEqual(syncFailureResult.completed, true);
+  assert.strictEqual(syncFailureResult.ok, false);
+  assert.strictEqual(dispositionAttempts, 3, "final disposition must be retried before failing closed");
+  assert.match(syncFailureResult.syncError, /could not persist the final issue disposition/i);
+
   const clarificationSession = fakeSession({
     submitResult: { ok: true, status: "NEEDS_CLARIFICATION" },
   });
@@ -276,6 +325,7 @@ async function main() {
   )));
 
   complete.dispose();
+  syncFailure.dispose();
   clarification.dispose();
   loopController.dispose();
 

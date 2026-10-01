@@ -200,13 +200,16 @@ class PaperclipController {
     this.pollMs = options.pollMs || 750;
     this.repeatThreshold = options.repeatThreshold || 3;
     this.maxRunMs = options.maxRunMs || 30 * 60 * 1000;
+    this.dispositionRetryDelays = Array.isArray(options.dispositionRetryDelays)
+      ? options.dispositionRetryDelays
+      : [0, 250, 750];
     this.records = new Map();
     this.disposed = false;
   }
 
   snapshot() {
     const active = [...this.records.values()]
-      .filter((record) => !["done", "blocked", "rejected"].includes(record.status))
+      .filter((record) => !["done", "blocked", "rejected", "sync_failed"].includes(record.status))
       .map((record) => ({
         paperclipRunId: record.paperclipRunId,
         taskId: record.taskId,
@@ -358,11 +361,12 @@ class PaperclipController {
     return {
       ok: record.status === "done",
       accepted: true,
-      completed: ["done", "blocked", "rejected"].includes(record.status),
+      completed: ["done", "blocked", "rejected", "sync_failed"].includes(record.status),
       status: record.status,
       taskId: record.taskId,
       codemeRunId: record.codemeRunId || "",
       repeat: record.repeat || null,
+      syncError: record.syncError || null,
     };
   }
 
@@ -380,7 +384,7 @@ class PaperclipController {
       error.statusCode = 404;
       throw error;
     }
-    if (["done", "blocked", "rejected"].includes(record.status)) {
+    if (["done", "blocked", "rejected", "sync_failed"].includes(record.status)) {
       return this.completionResult(record);
     }
     return record.completion;
@@ -390,70 +394,67 @@ class PaperclipController {
     while (!this.disposed && record.status === "running") {
       const snapshot = this.session.snapshot();
       if (record.codemeRunId && snapshot.runId && snapshot.runId !== record.codemeRunId) {
-        record.status = "blocked";
-        await this.safeUpdate(record, "blocked", "CodeMe switched to a different run before this Paperclip task completed.");
-        this.resolveRecord(record);
+        await this.finishRecord(
+          record,
+          "blocked",
+          "CodeMe switched to a different run before this Paperclip task completed.",
+        );
         return;
       }
 
       const denied = deniedToolUse(snapshot.tools, record.role);
       if (denied) {
-        record.status = "blocked";
         try { this.session.cancel(); } catch {}
-        await this.safeUpdate(
+        await this.finishRecord(
           record,
           "blocked",
           record.role.label + " attempted a tool outside its role boundary: " + denied.name + ". The run was stopped instead of widening this agent's authority.",
         );
-        this.resolveRecord(record);
         return;
       }
 
       const repeat = repeatedTool(snapshot.tools, this.repeatThreshold);
       if (repeat) {
         record.repeat = repeat;
-        record.status = "blocked";
         try { this.session.cancel(); } catch {}
-        await this.safeUpdate(
+        await this.finishRecord(
           record,
           "blocked",
           "CodeMe stopped a repeated-action loop after " + repeat.count + " identical actions: " + repeat.signature + ". A new hypothesis or re-plan is required before retrying.",
         );
-        this.resolveRecord(record);
         return;
       }
 
       if (Date.now() - record.startedAt > this.maxRunMs) {
-        record.status = "blocked";
         try { this.session.cancel(); } catch {}
-        await this.safeUpdate(record, "blocked", "CodeMe stopped because the Paperclip task exceeded its heartbeat execution limit.");
-        this.resolveRecord(record);
+        await this.finishRecord(
+          record,
+          "blocked",
+          "CodeMe stopped because the Paperclip task exceeded its heartbeat execution limit.",
+        );
         return;
       }
 
       if (!snapshot.running) {
         if (snapshot.stage === "Complete") {
-          record.status = "done";
           const files = Array.isArray(snapshot.filesChanged) && snapshot.filesChanged.length
             ? "\nChanged files: " + snapshot.filesChanged.join(", ")
             : "";
           const verification = snapshot.verification && snapshot.verification.status
             ? "\nVerification: " + snapshot.verification.status
             : "";
-          await this.safeUpdate(
+          await this.finishRecord(
             record,
             "done",
             "CodeMe completed the task.\n\n" + conciseOutcome(snapshot) + files + verification,
           );
         } else {
-          record.status = "blocked";
-          await this.safeUpdate(
+          await this.finishRecord(
             record,
             "blocked",
             "CodeMe stopped before verified completion.\n\n" + conciseOutcome(snapshot),
           );
         }
-        this.resolveRecord(record);
         return;
       }
 
@@ -473,6 +474,61 @@ class PaperclipController {
       record.lastSyncError = error instanceof Error ? error.message : String(error);
       return null;
     }
+  }
+
+  async syncDisposition(record, status, comment) {
+    let lastError = null;
+    for (let index = 0; index < this.dispositionRetryDelays.length; index += 1) {
+      const delayMs = Number(this.dispositionRetryDelays[index] || 0);
+      if (delayMs > 0) await delay(delayMs);
+      try {
+        const receipt = await record.api.updateIssue({
+          issueId: record.taskId,
+          runId: record.paperclipRunId,
+          status,
+          comment,
+        });
+        if (
+          receipt
+          && typeof receipt === "object"
+          && receipt.status
+          && String(receipt.status) !== String(status)
+        ) {
+          const error = new Error(
+            "Paperclip disposition write returned status " + receipt.status + " instead of " + status,
+          );
+          error.code = "paperclip_disposition_not_committed";
+          throw error;
+        }
+        record.lastSyncError = "";
+        return receipt;
+      } catch (error) {
+        lastError = error;
+        record.lastSyncError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    const wrapped = new Error(
+      "Paperclip could not persist the final issue disposition after "
+      + this.dispositionRetryDelays.length
+      + " attempt(s): "
+      + (lastError instanceof Error ? lastError.message : String(lastError || "unknown error")),
+    );
+    wrapped.code = "paperclip_disposition_sync_failed";
+    wrapped.statusCode = 502;
+    throw wrapped;
+  }
+
+  async finishRecord(record, status, comment) {
+    try {
+      await this.syncDisposition(record, status, comment);
+      record.status = status;
+      record.syncError = null;
+    } catch (error) {
+      record.status = "sync_failed";
+      record.syncError = error instanceof Error ? error.message : String(error);
+    }
+    this.resolveRecord(record);
   }
 
   resolveAgentRuntime(agentId) {

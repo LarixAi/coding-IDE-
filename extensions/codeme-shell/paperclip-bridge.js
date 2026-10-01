@@ -152,7 +152,13 @@ class PaperclipBridge {
         const result = await runtime.handleHeartbeat(body);
         if (result.accepted && result.status === "running") {
           const terminal = await runtime.waitForCompletion(body.runId);
+          if (terminal && terminal.status === "sync_failed") {
+            return sendJson(res, 502, terminal);
+          }
           return sendJson(res, 200, terminal);
+        }
+        if (result && result.status === "sync_failed") {
+          return sendJson(res, 502, result);
         }
         return sendJson(res, 200, result);
       } catch (error) {
