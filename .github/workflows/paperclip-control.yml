@@ -1,0 +1,35 @@
+name: Paperclip Control Bridge
+
+on:
+  pull_request:
+    paths:
+      - "packages/paperclip-control/**"
+      - "extensions/codeme-shell/paperclip-bridge.js"
+      - "extensions/codeme-shell/extension.js"
+      - ".env.example"
+      - ".github/workflows/paperclip-control.yml"
+  push:
+    branches:
+      - "codeme/paperclip-control-v1"
+    paths:
+      - "packages/paperclip-control/**"
+      - "extensions/codeme-shell/paperclip-bridge.js"
+      - "extensions/codeme-shell/extension.js"
+      - ".env.example"
+      - ".github/workflows/paperclip-control.yml"
+
+jobs:
+  paperclip-control:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Syntax check Paperclip bridge
+        run: |
+          node --check packages/paperclip-control/index.js
+          node --check extensions/codeme-shell/paperclip-bridge.js
+          node --check extensions/codeme-shell/extension.js
+      - name: Run Paperclip control tests
+        run: node packages/paperclip-control/test/paperclip-control.test.js
