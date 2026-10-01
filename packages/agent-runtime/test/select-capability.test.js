@@ -73,6 +73,19 @@ function start(options) {
   fs.mkdirSync(workspace);
   fs.writeFileSync(path.join(workspace, "README.md"), "site notes\n");
   const host = {
+    async inspectWorkspace() {
+      return {
+        state: "project",
+        root: path.basename(workspace),
+        entries: 1,
+        git: false,
+        projectMarkers: [],
+        languages: ["markdown"],
+        frameworks: [],
+        packageManager: null,
+        scripts: {},
+      };
+    },
     async readFile(filePath) {
       return { path: filePath, contents: fs.readFileSync(path.join(workspace, filePath), "utf8") };
     },
