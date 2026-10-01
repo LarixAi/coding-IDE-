@@ -201,8 +201,12 @@ async function main() {
     completeApi.updateCalls.some((call) => (
       !call.status && /starting local execution/i.test(call.comment || "")
     )),
-    "Paperclip run must leave a run-attributed comment before async CodeMe work continues",
+    "Paperclip run must leave a run-attributed comment before CodeMe execution continues",
   );
+  const completedResult = await complete.waitForCompletion("pc-run-1");
+  assert.strictEqual(completedResult.status, "done");
+  assert.strictEqual(completedResult.completed, true);
+  assert.strictEqual(completedResult.codemeRunId, "run_codeme_1");
   assert.ok(completeApi.updateCalls.some((call) => call.status === "done"));
   const duplicate = await complete.handleHeartbeat({
     runId: "pc-run-1",
