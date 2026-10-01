@@ -35,14 +35,29 @@ function liveHub(state) {
     async invoke(request) {
       state.invocations.push(request.capability);
       if (Array.isArray(state.requests)) state.requests.push(request);
+      const memory = request.capability === "knowledge.lookup";
+      const remember = memory && request.input && request.input.action === "remember";
       return {
         protocolVersion: 1,
         requestId: request.requestId,
         status: "ok",
-        data: {
-          problem: request.input && (request.input.problem || request.input.goal || request.input.query),
-          evidence: [{ title: "Published note", url: "https://example.com/note", excerpt: "short evidence", source: "test" }],
-        },
+        data: memory
+          ? remember
+            ? {
+                action: "remember",
+                stored: true,
+                key: "test-animal",
+              }
+            : {
+                action: "lookup",
+                found: true,
+                result: "The CodeMe test colour is sapphire.",
+                matches: [{ key: "test-colour", content: "The CodeMe test colour is sapphire." }],
+              }
+          : {
+              problem: request.input && (request.input.problem || request.input.goal || request.input.query),
+              evidence: [{ title: "Published note", url: "https://example.com/note", excerpt: "short evidence", source: "test" }],
+            },
         sources: [],
         warnings: [],
         error: null,
