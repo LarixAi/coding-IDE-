@@ -193,16 +193,15 @@ function directCapabilityCall(providerName, args, offeredTools) {
   if (!capability) return null;
 
   const source = args && typeof args === "object" && !Array.isArray(args) ? args : {};
+  const hasExplicitInput = source.input && typeof source.input === "object" && !Array.isArray(source.input);
   const wrapped = {
     capability,
-    input: source.input && typeof source.input === "object" && !Array.isArray(source.input)
-      ? source.input
-      : { ...source },
+    input: hasExplicitInput ? source.input : { ...source },
   };
   if (source.context && typeof source.context === "object" && !Array.isArray(source.context)) {
     wrapped.context = source.context;
   }
-  if (wrapped.input === source) delete wrapped.input.context;
+  if (!hasExplicitInput) delete wrapped.input.context;
   if (!validToolArguments(wrapped, invoke.parameters)) return null;
   return { name: "capability.invoke", args: wrapped };
 }
