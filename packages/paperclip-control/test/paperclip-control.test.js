@@ -15,7 +15,7 @@ function fakeSession(options = {}) {
     cancelCalls: 0,
     state: options.initial || {
       running: false,
-      selected: { provider: "fixture", id: "qwen3.5:9b", label: "Local · Qwen 3.5 9B" },
+      selected: { provider: "fixture-provider", id: "fixture-model", label: "Fixture Model" },
       stage: "Waiting",
       runId: "",
       tools: [],
@@ -38,6 +38,9 @@ function fakeSession(options = {}) {
     selectMode(mode) {
       this.mode = mode;
       return { ok: true };
+    },
+    selectModel() {
+      throw new Error("Paperclip must never select or pin a model");
     },
     async submit(goal) {
       this.submitCalls.push(goal);
@@ -171,6 +174,11 @@ async function main() {
   });
   assert.strictEqual(accepted.accepted, true);
   assert.strictEqual(completeSession.mode, "code");
+  assert.strictEqual(
+    completeSession.state.selected.id,
+    "fixture-model",
+    "Paperclip must preserve whatever model CodeMe already selected",
+  );
   assert.strictEqual(completeSession.submitCalls.length, 1);
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.ok(completeApi.checkoutCalls.length === 1);
