@@ -56,11 +56,38 @@ function renderComposer(nonce) {
     .project-decision-title { color: #909aa8; }
     .project-decision-reason { display: none; }
 
+    .clarification { margin: 2px 0 10px; }
+    .clarification[hidden] { display: none; }
+    .clarification-card { padding: 10px; border: 1px solid #343a44; border-radius: 7px; background: #1d2127; }
+    .clarification-title { margin: 0 0 4px; color: #dce2ea; font-size: 11px; font-weight: 600; }
+    .clarification-summary { margin: 0 0 9px; color: #aeb7c3; font-size: 10px; line-height: 1.45; }
+    .clarification-question { margin: 0 0 8px; }
+    .clarification-label { display: flex; align-items: baseline; gap: 5px; margin: 0 0 4px; color: #cbd2dc; font-size: 10px; font-weight: 500; line-height: 1.35; }
+    .clarification-optional { color: #697482; font-size: 9px; font-weight: 400; }
+    .clarification-card textarea.clarification-input { min-height: 34px; max-height: 110px; padding: 6px 7px; border: 1px solid #323944; border-radius: 5px; resize: vertical; background: #181c21; color: #dce2ea; font-size: 11px; }
+    .clarification-card textarea.clarification-input:focus { border-color: #55717c; outline: none; }
+    .clarification-card textarea.clarification-input.missing { border-color: #9a5458; }
+    .clarification-reason { margin: 3px 1px 0; color: #687382; font-size: 9px; line-height: 1.35; }
+    .clarification-hint { margin: 5px 0 0; color: #687382; font-size: 9px; }
+    .clarification-actions { display: flex; align-items: center; gap: 7px; margin-top: 9px; }
+    .clarification-error { flex: 1; min-width: 0; color: #ff918b; font-size: 9px; line-height: 1.3; }
+    .clarification-continue { flex: 0 0 auto; height: 25px; padding: 0 9px; border: 0; border-radius: 5px; background: #7fc9dd; color: #172027; cursor: pointer; font: inherit; font-size: 10px; font-weight: 600; }
+    .clarification-continue:hover { background: #91d7e8; }
+    .clarification-continue:disabled { opacity: 0.45; cursor: default; }
+
     .activity { display: none; margin: 2px 1px 7px; color: #798493; font-size: 10px; }
     .activity.on { display: block; }
     .activity.on::before { content: "●"; margin-right: 5px; color: #7fc9dd; animation: codeme-pulse 1.1s ease-in-out infinite; }
 
-    .tools { display: flex; flex-direction: column; gap: 1px; margin: 0 0 9px; }
+    .work-panel { margin: 0 0 9px; border: 0; }
+    .work-panel[hidden] { display: none; }
+    .work-panel > summary { display: flex; align-items: center; gap: 6px; min-height: 23px; padding: 0 2px; cursor: pointer; list-style: none; color: #87919f; font-size: 10px; user-select: none; }
+    .work-panel > summary::-webkit-details-marker { display: none; }
+    .work-panel > summary:hover { color: #b8c0cb; }
+    .work-chevron { display: inline-block; width: 12px; color: #687382; transform: rotate(0deg); transition: transform 90ms ease; }
+    .work-panel[open] .work-chevron { transform: rotate(90deg); }
+    .work-panel-body { padding-top: 2px; }
+    .tools { display: flex; flex-direction: column; gap: 1px; margin: 0; }
     .work-note { margin: 8px 1px 5px; color: #c8ced8; font-size: 12px; line-height: 1.48; white-space: pre-wrap; overflow-wrap: anywhere; }
     .tool-card { overflow: hidden; border: 0; border-radius: 4px; background: transparent; color: #aeb7c3; }
     .tool-card summary { display: flex; align-items: center; gap: 6px; min-height: 23px; padding: 0 2px; cursor: pointer; list-style: none; user-select: none; }
@@ -174,9 +201,13 @@ function renderComposer(nonce) {
     <div class="thread" id="thread">
       <p class="empty" id="empty">Ask about this workspace.</p>
       <div id="messages"></div>
+      <div class="clarification" id="clarification" hidden></div>
       <div class="project-decision" id="project-decision"></div>
       <p class="activity" id="activity"></p>
-      <div class="tools" id="tools"></div>
+      <details class="work-panel" id="work-panel" open hidden>
+        <summary><span class="work-chevron">›</span><span id="work-panel-label">Work details</span></summary>
+        <div class="work-panel-body"><div class="tools" id="tools"></div></div>
+      </details>
       <div class="result" id="result"></div>
     </div>
     <footer>
@@ -231,6 +262,9 @@ function renderComposer(nonce) {
     const historyList = document.getElementById("history-list");
     const projectDecision = document.getElementById("project-decision");
     const messages = document.getElementById("messages");
+    const clarification = document.getElementById("clarification");
+    const workPanel = document.getElementById("work-panel");
+    const workPanelLabel = document.getElementById("work-panel-label");
     const tools = document.getElementById("tools");
     const result = document.getElementById("result");
     const changedFiles = document.getElementById("changed-files");
@@ -459,7 +493,7 @@ function renderComposer(nonce) {
       const line = state.activity || "";
       activity.textContent = line;
       const liveStream = state.stream || state.tools || [];
-      activity.classList.toggle("on", running && !liveStream.length && Boolean(line));
+      activity.classList.toggle("on", running && Boolean(line));
       stop.hidden = !running;
       send.hidden = false;
       send.disabled = sending;
@@ -550,8 +584,11 @@ function renderComposer(nonce) {
       renderHistory(state.conversations || [], state.conversationId || "");
       newChat.disabled = running;
       historyToggle.disabled = running;
+      renderClarification(state.clarification || null);
       renderProjectDecision(state.projectDecision || null);
       renderTools(streamItems);
+      workPanel.hidden = !streamItems.length;
+      workPanelLabel.textContent = "Work details" + (streamItems.length ? " · " + streamItems.length : "");
       renderChangedFiles(state);
       if (running) {
         result.innerHTML = "";
@@ -560,9 +597,125 @@ function renderComposer(nonce) {
         shownRun = state.runId;
         renderResult(state);
       }
-      empty.hidden = Boolean(messages.childElementCount || running);
+      empty.hidden = Boolean(messages.childElementCount || state.clarification || running);
       thread.scrollTop = thread.scrollHeight;
     }
+
+    function renderClarification(data) {
+      clarification.innerHTML = "";
+      clarification.hidden = !data;
+      if (!data) return;
+
+      const card = document.createElement("form");
+      card.className = "clarification-card";
+
+      const title = document.createElement("div");
+      title.className = "clarification-title";
+      title.textContent = "A few details before I start";
+      card.appendChild(title);
+
+      if (data.summary) {
+        const summary = document.createElement("p");
+        summary.className = "clarification-summary";
+        summary.textContent = data.summary;
+        card.appendChild(summary);
+      }
+
+      const questions = Array.isArray(data.questions) ? data.questions.slice(0, 5) : [];
+      for (const question of questions) {
+        const field = document.createElement("div");
+        field.className = "clarification-question";
+
+        const label = document.createElement("label");
+        label.className = "clarification-label";
+        const labelText = document.createElement("span");
+        labelText.textContent = question.question || "Please clarify";
+        label.appendChild(labelText);
+        if (question.required === false) {
+          const optional = document.createElement("span");
+          optional.className = "clarification-optional";
+          optional.textContent = "optional";
+          label.appendChild(optional);
+        }
+
+        const input = document.createElement("textarea");
+        input.className = "clarification-input";
+        input.rows = 1;
+        input.dataset.questionId = question.id || "";
+        input.dataset.required = question.required === false ? "false" : "true";
+        input.placeholder = question.required === false ? "Optional answer" : "Type your answer…";
+        input.addEventListener("input", () => {
+          input.classList.remove("missing");
+          input.style.height = "auto";
+          input.style.height = Math.min(110, input.scrollHeight) + "px";
+        });
+
+        field.appendChild(label);
+        field.appendChild(input);
+
+        if (question.reason) {
+          const reason = document.createElement("p");
+          reason.className = "clarification-reason";
+          reason.textContent = question.reason;
+          field.appendChild(reason);
+        }
+        card.appendChild(field);
+      }
+
+      const hint = document.createElement("p");
+      hint.className = "clarification-hint";
+      hint.textContent = "Answer here, or reply naturally in the chat box below.";
+      card.appendChild(hint);
+
+      const actions = document.createElement("div");
+      actions.className = "clarification-actions";
+      const error = document.createElement("span");
+      error.className = "clarification-error";
+      error.id = "clarification-error";
+      const button = document.createElement("button");
+      button.type = "submit";
+      button.className = "clarification-continue";
+      button.id = "clarification-continue";
+      button.textContent = "Continue";
+      actions.appendChild(error);
+      actions.appendChild(button);
+      card.appendChild(actions);
+
+      card.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const inputs = Array.from(card.querySelectorAll(".clarification-input"));
+        let firstMissing = null;
+        const answers = [];
+        for (const input of inputs) {
+          const answer = input.value.trim();
+          const required = input.dataset.required !== "false";
+          if (required && !answer) {
+            input.classList.add("missing");
+            if (!firstMissing) firstMissing = input;
+          }
+          if (answer) answers.push({ id: input.dataset.questionId || "answer", answer });
+        }
+        if (firstMissing) {
+          error.textContent = "Please answer the required questions.";
+          firstMissing.focus();
+          return;
+        }
+        if (!answers.length) {
+          error.textContent = "Add an answer before continuing.";
+          return;
+        }
+
+        epoch += 1;
+        button.disabled = true;
+        button.textContent = "Checking…";
+        error.textContent = "";
+        const text = answers.map((item) => item.answer).join("\n");
+        vscode.postMessage({ type: "clarification-submit", answers, text, epoch });
+      });
+
+      clarification.appendChild(card);
+    }
+
     function renderHub(hub) {
       const connected = Boolean(hub && hub.connected);
       const toolItems = hub && Array.isArray(hub.tools) ? hub.tools : [];
@@ -1061,6 +1214,29 @@ function renderComposer(nonce) {
         clearSendPending();
         notice.textContent = message.message || "Could not send.";
         if (!prompt.value && draft) prompt.value = draft;
+      }
+      if (message.type === "clarification-submitting" && current(message)) {
+        const button = document.getElementById("clarification-continue");
+        if (button) {
+          button.disabled = true;
+          button.textContent = "Checking…";
+        }
+      }
+      if (message.type === "clarification-rejected" && current(message)) {
+        const button = document.getElementById("clarification-continue");
+        const error = document.getElementById("clarification-error");
+        if (button) {
+          button.disabled = false;
+          button.textContent = "Continue";
+        }
+        if (error) error.textContent = message.message || "Could not continue.";
+      }
+      if (message.type === "clarification-accepted" && current(message)) {
+        const button = document.getElementById("clarification-continue");
+        if (button) {
+          button.disabled = true;
+          button.textContent = "Continuing…";
+        }
       }
     });
     const readyTimer = setInterval(() => {
