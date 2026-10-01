@@ -251,6 +251,8 @@ async function main() {
   assert.ok(html.includes("#model { flex: 1 1 128px; min-width: 96px;"), "model selector must stay visible in a narrow Composer");
   assert.ok(html.includes('option.value = item.provider + "::" + item.id'), "model options must distinguish Local and Server IDs");
   assert.ok(html.includes("option.dataset.modelId || option.value"), "model selection must send the real Ollama model id");
+  assert.ok(!html.includes('document.createElement("optgroup")'), "model picker must avoid optgroups that can render blank in the sidebar");
+  assert.ok(html.includes('sourceState.label + " · "'), "model picker must show unavailable/not-configured sources instead of going blank");
 
   console.log("ok prompt enhancement hard gate, clarification UI, collapsible work panel, and slow-send handling");
 }
