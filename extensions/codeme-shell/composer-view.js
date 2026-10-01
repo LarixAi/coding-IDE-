@@ -290,13 +290,8 @@ function renderComposer(nonce) {
     let shownRun = "";
     let deferredFinal = "";
     let draft = "";
-    let sendTimer = null;
 
     function clearSendPending() {
-      if (sendTimer) {
-        clearTimeout(sendTimer);
-        sendTimer = null;
-      }
       sending = false;
       send.disabled = false;
     }
@@ -309,14 +304,7 @@ function renderComposer(nonce) {
       draft = text;
       epoch += 1;
       send.disabled = true;
-      notice.textContent = "Sending…";
-      if (sendTimer) clearTimeout(sendTimer);
-      const sentEpoch = epoch;
-      sendTimer = setTimeout(() => {
-        if (!sending || sentEpoch !== epoch) return;
-        clearSendPending();
-        notice.textContent = "Send did not receive a response. Try again.";
-      }, 4000);
+      notice.textContent = "Understanding your request…";
       vscode.postMessage({ type: "submit", text, epoch });
     }
     prompt.addEventListener("keydown", (event) => {
@@ -1200,7 +1188,7 @@ function renderComposer(nonce) {
         applyState(message);
       }
       if (message.type === "submitting" && current(message)) {
-        notice.textContent = "Sending…";
+        notice.textContent = "Understanding your request…";
       }
       if (message.type === "accepted" && current(message)) {
         requestId = message.requestId || requestId;
