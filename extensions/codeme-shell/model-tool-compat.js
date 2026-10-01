@@ -187,6 +187,31 @@ function stripRecoveredToolText(content) {
   ).replace(/\n{3,}/g, "\n\n").trim();
 }
 
+const TOOL_PROTOCOL_RECOVERY = [
+  "Tool protocol recovery:",
+  "- The previous tool call was rejected by the model runtime parser.",
+  "- Follow the runtime's supplied tool-call format exactly.",
+  "- Emit a function wrapper before any parameter fields.",
+  "- Never emit a parameter outside its function.",
+  "- Do not add unmatched or extra closing tool/function wrappers.",
+].join("\n");
+
+function isRetryableToolProtocolError(error) {
+  const message = String(error && error.message || error || "");
+  return (
+    /expected element type\s*(?:<|\\u003c)function(?:>|\\u003e)\s*but have\s*(?:<|\\u003c)parameter(?:>|\\u003e)/i.test(message)
+    || /qwen(?:3(?:\.5)?)? tool call parsing failed/i.test(message)
+  );
+}
+
+function recoveryInput(input) {
+  const messages = Array.isArray(input && input.messages)
+    ? input.messages.map((message) => ({ ...message }))
+    : [];
+  messages.push({ role: "system", content: TOOL_PROTOCOL_RECOVERY });
+  return { ...(input || {}), messages };
+}
+
 class ToolCallCompatProvider {
   constructor(provider) {
     this.provider = provider;
@@ -198,7 +223,13 @@ class ToolCallCompatProvider {
   }
 
   async complete(input) {
-    const reply = await this.provider.complete(input);
+    let reply;
+    try {
+      reply = await this.provider.complete(input);
+    } catch (error) {
+      if (!isRetryableToolProtocolError(error)) throw error;
+      reply = await this.provider.complete(recoveryInput(input));
+    }
     if (reply && Array.isArray(reply.toolCalls) && reply.toolCalls.length) return reply;
     const recovered = recoverLooseToolCalls(reply && reply.text, input && input.tools);
     if (!recovered.length) return reply;
@@ -222,4 +253,7 @@ module.exports = {
   balancedObject,
   parseLooseValue,
   stripRecoveredToolText,
+  isRetryableToolProtocolError,
+  recoveryInput,
+  TOOL_PROTOCOL_RECOVERY,
 };
