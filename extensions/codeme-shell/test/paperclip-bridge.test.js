@@ -72,7 +72,67 @@ async function main() {
     bridge.dispose();
   }
 
-  console.log("ok Paperclip HTTP bridge waits for terminal CodeMe result");
+  const syncFailureController = {
+    snapshot() {
+      return { active: [] };
+    },
+    async handleHeartbeat() {
+      return {
+        ok: true,
+        accepted: true,
+        status: "running",
+        taskId: "issue-sync-failure",
+        codemeRunId: "run_sync_failure",
+      };
+    },
+    async waitForCompletion() {
+      return {
+        ok: false,
+        accepted: true,
+        completed: true,
+        status: "sync_failed",
+        taskId: "issue-sync-failure",
+        codemeRunId: "run_sync_failure",
+        syncError: "Paperclip could not persist the final issue disposition",
+      };
+    },
+    dispose() {},
+  };
+
+  const syncFailureBridge = new PaperclipBridge({
+    session: {},
+    enabled: true,
+    host: "127.0.0.1",
+    port: 17789,
+    bridgeToken: "bridge-secret",
+    api: { apiKey: "paperclip-agent-key" },
+    controller: syncFailureController,
+  });
+
+  await syncFailureBridge.start();
+  try {
+    const response = await fetch("http://127.0.0.1:17789/paperclip/heartbeat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CodeMe-Paperclip-Token": "bridge-secret",
+      },
+      body: JSON.stringify({
+        runId: "pc-http-sync-failure",
+        agentId: "agent-http",
+        context: { taskId: "issue-sync-failure" },
+      }),
+    });
+    const payload = await response.json();
+
+    assert.strictEqual(response.status, 502);
+    assert.strictEqual(payload.status, "sync_failed");
+    assert.match(payload.syncError, /persist the final issue disposition/i);
+  } finally {
+    syncFailureBridge.dispose();
+  }
+
+  console.log("ok Paperclip HTTP bridge waits for terminal CodeMe result and fails non-2xx on disposition sync errors");
 }
 
 main().catch((error) => {
