@@ -32,7 +32,8 @@ if [ -f "$root/.env" ]; then
 fi
 
 export PATH="$node_bin:$PATH"
-export CODEME_ROOT="$root"\nexport VSCODE_SKIP_PRELAUNCH=1
+export CODEME_ROOT="$root"
+export VSCODE_SKIP_PRELAUNCH=1
 
 # The Code - OSS pin keeps the upstream product name. Swap the dock icon
 # in the built app so Finder and the Dock show the CodeMe mark.
