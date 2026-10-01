@@ -154,7 +154,14 @@ class PaperclipAgentRegistry {
       throw error;
     }
 
-    const role = rolePolicy(this.roles[id] || "controller");
+    const configuredRole = normalizeRoleKey(this.roles[id] || "controller");
+    if (this.strict && !Object.prototype.hasOwnProperty.call(ROLE_POLICIES, configuredRole)) {
+      const error = new Error("Paperclip agent has an unknown CodeMe role: " + configuredRole);
+      error.code = "paperclip_agent_role_invalid";
+      error.statusCode = 503;
+      throw error;
+    }
+    const role = ROLE_POLICIES[configuredRole] || ROLE_POLICIES.controller;
     const mappedKey = String(this.keys[id] || "");
     const controllerFallback = !this.controllerAgentId || id === this.controllerAgentId;
     const apiKey = mappedKey || (controllerFallback ? this.defaultApiKey : "");
