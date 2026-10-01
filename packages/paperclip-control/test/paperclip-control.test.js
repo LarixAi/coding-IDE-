@@ -109,6 +109,21 @@ async function main() {
       context: { taskId: "issue-1" },
     },
   );
+  assert.deepStrictEqual(
+    normalizeHeartbeat({
+      runId: "pc-run-standard",
+      agentId: "agent-standard",
+      context: { taskId: "issue-standard", wakeReason: "assignment" },
+    }),
+    {
+      runId: "pc-run-standard",
+      agentId: "agent-standard",
+      companyId: "",
+      taskId: "issue-standard",
+      context: { taskId: "issue-standard", wakeReason: "assignment" },
+    },
+    "standard Paperclip HTTP adapter payload must not require companyId",
+  );
   assert.throws(() => normalizeHeartbeat({}), /runId is required/);
 
   const prompt = paperclipTaskPrompt({
