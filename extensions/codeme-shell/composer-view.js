@@ -538,13 +538,15 @@ function renderComposer(nonce) {
         const status = document.createElement("option");
         status.disabled = true;
         status.value = "status::" + sourceState.id;
-        status.textContent = sourceState.label + " · " + (
-          !sourceState.configured
-            ? "not configured"
-            : sourceState.available
-              ? "no models installed"
-              : "unavailable"
-        );
+        const stateText = !sourceState.configured
+          ? "not configured"
+          : sourceState.available
+            ? "no models installed"
+            : "unavailable";
+        const reason = !sourceState.available && sourceState.message
+          ? " — " + sourceState.message
+          : "";
+        status.textContent = sourceState.label + " · " + stateText + reason;
         model.appendChild(status);
       }
 
