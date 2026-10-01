@@ -31,6 +31,7 @@ jobs:
           node --check extensions/codeme-shell/composer-session.js
           node --check extensions/codeme-shell/composer-view.js
           node --check extensions/codeme-shell/extension.js
+          sh -n scripts/launch-codeme.sh
 
       - name: Run prompt enhancement gate tests
         env:
