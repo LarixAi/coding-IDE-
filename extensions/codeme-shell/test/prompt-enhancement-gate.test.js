@@ -245,8 +245,11 @@ async function main() {
   assert.ok(html.includes('id="work-panel"'));
   assert.ok(html.includes("Work details"));
   assert.ok(html.includes('activity.classList.toggle("on", running && Boolean(line))'));
+  assert.ok(html.includes("Understanding your request…"));
+  assert.ok(!html.includes("Send did not receive a response. Try again."));
+  assert.ok(!html.includes("}, 4000);"), "composer must not abandon a slow n8n enhancement after four seconds");
 
-  console.log("ok prompt enhancement hard gate, clarification UI, and collapsible work panel");
+  console.log("ok prompt enhancement hard gate, clarification UI, collapsible work panel, and slow-send handling");
 }
 
 main().catch((error) => {
