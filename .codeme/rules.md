@@ -23,3 +23,15 @@ New features should be additive wherever possible. Prefer:
 - new packages that call into the existing pipeline through its public interfaces.
 
 The purpose of this rule is to let CodeMe gain features without silently changing the working orchestration, routing, context, verification, repair, or follow-up behavior that has already been qualified.
+
+## Composer mode authority
+
+CodeMe modes are permission contracts, not prompt suggestions. Follow `docs/CODEME_MODES.md`.
+
+- Chat and Plan are read-only.
+- Code is the normal controlled mutation mode.
+- Debug must reproduce a concrete failure before mutation and must rerun the original failing check after repair.
+- Multitask is Paperclip orchestration; only the Developer role may perform normal source mutation.
+- Product Manager, Software Architect, Research, Test and Reviewer roles must not silently widen their authority.
+- Multitask must fail closed when the required Paperclip team is unavailable; never silently downgrade it to Code.
+
