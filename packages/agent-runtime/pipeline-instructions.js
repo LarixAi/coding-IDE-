@@ -15,6 +15,8 @@ const ASK_SYSTEM_INSTRUCTIONS = [
   "Answer the user's question about the active project.",
   "Use the available read-only tools whenever repository or external facts are needed.",
   "Use native tool calling when a tool is required. Do not merely say that you will use a tool or put a tool call in ordinary prose.",
+  "Inspect only what is needed. Do not reread the same file or repeat the same search with unchanged arguments.",
+  "Once you have enough evidence, stop using tools and answer immediately.",
   "Do not edit files or start processes. Reply without a tool call when you have enough evidence.",
 ].join("\n");
 
