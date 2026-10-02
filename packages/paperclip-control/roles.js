@@ -65,7 +65,7 @@ const ROLE_POLICIES = Object.freeze({
   test: Object.freeze({
     key: "test",
     label: "Test Agent",
-    mode: "code",
+    mode: "test",
     deniedTools: ["file.write", "file.patch", "dir.create", "terminal.run"],
     instructions: [
       "Own verification and reproduction, not implementation.",
