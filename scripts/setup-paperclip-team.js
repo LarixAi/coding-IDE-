@@ -7,6 +7,14 @@ const { parseEnvText } = require("../extensions/codeme-shell/runtime-config");
 
 const TEAM = [
   {
+    key: "product",
+    name: "CodeMe Product Manager",
+    role: "general",
+    title: "Product Manager Agent",
+    capabilities: "Defines user outcomes, bounded requirements, acceptance criteria, non-goals, ambiguities, and priority without editing source files.",
+    parent: "controller",
+  },
+  {
     key: "cto",
     name: "CodeMe CTO",
     role: "engineer",
@@ -266,10 +274,13 @@ async function main() {
     };
   }
 
+  const productDefinition = TEAM.find((item) => item.key === "product");
+  resolved.product = await ensureAgent(productDefinition, controllerAgentId);
+
   const ctoDefinition = TEAM.find((item) => item.key === "cto");
   resolved.cto = await ensureAgent(ctoDefinition, controllerAgentId);
 
-  for (const definition of TEAM.filter((item) => item.key !== "cto")) {
+  for (const definition of TEAM.filter((item) => !["product", "cto"].includes(item.key))) {
     resolved[definition.key] = await ensureAgent(definition, resolved.cto.id);
   }
 
