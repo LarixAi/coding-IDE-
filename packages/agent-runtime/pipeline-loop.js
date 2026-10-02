@@ -128,6 +128,54 @@ function formatVerifyFailure(result) {
   return failed.join("\n") || String(result && result.summary || "Verification failed");
 }
 
+const READ_ONLY_EVIDENCE_TOOLS = new Set([
+  "workspace.inspect",
+  "dir.list",
+  "file.read",
+  "repo.search",
+  "git.status",
+  "git.diff",
+  "diagnostics.run",
+  "capability.invoke",
+]);
+
+function actionKey(call) {
+  return String(call && call.name || "") + ":" + JSON.stringify(call && call.args || {});
+}
+
+function compactReadOnlyAnswerMessages(messages, goal, reason) {
+  const system = (messages || []).find((message) => message && message.role === "system");
+  const systemText = String(system && system.content || "")
+    .replace(/\n\n## Available tools\n[\s\S]*$/, "")
+    .trim();
+  const evidence = [];
+  for (let index = (messages || []).length - 1; index >= 0 && evidence.length < 5; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "tool") continue;
+    const name = String(message.name || "tool");
+    const content = String(message.content || "").slice(0, 5000);
+    if (!content) continue;
+    evidence.push("Evidence from " + name + ":\n" + content);
+  }
+  evidence.reverse();
+
+  return [
+    ...(systemText ? [{ role: "system", content: systemText }] : []),
+    {
+      role: "user",
+      content: [
+        "ASK MODE FINAL ANSWER.",
+        "Original request: " + String(goal || "").slice(0, 4000),
+        reason ? "Why tool use stopped: " + String(reason).slice(0, 800) : "",
+        evidence.length ? evidence.join("\n\n") : "Use the trusted workspace context already provided.",
+        "Answer the user now from the evidence above.",
+        "Do not call another tool, do not repeat file inspection, and do not claim that files were edited.",
+        "If implementation is required, explain that Code mode is required to apply changes.",
+      ].filter(Boolean).join("\n\n"),
+    },
+  ];
+}
+
 function withDeadline(parentSignal, timeoutMs, run) {
   const controller = new AbortController();
   let timedOut = false;
@@ -164,6 +212,13 @@ async function runPipeline(options) {
   const messages = (options.messages || []).map((message) => ({ ...message }));
   const tools = Array.isArray(options.tools) ? options.tools : [];
   const knownNames = new Set(tools.map((tool) => tool.name));
+  const readOnlyMode = options.mode === "read_only";
+  const forceReadOnlyAnswerOnRepeat = readOnlyMode && options.forceReadOnlyAnswerOnRepeat !== false;
+  const readOnlyEvidenceLimit = Math.max(0, Number(options.readOnlyEvidenceLimit || 0));
+  const actionCounts = new Map();
+  let answerOnlyPending = false;
+  let answerOnlyReason = "";
+  let readOnlyEvidenceCount = 0;
   let turn = 0;
   let idleTurns = 0;
   let repairs = 0;
@@ -200,10 +255,17 @@ async function runPipeline(options) {
     onEvent({ type: "model_start", turn });
     const modelStarted = Date.now();
 
+    const answerOnlyTurn = readOnlyMode && answerOnlyPending;
+    let turnTools = answerOnlyTurn ? [] : tools;
+    let turnKnownNames = answerOnlyTurn ? new Set() : knownNames;
+    let turnMessages = answerOnlyTurn
+      ? compactReadOnlyAnswerMessages(messages, options.goal, answerOnlyReason)
+      : messages;
+
     const requestModel = (signal) => options.provider.complete({
       model: options.model,
-      messages,
-      tools,
+      messages: turnMessages,
+      tools: turnTools,
       signal,
       timeoutMs: turnDeadlineMs,
     });
@@ -213,27 +275,37 @@ async function runPipeline(options) {
       reply = await withDeadline(options.signal, turnDeadlineMs, requestModel);
     } catch (error) {
       if (options.signal && options.signal.aborted) return finish("cancelled", finalText);
+      const retryAsAnswerOnly = readOnlyMode && (answerOnlyPending || readOnlyEvidenceCount > 0);
       onEvent({
         type: "model_retry",
         turn,
         reason: error instanceof Error ? error.message : String(error),
+        ...(retryAsAnswerOnly ? { mode: "answer_only" } : {}),
       });
+      if (retryAsAnswerOnly) {
+        answerOnlyPending = true;
+        answerOnlyReason = "The previous model request timed out after workspace evidence had already been collected.";
+        turnTools = [];
+        turnKnownNames = new Set();
+        turnMessages = compactReadOnlyAnswerMessages(messages, options.goal, answerOnlyReason);
+      }
+      const retryDeadlineMs = Math.max(60000, Math.floor(turnDeadlineMs / 2));
       reply = await withDeadline(
         options.signal,
-        Math.max(60000, Math.floor(turnDeadlineMs / 2)),
+        retryDeadlineMs,
         (signal) => options.provider.complete({
           model: options.model,
-          messages,
-          tools,
+          messages: turnMessages,
+          tools: turnTools,
           signal,
-          timeoutMs: Math.max(60000, Math.floor(turnDeadlineMs / 2)),
+          timeoutMs: retryDeadlineMs,
         }),
       );
     }
 
     let toolCalls = Array.isArray(reply && reply.toolCalls) ? reply.toolCalls : [];
     if (!toolCalls.length && reply && reply.text) {
-      toolCalls = recoverTextToolCalls(reply.text, knownNames);
+      toolCalls = recoverTextToolCalls(reply.text, turnKnownNames);
     }
     toolCalls = toolCalls
       .slice(0, maxToolCallsPerTurn)
@@ -301,9 +373,33 @@ async function runPipeline(options) {
       const tool = tools.find((item) => item.name === call.name);
       let result;
       const startedTool = Date.now();
+      const key = actionKey(call);
+      const priorCount = actionCounts.get(key) || 0;
       onEvent({ type: "tool_start", turn, call });
 
-      if (!tool) {
+      if (
+        forceReadOnlyAnswerOnRepeat
+        && READ_ONLY_EVIDENCE_TOOLS.has(call.name)
+        && priorCount > 0
+      ) {
+        result = {
+          ok: true,
+          tool: call.name,
+          data: {
+            suppressed: true,
+            repeated: true,
+            reason: "This read-only tool call already succeeded or was already attempted with the same arguments.",
+          },
+        };
+        answerOnlyPending = true;
+        answerOnlyReason = "A repeated " + call.name + " call was suppressed because the same evidence was already requested.";
+        onEvent({
+          type: "tool_repeat_suppressed",
+          turn,
+          call,
+          reason: answerOnlyReason,
+        });
+      } else if (!tool) {
         result = {
           ok: false,
           error: { code: "unknown_tool", message: "Unknown tool " + call.name },
@@ -335,7 +431,27 @@ async function runPipeline(options) {
         }
       }
 
+      actionCounts.set(key, priorCount + 1);
       toolCallCount += 1;
+      if (
+        readOnlyMode
+        && result
+        && result.ok
+        && READ_ONLY_EVIDENCE_TOOLS.has(call.name)
+        && !(result.data && result.data.suppressed)
+      ) {
+        readOnlyEvidenceCount += 1;
+        if (readOnlyEvidenceLimit > 0 && readOnlyEvidenceCount >= readOnlyEvidenceLimit) {
+          answerOnlyPending = true;
+          answerOnlyReason = "The read-only evidence budget was reached. Use the collected evidence instead of continuing to inspect.";
+          onEvent({
+            type: "read_only_evidence_limit",
+            turn,
+            count: readOnlyEvidenceCount,
+            limit: readOnlyEvidenceLimit,
+          });
+        }
+      }
       onEvent({
         type: "tool_end",
         turn,
