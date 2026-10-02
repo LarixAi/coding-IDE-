@@ -22,8 +22,8 @@ function latestCommentText(body) {
     return left - right;
   });
   for (let index = sorted.length - 1; index >= 0; index -= 1) {
-    const text = commentText(sorted[index]);
-    if (text) return text;
+    const value = commentText(sorted[index]);
+    if (value) return value;
   }
   return "";
 }
@@ -52,9 +52,6 @@ class PaperclipTeamOrchestrator {
     if (!options.agentRegistry) throw new Error("PaperclipTeamOrchestrator requires PaperclipAgentRegistry");
     this.api = options.api;
     this.agentRegistry = options.agentRegistry;
-    this.pollMs = Number(options.pollMs || 1000);
-    this.maxChildMs = Number(options.maxChildMs || 30 * 60 * 1000);
-    this.maxWorkflowMs = Number(options.maxWorkflowMs || 60 * 60 * 1000);
     this.dispositionRetryDelays = Array.isArray(options.dispositionRetryDelays)
       ? options.dispositionRetryDelays
       : [0, 250, 750];
@@ -93,12 +90,15 @@ class PaperclipTeamOrchestrator {
     const existing = this.records.get(request.runId);
     if (existing) {
       return {
-        ok: true,
+        ok: existing.status === "done" || existing.status === "blocked",
         duplicate: true,
         accepted: true,
+        completed: existing.status !== "running",
         status: existing.status,
         taskId: existing.taskId,
         phase: existing.phase,
+        childIssueId: existing.childIssueId || "",
+        syncError: existing.syncError || null,
       };
     }
 
@@ -147,43 +147,53 @@ class PaperclipTeamOrchestrator {
       completion,
       resolveCompletion,
       completionResolved: false,
+      syncError: null,
     };
     this.records.set(request.runId, record);
 
-    await this.safeParentUpdate(
-      record,
-      "in_progress",
-      "CodeMe team orchestration started. The Controller will coordinate CTO planning, Developer implementation, Test verification, and Reviewer approval before completing this parent task.",
-    );
-
-    this.run(record, parent).catch(async (error) => {
-      if (record.status !== "running") return;
+    let result;
+    try {
+      result = await this.advance(record, parent);
+    } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.finishParent(
-        record,
-        "blocked",
-        "CodeMe team orchestration stopped: " + message,
-      );
-      this.resolveRecord(record, {
-        ok: false,
-        accepted: true,
-        completed: true,
-        status: record.status,
-        taskId: record.taskId,
-        phase: record.phase,
-        reason: message,
-        syncError: record.syncError || null,
-      });
-    });
+      const blockerIds = record.childIssueId ? [record.childIssueId] : undefined;
+      if (blockerIds && blockerIds.length) {
+        await this.finishParent(
+          record,
+          "blocked",
+          "CodeMe team orchestration stopped while waiting on " + record.phase + ": " + message,
+          blockerIds,
+        );
+        result = {
+          ok: false,
+          accepted: true,
+          completed: true,
+          status: record.status,
+          taskId: record.taskId,
+          phase: record.phase,
+          reason: message,
+          childIssueId: record.childIssueId || "",
+          syncError: record.syncError || null,
+        };
+      } else {
+        record.status = "sync_failed";
+        record.syncError = message;
+        result = {
+          ok: false,
+          accepted: true,
+          completed: true,
+          status: "sync_failed",
+          taskId: record.taskId,
+          phase: record.phase,
+          reason: message,
+          childIssueId: "",
+          syncError: message,
+        };
+      }
+    }
 
-    return {
-      ok: true,
-      accepted: true,
-      status: "running",
-      taskId: request.taskId,
-      phase: record.phase,
-      teamOrchestration: true,
-    };
+    this.resolveRecord(record, result);
+    return result;
   }
 
   async waitForCompletion(runId) {
@@ -196,23 +206,23 @@ class PaperclipTeamOrchestrator {
     }
     if (record.status !== "running") {
       return {
-        ok: record.status === "done",
+        ok: record.status === "done" || record.status === "blocked",
         accepted: true,
         completed: true,
         status: record.status,
         taskId: record.taskId,
         phase: record.phase,
+        childIssueId: record.childIssueId || "",
+        syncError: record.syncError || null,
       };
     }
     return record.completion;
   }
 
-  async run(record, parent) {
-    const deadline = record.startedAt + this.maxWorkflowMs;
+  async advance(record, parent) {
+    if (this.disposed) throw new Error("Paperclip team orchestrator was disposed");
 
-    record.phase = "cto";
-    record.cycle = 0;
-    const cto = await this.runPhase({
+    const cto = await this.ensurePhase({
       record,
       parent,
       role: "cto",
@@ -228,22 +238,21 @@ class PaperclipTeamOrchestrator {
         "Do not implement the task.",
         "End the final response with exactly: PLAN: READY",
       ].join("\n"),
-      deadline,
     });
+    if (cto.waiting) return cto.result;
     this.requireDone(cto, "CTO");
 
     const plan = cto.summary;
-    let cycle = 0;
     let repairContext = "";
 
-    while (cycle <= this.maxRepairCycles) {
-      record.phase = cycle === 0 ? "developer" : "developer-repair";
+    for (let cycle = 0; cycle <= this.maxRepairCycles; cycle += 1) {
       record.cycle = cycle;
-      const developer = await this.runPhase({
+      const developerPhase = cycle === 0 ? "developer" : "developer-repair";
+      const developer = await this.ensurePhase({
         record,
         parent,
         role: "developer",
-        phase: cycle === 0 ? "developer" : "developer-repair",
+        phase: developerPhase,
         cycle,
         label: cycle === 0 ? "Developer implementation" : "Developer repair",
         description: [
@@ -261,12 +270,11 @@ class PaperclipTeamOrchestrator {
           "Run relevant verification before finishing.",
           "End the final response with exactly: DEV: COMPLETE",
         ].filter(Boolean).join("\n"),
-        deadline,
       });
+      if (developer.waiting) return developer.result;
       this.requireDone(developer, "Developer");
 
-      record.phase = "test";
-      const test = await this.runPhase({
+      const test = await this.ensurePhase({
         record,
         parent,
         role: "test",
@@ -285,21 +293,24 @@ class PaperclipTeamOrchestrator {
           "If the behaviour is proven correct, end the final response with exactly: TEST: PASS",
           "If verification fails, end the final response with: TEST: FAIL - <specific reason>",
         ].join("\n"),
-        deadline,
       });
+      if (test.waiting) return test.result;
       this.requireDone(test, "Test");
 
       if (!includesMarker(test.summary, "TEST: PASS")) {
         if (cycle >= this.maxRepairCycles) {
-          throw new Error("Test did not produce TEST: PASS after " + (cycle + 1) + " attempt(s). Last evidence: " + compact(test.summary));
+          throw new Error(
+            "Test did not produce TEST: PASS after "
+            + (cycle + 1)
+            + " attempt(s). Last evidence: "
+            + compact(test.summary),
+          );
         }
         repairContext = test.summary || "Test did not report a pass.";
-        cycle += 1;
         continue;
       }
 
-      record.phase = "reviewer";
-      const reviewer = await this.runPhase({
+      const reviewer = await this.ensurePhase({
         record,
         parent,
         role: "reviewer",
@@ -324,8 +335,8 @@ class PaperclipTeamOrchestrator {
           "If the change is clean and supported by evidence, end the final response with exactly: REVIEW: APPROVED",
           "Otherwise end with: REVIEW: CHANGES_REQUIRED - <specific reason>",
         ].join("\n"),
-        deadline,
       });
+      if (reviewer.waiting) return reviewer.result;
       this.requireDone(reviewer, "Reviewer");
 
       if (includesMarker(reviewer.summary, "REVIEW: APPROVED")) {
@@ -342,8 +353,9 @@ class PaperclipTeamOrchestrator {
             "Reviewer: REVIEW: APPROVED.",
             "Repair cycles: " + cycle + ".",
           ].join("\n"),
+          [],
         );
-        this.resolveRecord(record, {
+        return {
           ok: record.status === "done",
           accepted: true,
           completed: true,
@@ -351,26 +363,27 @@ class PaperclipTeamOrchestrator {
           taskId: record.taskId,
           phase: "complete",
           repairCycles: cycle,
+          childIssueId: "",
           syncError: record.syncError || null,
-        });
-        return;
+        };
       }
 
       if (cycle >= this.maxRepairCycles) {
-        throw new Error("Reviewer did not approve after " + (cycle + 1) + " review attempt(s). Last evidence: " + compact(reviewer.summary));
+        throw new Error(
+          "Reviewer did not approve after "
+          + (cycle + 1)
+          + " review attempt(s). Last evidence: "
+          + compact(reviewer.summary),
+        );
       }
 
       repairContext = reviewer.summary || "Reviewer requested changes.";
-      cycle += 1;
     }
 
     throw new Error("Team workflow exceeded its repair-cycle limit");
   }
 
-  async runPhase({ record, parent, role, phase, cycle, label, description, deadline }) {
-    if (this.disposed) throw new Error("Paperclip team orchestrator was disposed");
-    if (Date.now() > deadline) throw new Error("Paperclip team workflow exceeded its time limit");
-
+  async ensurePhase({ record, parent, role, phase, cycle, label, description }) {
     const agent = this.agentRegistry.agentForRole(role);
     if (!agent || !agent.agentId) throw new Error("No Paperclip agent is registered for role " + role);
 
@@ -394,23 +407,51 @@ class PaperclipTeamOrchestrator {
           goalId: parent.goalId || undefined,
         },
       });
+    } else {
+      child = await this.api.getIssue(child.id);
     }
 
     record.childIssueId = String(child.id || "");
-    await this.safeParentUpdate(
-      record,
-      "in_progress",
-      "Team phase " + phase + " assigned to " + agent.role.label + ": " + String(child.identifier || child.id || title),
-    );
+    const status = String(child.status || "");
 
-    const terminal = await this.waitForIssue(child.id, deadline);
+    if (status !== "done") {
+      const childLabel = String(child.identifier || child.id || title);
+      await this.finishParent(
+        record,
+        "blocked",
+        [
+          "CodeMe team phase " + phase + " is delegated to " + agent.role.label + ": " + childLabel + ".",
+          "The parent is intentionally parked behind this child so the HTTP heartbeat can finish safely.",
+          "Paperclip should wake the Controller again when this blocker reaches done.",
+        ].join("\n"),
+        [child.id],
+      );
+      return {
+        waiting: true,
+        issue: child,
+        summary: "",
+        status,
+        result: {
+          ok: record.status === "blocked",
+          accepted: true,
+          completed: true,
+          status: record.status,
+          taskId: record.taskId,
+          phase,
+          cycle,
+          waitingFor: childLabel,
+          childIssueId: child.id,
+          syncError: record.syncError || null,
+        },
+      };
+    }
+
     const comments = await this.api.getIssueComments(child.id);
-    const summary = latestCommentText(comments);
-
     return {
-      issue: terminal,
-      summary,
-      status: String(terminal.status || ""),
+      waiting: false,
+      issue: child,
+      summary: latestCommentText(comments),
+      status,
     };
   }
 
@@ -424,37 +465,12 @@ class PaperclipTeamOrchestrator {
     )) || null;
   }
 
-  async waitForIssue(issueId, workflowDeadline) {
-    const childDeadline = Math.min(workflowDeadline, Date.now() + this.maxChildMs);
-    while (!this.disposed && Date.now() <= childDeadline) {
-      const issue = await this.api.getIssue(issueId);
-      const status = String(issue.status || "");
-      if (["done", "blocked", "cancelled"].includes(status)) return issue;
-      await delay(this.pollMs);
-    }
-    throw new Error("Timed out waiting for Paperclip child issue " + issueId);
-  }
-
   requireDone(result, label) {
     if (result.status === "done") return;
     throw new Error(label + " phase ended with status " + result.status + ". Evidence: " + compact(result.summary));
   }
 
-  async safeParentUpdate(record, status, comment) {
-    try {
-      return await this.api.updateIssue({
-        issueId: record.taskId,
-        runId: record.paperclipRunId,
-        status,
-        comment,
-      });
-    } catch (error) {
-      record.lastSyncError = error instanceof Error ? error.message : String(error);
-      return null;
-    }
-  }
-
-  async syncParentDisposition(record, status, comment) {
+  async syncParentDisposition(record, status, comment, blockedByIssueIds) {
     let lastError = null;
     for (let index = 0; index < this.dispositionRetryDelays.length; index += 1) {
       const delayMs = Number(this.dispositionRetryDelays[index] || 0);
@@ -465,6 +481,7 @@ class PaperclipTeamOrchestrator {
           runId: record.paperclipRunId,
           status,
           comment,
+          ...(blockedByIssueIds !== undefined ? { blockedByIssueIds } : {}),
         });
         if (
           receipt
@@ -480,6 +497,20 @@ class PaperclipTeamOrchestrator {
           );
           error.code = "paperclip_parent_disposition_not_committed";
           throw error;
+        }
+        if (
+          blockedByIssueIds !== undefined
+          && receipt
+          && typeof receipt === "object"
+          && Array.isArray(receipt.blockedByIssueIds)
+        ) {
+          const expected = blockedByIssueIds.map(String).sort();
+          const actual = receipt.blockedByIssueIds.map(String).sort();
+          if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+            const error = new Error("Paperclip parent blocker relation did not commit as requested");
+            error.code = "paperclip_parent_blocker_relation_not_committed";
+            throw error;
+          }
         }
         record.lastSyncError = "";
         return receipt;
@@ -500,9 +531,9 @@ class PaperclipTeamOrchestrator {
     throw wrapped;
   }
 
-  async finishParent(record, status, comment) {
+  async finishParent(record, status, comment, blockedByIssueIds) {
     try {
-      await this.syncParentDisposition(record, status, comment);
+      await this.syncParentDisposition(record, status, comment, blockedByIssueIds);
       record.status = status;
       record.syncError = null;
     } catch (error) {

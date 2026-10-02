@@ -84,12 +84,13 @@ class PaperclipApi {
     );
   }
 
-  updateIssue({ issueId, runId, status, comment, assigneeAgentId, parentId }) {
+  updateIssue({ issueId, runId, status, comment, assigneeAgentId, parentId, blockedByIssueIds }) {
     const body = {};
     if (status) body.status = status;
     if (comment) body.comment = comment;
     if (assigneeAgentId !== undefined) body.assigneeAgentId = assigneeAgentId;
     if (parentId !== undefined) body.parentId = parentId;
+    if (blockedByIssueIds !== undefined) body.blockedByIssueIds = blockedByIssueIds;
     return this.request(
       "PATCH",
       "/api/issues/" + encodeURIComponent(issueId),
