@@ -1,4 +1,5 @@
 const http = require("http");
+const crypto = require("crypto");
 const {
   PaperclipApi,
   PaperclipAgentRegistry,
@@ -19,6 +20,7 @@ class PaperclipBridge {
     this.host = options.host || "127.0.0.1";
     this.port = Number(options.port || process.env.CODEME_PAPERCLIP_PORT || 7788);
     this.bridgeToken = String(options.bridgeToken || process.env.CODEME_PAPERCLIP_BRIDGE_TOKEN || "");
+    this.companyId = String(options.companyId || process.env.PAPERCLIP_COMPANY_ID || "").trim();
     this.api = options.api || new PaperclipApi({
       baseUrl: options.paperclipApiUrl || process.env.PAPERCLIP_API_URL,
       apiKey: options.paperclipApiKey || process.env.PAPERCLIP_API_KEY,
@@ -71,6 +73,7 @@ class PaperclipBridge {
       started: this.started,
       host: this.host,
       port: this.port,
+      companyIdConfigured: Boolean(this.companyId),
       controller: this.controller.snapshot(),
       team: this.agentRegistry.summary(),
       orchestration: {
@@ -85,6 +88,125 @@ class PaperclipBridge {
             ? "paperclip_agent_keys_missing"
             : "",
     };
+  }
+
+  async submitUserTask(goal, options = {}) {
+    const text = String(goal || "").trim();
+    if (!text) {
+      const error = new Error("Multitask requires a non-empty goal");
+      error.code = "invalid_args";
+      throw error;
+    }
+
+    const state = this.status();
+    if (!state.enabled || !state.configured || !state.started) {
+      const error = new Error("Multitask requires the configured Paperclip bridge to be online.");
+      error.code = "paperclip_not_ready";
+      throw error;
+    }
+    if (!this.teamOrchestrationEnabled || !this.teamOrchestrator.configured()) {
+      const error = new Error("Multitask requires the complete seven-role Paperclip team.");
+      error.code = "paperclip_team_incomplete";
+      throw error;
+    }
+    if (!this.companyId) {
+      const error = new Error("PAPERCLIP_COMPANY_ID is required for Multitask.");
+      error.code = "paperclip_company_missing";
+      throw error;
+    }
+
+    const controller = this.agentRegistry.agentForRole("controller");
+    if (!controller || !controller.agentId || !controller.configured) {
+      const error = new Error("The Paperclip Controller identity is not configured.");
+      error.code = "paperclip_controller_missing";
+      throw error;
+    }
+
+    const rootRunId = "codeme-multitask-" + crypto.randomUUID();
+    const title = text.replace(/\s+/g, " ").slice(0, 120);
+    const parent = await this.api.createIssue({
+      companyId: this.companyId,
+      runId: rootRunId,
+      issue: {
+        title: title || "CodeMe Multitask",
+        description: text,
+        status: "todo",
+        assigneeAgentId: controller.agentId,
+      },
+    });
+    const taskId = String(parent && (parent.id || parent.issueId) || "").trim();
+    if (!taskId) {
+      const error = new Error("Paperclip created the Multitask parent without an issue id.");
+      error.code = "paperclip_parent_invalid";
+      throw error;
+    }
+
+    const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {};
+    onProgress({ phase: "product", status: "starting", taskId, runId: rootRunId });
+
+    for (let step = 0; step < 32; step += 1) {
+      const heartbeatRunId = rootRunId + "-step-" + String(step + 1);
+      const result = await this.teamOrchestrator.handleHeartbeat({
+        runId: heartbeatRunId,
+        agentId: controller.agentId,
+        companyId: this.companyId,
+        context: { taskId },
+      });
+
+      onProgress({
+        phase: result.phase || "team",
+        status: result.status || "running",
+        taskId,
+        runId: rootRunId,
+        childIssueId: result.childIssueId || "",
+      });
+
+      if (result.status === "done") {
+        return { ...result, ok: true, taskId, runId: rootRunId };
+      }
+      if (result.status === "sync_failed") {
+        const error = new Error(result.syncError || result.reason || "Paperclip team sync failed.");
+        error.code = "paperclip_disposition_sync_failed";
+        throw error;
+      }
+
+      if (result.childIssueId) {
+        const child = await waitForIssueTerminal(
+          this.api,
+          result.childIssueId,
+          options.childTimeoutMs || 30 * 60 * 1000,
+          options.pollMs || 1000,
+          (issue) => onProgress({
+            phase: result.phase || "team",
+            status: String(issue && issue.status || "waiting"),
+            taskId,
+            runId: rootRunId,
+            childIssueId: result.childIssueId,
+          }),
+        );
+        if (String(child && child.status || "") !== "done") {
+          return {
+            ok: false,
+            accepted: true,
+            completed: true,
+            status: String(child && child.status || "blocked"),
+            taskId,
+            runId: rootRunId,
+            phase: result.phase || "team",
+            childIssueId: result.childIssueId,
+            reason: "Paperclip child task did not complete successfully.",
+          };
+        }
+        continue;
+      }
+
+      if (result.completed) return { ...result, taskId, runId: rootRunId };
+      await delay(options.pollMs || 1000);
+    }
+
+    const error = new Error("Multitask exceeded the orchestration step limit.");
+    error.code = "paperclip_team_step_limit";
+    throw error;
   }
 
   async start() {
@@ -184,6 +306,24 @@ class PaperclipBridge {
   }
 }
 
+async function waitForIssueTerminal(api, issueId, timeoutMs, pollMs, onProgress) {
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs || 0));
+  while (Date.now() < deadline) {
+    const issue = await api.getIssue(issueId);
+    if (typeof onProgress === "function") onProgress(issue);
+    const status = String(issue && issue.status || "");
+    if (["done", "blocked", "cancelled", "rejected"].includes(status)) return issue;
+    await delay(pollMs);
+  }
+  const error = new Error("Timed out waiting for Paperclip child task " + issueId);
+  error.code = "paperclip_child_timeout";
+  throw error;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms || 0))));
+}
+
 function readJson(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -229,4 +369,4 @@ function sendJson(res, statusCode, body) {
   res.end(payload);
 }
 
-module.exports = { PaperclipBridge, envFlag, readJson, safeEqual };
+module.exports = { PaperclipBridge, envFlag, readJson, safeEqual, waitForIssueTerminal };
