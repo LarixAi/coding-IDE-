@@ -54,6 +54,15 @@ function parentTaskText(parent) {
   ].join("\n").trim();
 }
 
+function needsResearch(parent, productSummary, architectureSummary) {
+  const text = [
+    parentTaskText(parent),
+    String(productSummary || ""),
+    String(architectureSummary || ""),
+  ].join("\n").toLowerCase();
+  return /\b(research|current|latest|up[- ]to[- ]date|documentation|docs|api version|browser compatibility|migration|published rule|github issue|npm|mdn)\b/.test(text);
+}
+
 class PaperclipTeamOrchestrator {
   constructor(options = {}) {
     if (!options.api) throw new Error("PaperclipTeamOrchestrator requires PaperclipApi");
@@ -71,7 +80,7 @@ class PaperclipTeamOrchestrator {
   }
 
   configured() {
-    return ["controller", "cto", "developer", "test", "reviewer"].every((role) => {
+    return ["controller", "product", "cto", "research", "developer", "test", "reviewer"].every((role) => {
       const agent = this.agentRegistry.agentForRole(role);
       return Boolean(agent && agent.configured);
     });
@@ -111,7 +120,7 @@ class PaperclipTeamOrchestrator {
     }
 
     if (!this.configured()) {
-      const error = new Error("Paperclip team orchestration requires controller, CTO, developer, test, and reviewer identities");
+      const error = new Error("Paperclip team orchestration requires controller, product, architect, research, developer, test, and reviewer identities");
       error.code = "paperclip_team_incomplete";
       error.statusCode = 503;
       throw error;
@@ -148,7 +157,7 @@ class PaperclipTeamOrchestrator {
       companyId,
       taskId: request.taskId,
       status: "running",
-      phase: "cto",
+      phase: "product",
       cycle: 0,
       childIssueId: "",
       startedAt: Date.now(),
@@ -230,6 +239,31 @@ class PaperclipTeamOrchestrator {
   async advance(record, parent) {
     if (this.disposed) throw new Error("Paperclip team orchestrator was disposed");
 
+    const product = await this.ensurePhase({
+      record,
+      parent,
+      role: "product",
+      phase: "product",
+      cycle: 0,
+      label: "Product definition",
+      description: [
+        parentTaskText(parent),
+        "",
+        "You are the Product Manager for this parent task.",
+        "Define the user outcome, bounded requirements, acceptance criteria, non-goals, ambiguities, and priority.",
+        "Do not choose implementation files, frameworks, libraries, or architecture unless the parent task explicitly constrains them.",
+        "Do not edit source files.",
+        "End the final response with exactly: PRODUCT: READY",
+      ].join("\n"),
+    });
+    if (product.waiting) return product.result;
+    this.requireDone(product, "Product Manager");
+    if (!includesMarker(product.summary, "PRODUCT: READY")) {
+      throw new Error("Product Manager did not produce PRODUCT: READY");
+    }
+
+    const productBrief = product.summary;
+
     const cto = await this.ensurePhase({
       record,
       parent,
@@ -240,9 +274,13 @@ class PaperclipTeamOrchestrator {
       description: [
         parentTaskText(parent),
         "",
-        "You are the CTO planning this parent task.",
+        "Product requirements:",
+        productBrief || "(No product brief was available.)",
+        "",
+        "You are the Software Architect planning this parent task.",
         "Inspect the current CodeMe workspace as needed, but do not edit source files.",
-        "Produce a bounded technical plan: likely files/components, risks, acceptance criteria, and concrete implementation steps for the Developer.",
+        "Produce a bounded technical plan: runtime path, likely files/components, dependencies, risks, implementation steps, and verification strategy for the Developer.",
+        "Treat actual runtime evidence as stronger than a file-name or framework assumption.",
         "Do not implement the task.",
         "End the final response with exactly: PLAN: READY",
       ].join("\n"),
@@ -251,6 +289,39 @@ class PaperclipTeamOrchestrator {
     this.requireDone(cto, "CTO");
 
     const plan = cto.summary;
+
+    let researchSummary = "";
+    if (needsResearch(parent, productBrief, plan)) {
+      const research = await this.ensurePhase({
+        record,
+        parent,
+        role: "research",
+        phase: "research",
+        cycle: 0,
+        label: "Research evidence",
+        description: [
+          parentTaskText(parent),
+          "",
+          "Product requirements:",
+          productBrief || "(No product brief was available.)",
+          "",
+          "Architecture plan:",
+          plan || "(No architecture plan was available.)",
+          "",
+          "Research only the current or external facts needed by this task.",
+          "Use CodeMe/n8n research capabilities when available. Do not edit source files.",
+          "Return concise evidence and implementation implications.",
+          "End the final response with exactly: RESEARCH: READY",
+        ].join("\n"),
+      });
+      if (research.waiting) return research.result;
+      this.requireDone(research, "Research");
+      if (!includesMarker(research.summary, "RESEARCH: READY")) {
+        throw new Error("Research did not produce RESEARCH: READY");
+      }
+      researchSummary = research.summary;
+    }
+
     let repairContext = "";
 
     for (let cycle = 0; cycle <= this.maxRepairCycles; cycle += 1) {
@@ -266,8 +337,12 @@ class PaperclipTeamOrchestrator {
         description: [
           parentTaskText(parent),
           "",
-          "CTO plan/evidence:",
-          plan || "(No CTO comment was available; re-inspect the workspace before editing.)",
+          "Product requirements:",
+          productBrief || "(No Product Manager comment was available.)",
+          "",
+          "Architecture plan/evidence:",
+          plan || "(No Software Architect comment was available; re-inspect the workspace before editing.)",
+          researchSummary ? "\nResearch evidence:\n" + researchSummary : "",
           repairContext ? "\nRepair evidence from Test/Reviewer:\n" + repairContext : "",
           "",
           cycle === 0
@@ -336,8 +411,12 @@ class PaperclipTeamOrchestrator {
         description: [
           parentTaskText(parent),
           "",
-          "CTO plan/evidence:",
-          plan || "(No CTO comment was available.)",
+          "Product requirements:",
+          productBrief || "(No Product Manager comment was available.)",
+          "",
+          "Architecture plan/evidence:",
+          plan || "(No Software Architect comment was available.)",
+          researchSummary ? "\nResearch evidence:\n" + researchSummary : "",
           "",
           "Developer evidence:",
           developer.summary || "(No developer comment was available.)",
@@ -368,7 +447,9 @@ class PaperclipTeamOrchestrator {
           [
             "CodeMe team completed the parent task.",
             "",
-            "CTO: plan completed.",
+            "Product Manager: requirements completed.",
+            "Software Architect: plan completed.",
+            researchSummary ? "Research: evidence completed." : "Research: not required.",
             "Developer: implementation completed.",
             "Test: TEST: PASS.",
             "Reviewer: REVIEW: APPROVED.",
