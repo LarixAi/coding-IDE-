@@ -44,6 +44,7 @@ function fakeSession(options = {}) {
     },
     async submit(goal) {
       this.submitCalls.push(goal);
+      if (options.submitError) throw options.submitError;
       const result = options.submitResult || { ok: true, runId: "run_codeme_1" };
       if (result.runId) {
         this.state.running = true;
@@ -266,6 +267,28 @@ async function main() {
   assert.strictEqual(dispositionAttempts, 3, "final disposition must be retried before failing closed");
   assert.match(syncFailureResult.syncError, /could not persist the final issue disposition/i);
 
+  const submitErrorSession = fakeSession({
+    submitError: new Error("simulated model startup failure"),
+  });
+  const submitErrorApi = fakeApi();
+  const submitErrorController = new PaperclipController({
+    session: submitErrorSession,
+    api: submitErrorApi,
+    pollMs: 1,
+    dispositionRetryDelays: [0, 0, 0],
+  });
+  const submitErrorResult = await submitErrorController.handleHeartbeat({
+    runId: "pc-run-submit-error",
+    agentId: "agent-1",
+    companyId: "company-1",
+    context: { taskId: "issue-submit-error" },
+  });
+  assert.strictEqual(submitErrorResult.status, "blocked");
+  assert.strictEqual(submitErrorResult.completed, true);
+  assert.ok(submitErrorApi.updateCalls.some((call) => (
+    call.status === "blocked" && /failed while starting/i.test(call.comment || "")
+  )));
+
   const clarificationSession = fakeSession({
     submitResult: { ok: true, status: "NEEDS_CLARIFICATION" },
   });
@@ -285,6 +308,34 @@ async function main() {
   assert.ok(clarificationApi.updateCalls.some((call) => (
     call.status === "blocked" && /Which booking type/.test(call.comment)
   )));
+
+  const clarificationSyncFailureSession = fakeSession({
+    submitResult: { ok: true, status: "NEEDS_CLARIFICATION" },
+  });
+  const clarificationSyncFailureApi = fakeApi();
+  let clarificationDispositionAttempts = 0;
+  clarificationSyncFailureApi.updateIssue = async function updateIssue(input) {
+    this.updateCalls.push(input);
+    if (input.status === "blocked") {
+      clarificationDispositionAttempts += 1;
+      throw new Error("simulated blocked disposition failure");
+    }
+    return { ok: true };
+  };
+  const clarificationSyncFailure = new PaperclipController({
+    session: clarificationSyncFailureSession,
+    api: clarificationSyncFailureApi,
+    pollMs: 1,
+    dispositionRetryDelays: [0, 0, 0],
+  });
+  const clarificationSyncFailureResult = await clarificationSyncFailure.handleHeartbeat({
+    runId: "pc-run-clarification-sync-failure",
+    agentId: "agent-1",
+    companyId: "company-1",
+    context: { taskId: "issue-clarification-sync-failure" },
+  });
+  assert.strictEqual(clarificationSyncFailureResult.status, "sync_failed");
+  assert.strictEqual(clarificationDispositionAttempts, 3);
 
   const loopSession = fakeSession({
     states: [
@@ -326,7 +377,9 @@ async function main() {
 
   complete.dispose();
   syncFailure.dispose();
+  submitErrorController.dispose();
   clarification.dispose();
+  clarificationSyncFailure.dispose();
   loopController.dispose();
 
   console.log("ok Paperclip controls one CodeMe task, prevents duplicate dispatch, and stops repeated tool loops");

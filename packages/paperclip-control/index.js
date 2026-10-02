@@ -307,42 +307,83 @@ class PaperclipController {
     }
 
     this.session.selectMode(runtime.role.mode);
-    const submitted = await this.session.submit(paperclipTaskPrompt(issue, runtime.role), Date.now());
+    let submitted;
+    try {
+      submitted = await this.session.submit(paperclipTaskPrompt(issue, runtime.role), Date.now());
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      await this.finishRecord(
+        record,
+        "blocked",
+        "CodeMe failed while starting this task: " + reason,
+      );
+      return {
+        ok: false,
+        accepted: true,
+        completed: true,
+        status: record.status,
+        taskId: record.taskId,
+        reason,
+        syncError: record.syncError || null,
+      };
+    }
 
     if (!submitted || submitted.ok === false) {
-      record.status = "blocked";
       const reason = submitted && (submitted.message || submitted.code) || "CodeMe rejected the task";
-      await this.safeUpdate(record, "blocked", "CodeMe could not start this task: " + reason);
-      this.resolveRecord(record);
-      return { ok: false, status: record.status, taskId: record.taskId, reason };
+      await this.finishRecord(
+        record,
+        "blocked",
+        "CodeMe could not start this task: " + reason,
+      );
+      return {
+        ok: false,
+        accepted: true,
+        completed: true,
+        status: record.status,
+        taskId: record.taskId,
+        reason,
+        syncError: record.syncError || null,
+      };
     }
 
     if (submitted.status === "NEEDS_CLARIFICATION") {
-      record.status = "blocked";
       const questions = this.session.snapshot().clarification;
       const text = questions && Array.isArray(questions.questions)
         ? questions.questions.map((item, index) => (index + 1) + ". " + item.question).join("\n")
         : "CodeMe needs clarification before it can execute this task.";
-      await this.safeUpdate(
+      await this.finishRecord(
         record,
         "blocked",
         "CodeMe needs clarification before continuing:\n" + text,
       );
-      this.resolveRecord(record);
-      return { ok: true, status: record.status, taskId: record.taskId, needsClarification: true };
+      return {
+        ok: record.status !== "sync_failed",
+        accepted: true,
+        completed: true,
+        status: record.status,
+        taskId: record.taskId,
+        needsClarification: true,
+        syncError: record.syncError || null,
+      };
     }
 
     if (submitted.status === "NEEDS_RESEARCH") {
-      record.status = "blocked";
       const research = this.session.snapshot().researchRequest;
       const queries = research && Array.isArray(research.queries) ? research.queries.join("; ") : "";
-      await this.safeUpdate(
+      await this.finishRecord(
         record,
         "blocked",
         "CodeMe stopped for external research" + (queries ? ": " + queries : "."),
       );
-      this.resolveRecord(record);
-      return { ok: true, status: record.status, taskId: record.taskId, needsResearch: true };
+      return {
+        ok: record.status !== "sync_failed",
+        accepted: true,
+        completed: true,
+        status: record.status,
+        taskId: record.taskId,
+        needsResearch: true,
+        syncError: record.syncError || null,
+      };
     }
 
     record.status = "running";

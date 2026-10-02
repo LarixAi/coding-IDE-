@@ -55,6 +55,9 @@ class PaperclipTeamOrchestrator {
     this.pollMs = Number(options.pollMs || 1000);
     this.maxChildMs = Number(options.maxChildMs || 30 * 60 * 1000);
     this.maxWorkflowMs = Number(options.maxWorkflowMs || 60 * 60 * 1000);
+    this.dispositionRetryDelays = Array.isArray(options.dispositionRetryDelays)
+      ? options.dispositionRetryDelays
+      : [0, 250, 750];
     this.maxRepairCycles = Number.isInteger(options.maxRepairCycles)
       ? options.maxRepairCycles
       : 2;
@@ -155,9 +158,8 @@ class PaperclipTeamOrchestrator {
 
     this.run(record, parent).catch(async (error) => {
       if (record.status !== "running") return;
-      record.status = "blocked";
       const message = error instanceof Error ? error.message : String(error);
-      await this.safeParentUpdate(
+      await this.finishParent(
         record,
         "blocked",
         "CodeMe team orchestration stopped: " + message,
@@ -166,10 +168,11 @@ class PaperclipTeamOrchestrator {
         ok: false,
         accepted: true,
         completed: true,
-        status: "blocked",
+        status: record.status,
         taskId: record.taskId,
         phase: record.phase,
         reason: message,
+        syncError: record.syncError || null,
       });
     });
 
@@ -326,9 +329,8 @@ class PaperclipTeamOrchestrator {
       this.requireDone(reviewer, "Reviewer");
 
       if (includesMarker(reviewer.summary, "REVIEW: APPROVED")) {
-        record.status = "done";
         record.phase = "complete";
-        await this.safeParentUpdate(
+        await this.finishParent(
           record,
           "done",
           [
@@ -342,13 +344,14 @@ class PaperclipTeamOrchestrator {
           ].join("\n"),
         );
         this.resolveRecord(record, {
-          ok: true,
+          ok: record.status === "done",
           accepted: true,
           completed: true,
-          status: "done",
+          status: record.status,
           taskId: record.taskId,
           phase: "complete",
           repairCycles: cycle,
+          syncError: record.syncError || null,
         });
         return;
       }
@@ -448,6 +451,63 @@ class PaperclipTeamOrchestrator {
     } catch (error) {
       record.lastSyncError = error instanceof Error ? error.message : String(error);
       return null;
+    }
+  }
+
+  async syncParentDisposition(record, status, comment) {
+    let lastError = null;
+    for (let index = 0; index < this.dispositionRetryDelays.length; index += 1) {
+      const delayMs = Number(this.dispositionRetryDelays[index] || 0);
+      if (delayMs > 0) await delay(delayMs);
+      try {
+        const receipt = await this.api.updateIssue({
+          issueId: record.taskId,
+          runId: record.paperclipRunId,
+          status,
+          comment,
+        });
+        if (
+          receipt
+          && typeof receipt === "object"
+          && receipt.status
+          && String(receipt.status) !== String(status)
+        ) {
+          const error = new Error(
+            "Paperclip parent disposition write returned status "
+            + receipt.status
+            + " instead of "
+            + status,
+          );
+          error.code = "paperclip_parent_disposition_not_committed";
+          throw error;
+        }
+        record.lastSyncError = "";
+        return receipt;
+      } catch (error) {
+        lastError = error;
+        record.lastSyncError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    const wrapped = new Error(
+      "Paperclip could not persist the parent issue disposition after "
+      + this.dispositionRetryDelays.length
+      + " attempt(s): "
+      + (lastError instanceof Error ? lastError.message : String(lastError || "unknown error")),
+    );
+    wrapped.code = "paperclip_parent_disposition_sync_failed";
+    wrapped.statusCode = 502;
+    throw wrapped;
+  }
+
+  async finishParent(record, status, comment) {
+    try {
+      await this.syncParentDisposition(record, status, comment);
+      record.status = status;
+      record.syncError = null;
+    } catch (error) {
+      record.status = "sync_failed";
+      record.syncError = error instanceof Error ? error.message : String(error);
     }
   }
 
