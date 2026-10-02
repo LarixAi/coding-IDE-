@@ -17,6 +17,7 @@ const { wrapToolCallCompat } = require("./model-tool-compat");
 const { wrapResponsePolicy } = require("./model-response-policy");
 const { PaperclipBridge } = require("./paperclip-bridge");
 const { DebugToolProvider } = require("./debug-tool-provider");
+const { MultitaskController } = require("./multitask-controller");
 const { SettingsPanel } = require("./settings-panel");
 
 let N8nCapabilityProvider;
@@ -45,6 +46,7 @@ function activate(context) {
   };
   const composer = new ComposerViewProvider(context, state);
   const paperclip = new PaperclipBridge({ session: composer.session });
+  composer.setPaperclip(paperclip);
   paperclip.start().then((status) => {
     if (status.enabled) {
       console.log(
@@ -815,6 +817,8 @@ class ComposerViewProvider {
     this.context = context;
     this.state = state;
     this.view = undefined;
+    this.paperclip = null;
+    this.multitask = null;
     this.capabilities = N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null;
     this.n8n = new N8nIntegration(context);
     this.externalTools = this.n8n;
@@ -863,6 +867,17 @@ class ComposerViewProvider {
     });
   }
 
+  setPaperclip(paperclip) {
+    this.paperclip = paperclip || null;
+    this.multitask = this.paperclip
+      ? new MultitaskController({
+        session: this.session,
+        paperclip: this.paperclip,
+        onChange: () => this.post(this.session.snapshot()),
+      })
+      : null;
+  }
+
   syncExternalPermissions() {
     if (!this.n8n || typeof this.n8n.setRuntimePermissions !== "function") return;
     const config = vscode.workspace.getConfiguration("codeme.n8n");
@@ -907,10 +922,21 @@ class ComposerViewProvider {
     }
     if (this.refreshStatus) this.refreshStatus();
     if (!this.view) return;
+    const multitask = this.multitask ? this.multitask.snapshot() : null;
+    const multitaskActive = Boolean(multitask && multitask.active);
+    const effectiveComposerMode = multitaskActive ? "multitask" : snapshot.composerMode;
+    const effectiveRunning = Boolean(snapshot.running || multitaskActive);
+    const effectiveActivity = multitaskActive && !snapshot.running
+      ? "Multitask · " + String(multitask.phase || "team") + " · " + String(multitask.status || "working")
+      : snapshot.activity;
     this.view.webview.postMessage({
       type: "state",
-      readOnly: snapshot.mode !== "controlled",
       ...snapshot,
+      composerMode: effectiveComposerMode,
+      running: effectiveRunning,
+      activity: effectiveActivity,
+      readOnly: effectiveComposerMode === "multitask" ? false : snapshot.mode !== "controlled",
+      multitask,
       hub: this.state.hub || { connected: false, capabilities: [], tools: [], categories: {} },
     });
   }
@@ -925,7 +951,11 @@ class ComposerViewProvider {
       const text = String(message.text || "");
       this.view.webview.postMessage({ type: "submitting", epoch: message.epoch });
       try {
-        const result = await this.session.submit(text, message.epoch);
+        const result = this.session.composerMode === "multitask"
+          ? (this.multitask
+            ? this.multitask.start(text, message.epoch)
+            : { ok: false, code: "paperclip_unavailable", message: "Multitask is unavailable because Paperclip is not connected." })
+          : await this.session.submit(text, message.epoch);
         if (!result.ok) {
           this.view.webview.postMessage({ type: "rejected", epoch: message.epoch, code: result.code, message: result.message });
           return;
@@ -976,6 +1006,11 @@ class ComposerViewProvider {
       return;
     }
     if (message.type === "cancel") {
+      const multitask = this.multitask ? this.multitask.snapshot() : null;
+      if (multitask && multitask.active) {
+        this.multitask.cancel();
+        return;
+      }
       if (message.requestId && this.session.requestId && message.requestId !== this.session.requestId) return;
       this.session.cancel();
       return;
@@ -998,6 +1033,15 @@ class ComposerViewProvider {
       return;
     }
     if (message.type === "select-mode") {
+      const multitask = this.multitask ? this.multitask.snapshot() : null;
+      if (multitask && multitask.active) {
+        this.view.webview.postMessage({
+          type: "rejected",
+          code: "multitask_busy",
+          message: "Stop the active Multitask run before changing modes.",
+        });
+        return;
+      }
       this.session.selectMode(message.mode);
       return;
     }
