@@ -175,6 +175,9 @@ async function main() {
   assert.deepStrictEqual(api.state.parent.blockedByIssueIds, ["child-2"]);
   const firstDev = api.state.creates.find((item) => item.issue.title.includes(":developer:0]"));
   assert.strictEqual(firstDev.issue.assigneeAgentId, "developer-id");
+  assert.match(firstDev.issue.description, /final working-tree diff/i);
+  assert.match(firstDev.issue.description, /actual runtime path/i);
+  assert.match(firstDev.issue.description, /revert the unnecessary file/i);
 
   api.complete(":developer:0]", "DEV: COMPLETE");
 
@@ -183,32 +186,63 @@ async function main() {
   assert.strictEqual(testWait.phase, "test");
   const firstTest = api.state.creates.find((item) => item.issue.title.includes(":test:0]"));
   assert.strictEqual(firstTest.issue.assigneeAgentId, "test-id");
+  assert.match(firstTest.issue.description, /actual runtime\/served path/i);
+  assert.match(firstTest.issue.description, /every modified file/i);
+  assert.match(firstTest.issue.description, /merely containing the expected text is not proof/i);
+  assert.match(firstTest.issue.description, /RUNTIME PATH/i);
+  assert.match(firstTest.issue.description, /FILE NECESSITY/i);
 
-  api.complete(":test:0]", "TEST: FAIL - heading was not visible");
+  api.complete(":test:0]", [
+    "RUNTIME PATH: public/index.html is the served static page.",
+    "FILE NECESSITY: public/index.html REQUIRED; pages/Home.js UNPROVEN/REDUNDANT.",
+    "TEST: PASS",
+  ].join("\n"));
 
-  const repairWait = await heartbeat("pc-parent-4");
+  const reviewerWait0 = await heartbeat("pc-parent-4");
+  assert.strictEqual(reviewerWait0.status, "blocked");
+  assert.strictEqual(reviewerWait0.phase, "reviewer");
+  const reviewer0 = api.state.creates.find((item) => item.issue.title.includes(":reviewer:0]"));
+  assert.strictEqual(reviewer0.issue.assigneeAgentId, "reviewer-id");
+  assert.match(reviewer0.issue.description, /actual runtime\/served path/i);
+  assert.match(reviewer0.issue.description, /causal justification/i);
+  assert.match(reviewer0.issue.description, /matching text/i);
+  assert.match(reviewer0.issue.description, /require the redundant change to be reverted/i);
+  assert.match(reviewer0.issue.description, /FILE JUSTIFICATION/i);
+
+  api.complete(
+    ":reviewer:0]",
+    "FILE JUSTIFICATION: public/index.html required; pages/Home.js is not executed by the served path.\nREVIEW: CHANGES_REQUIRED - revert redundant pages/Home.js edit",
+  );
+
+  const repairWait = await heartbeat("pc-parent-5");
   assert.strictEqual(repairWait.status, "blocked");
   assert.strictEqual(repairWait.phase, "developer-repair");
-  assert.ok(api.state.creates.some((item) => item.issue.title.includes(":developer-repair:1]")));
+  const repair = api.state.creates.find((item) => item.issue.title.includes(":developer-repair:1]"));
+  assert.ok(repair);
+  assert.match(repair.issue.description, /pages\/Home\.js/i);
+  assert.match(repair.issue.description, /remove that unnecessary change/i);
 
   api.complete(":developer-repair:1]", "DEV: COMPLETE");
 
-  const retestWait = await heartbeat("pc-parent-5");
+  const retestWait = await heartbeat("pc-parent-6");
   assert.strictEqual(retestWait.status, "blocked");
   assert.strictEqual(retestWait.phase, "test");
   assert.ok(api.state.creates.some((item) => item.issue.title.includes(":test:1]")));
 
-  api.complete(":test:1]", "TEST: PASS");
+  api.complete(
+    ":test:1]",
+    "RUNTIME PATH: public/index.html is served.\nFILE NECESSITY: public/index.html REQUIRED.\nTEST: PASS",
+  );
 
-  const reviewerWait = await heartbeat("pc-parent-6");
+  const reviewerWait = await heartbeat("pc-parent-7");
   assert.strictEqual(reviewerWait.status, "blocked");
   assert.strictEqual(reviewerWait.phase, "reviewer");
   const reviewer = api.state.creates.find((item) => item.issue.title.includes(":reviewer:1]"));
   assert.strictEqual(reviewer.issue.assigneeAgentId, "reviewer-id");
 
-  api.complete(":reviewer:1]", "REVIEW: APPROVED");
+  api.complete(":reviewer:1]", "FILE JUSTIFICATION: public/index.html required.\nREVIEW: APPROVED");
 
-  const done = await heartbeat("pc-parent-7");
+  const done = await heartbeat("pc-parent-8");
   assert.strictEqual(done.status, "done");
   assert.strictEqual(done.repairCycles, 1);
   assert.deepStrictEqual(api.state.parent.blockedByIssueIds, []);
@@ -228,7 +262,30 @@ async function main() {
   assert.ok(phases.some((title) => title.includes(":test:1]")));
   assert.ok(phases.some((title) => title.includes(":reviewer:1]")));
 
-  const failingApi = fakeTeamApi({ failParentTerminal: true });
+  const testFailureApi = fakeTeamApi();
+  const testFailureOrchestrator = new PaperclipTeamOrchestrator({
+    api: testFailureApi,
+    agentRegistry: registry,
+    maxRepairCycles: 1,
+    dispositionRetryDelays: [0, 0, 0],
+  });
+  const testFailureHeartbeat = (runId) => testFailureOrchestrator.handleHeartbeat({
+    runId,
+    agentId: "controller-id",
+    companyId: "company-1",
+    context: { taskId: "parent-1" },
+  });
+  await testFailureHeartbeat("test-failure-1");
+  testFailureApi.complete(":cto:0]", "PLAN: READY");
+  await testFailureHeartbeat("test-failure-2");
+  testFailureApi.complete(":developer:0]", "DEV: COMPLETE");
+  await testFailureHeartbeat("test-failure-3");
+  testFailureApi.complete(":test:0]", "TEST: FAIL - public/index.html is correct but pages/Home.js is redundant");
+  const testFailureRepair = await testFailureHeartbeat("test-failure-4");
+  assert.strictEqual(testFailureRepair.phase, "developer-repair");
+  assert.ok(testFailureApi.state.creates.some((item) => item.issue.title.includes(":developer-repair:1]")));
+
+    const failingApi = fakeTeamApi({ failParentTerminal: true });
   const failingOrchestrator = new PaperclipTeamOrchestrator({
     api: failingApi,
     agentRegistry: registry,
@@ -253,8 +310,9 @@ async function main() {
   );
 
   orchestrator.dispose();
+  testFailureOrchestrator.dispose();
   failingOrchestrator.dispose();
-  console.log("ok Paperclip team yields between phases, resumes durably, repairs, reviews, and fails closed on disposition sync");
+  console.log("ok Paperclip team enforces runtime-aware minimal diffs, repairs reviewer/test failures, and fails closed on disposition sync");
 }
 
 main().catch((error) => {
