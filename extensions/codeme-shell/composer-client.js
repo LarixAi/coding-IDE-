@@ -15,22 +15,29 @@ const COMPOSER_STAGES = [
 ];
 
 function normalizeComposerMode(value) {
-  if (value === "chat" || value === "chat_only") return "chat";
-  if (value === "code" || value === "controlled") return "code";
-  if (value === "plan") return "plan";
+  const mode = String(value || "").trim().toLowerCase();
+  // Product Chat deliberately reuses the proven workspace-aware Ask contract.
+  // Keep "ask" internally so Pipeline v2 remains read-only and unchanged.
+  if (mode === "chat" || mode === "chat_only" || mode === "ask") return "ask";
+  if (mode === "code" || mode === "controlled") return "code";
+  if (mode === "debug") return "debug";
+  if (mode === "multitask") return "multitask";
+  if (mode === "plan") return "plan";
   return "ask";
 }
 
 function agentModeFor(composerMode) {
   const mode = normalizeComposerMode(composerMode);
-  if (mode === "chat") return "chat_only";
-  return mode === "code" ? "controlled" : "read_only";
+  if (mode === "code" || mode === "debug") return "controlled";
+  // Multitask is intercepted by the Paperclip controller. If it ever reaches
+  // the normal session path, fail safe as read-only rather than granting write.
+  return "read_only";
 }
 
 function taskClassFor(composerMode) {
   const mode = normalizeComposerMode(composerMode);
-  if (mode === "chat") return "chat";
   if (mode === "plan") return "plan";
+  if (mode === "debug") return "bug-fix";
   return "";
 }
 
@@ -41,10 +48,12 @@ function looksLikeWorkspaceEdit(goal) {
 
 function composerModeLabel(composerMode) {
   const mode = normalizeComposerMode(composerMode);
-  if (mode === "chat") return "Chat";
-  if (mode === "code") return "Code";
+  if (mode === "ask") return "Chat";
   if (mode === "plan") return "Plan";
-  return "Ask";
+  if (mode === "code") return "Code";
+  if (mode === "debug") return "Debug";
+  if (mode === "multitask") return "Multitask";
+  return "Chat";
 }
 
 function composerKeyAction(event) {
