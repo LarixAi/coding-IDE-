@@ -21,6 +21,7 @@ function normalizeComposerMode(value) {
   if (mode === "chat" || mode === "chat_only" || mode === "ask") return "ask";
   if (mode === "code" || mode === "controlled") return "code";
   if (mode === "debug") return "debug";
+  if (mode === "test") return "test";
   if (mode === "multitask") return "multitask";
   if (mode === "plan") return "plan";
   return "ask";
@@ -28,7 +29,7 @@ function normalizeComposerMode(value) {
 
 function agentModeFor(composerMode) {
   const mode = normalizeComposerMode(composerMode);
-  if (mode === "code" || mode === "debug") return "controlled";
+  if (mode === "code" || mode === "debug" || mode === "test") return "controlled";
   // Multitask is intercepted by the Paperclip controller. If it ever reaches
   // the normal session path, fail safe as read-only rather than granting write.
   return "read_only";
@@ -38,6 +39,7 @@ function taskClassFor(composerMode) {
   const mode = normalizeComposerMode(composerMode);
   if (mode === "plan") return "plan";
   if (mode === "debug") return "bug-fix";
+  if (mode === "test") return "bug-fix";
   return "";
 }
 
@@ -52,6 +54,7 @@ function composerModeLabel(composerMode) {
   if (mode === "plan") return "Plan";
   if (mode === "code") return "Code";
   if (mode === "debug") return "Debug";
+  if (mode === "test") return "Test";
   if (mode === "multitask") return "Multitask";
   return "Chat";
 }
