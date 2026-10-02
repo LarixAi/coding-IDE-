@@ -127,6 +127,7 @@ async function main() {
     controllerAgentId: "controller-id",
     roles: {
       "controller-id": "controller",
+      "product-id": "product",
       "cto-id": "cto",
       "developer-id": "developer",
       "test-id": "test",
@@ -134,6 +135,7 @@ async function main() {
       "research-id": "research",
     },
     keys: {
+      "product-id": "product-key",
       "cto-id": "cto-key",
       "developer-id": "developer-key",
       "test-id": "test-key",
@@ -159,23 +161,32 @@ async function main() {
     });
   }
 
-  const ctoWait = await heartbeat("pc-parent-1");
-  assert.strictEqual(ctoWait.status, "blocked");
-  assert.strictEqual(ctoWait.completed, true);
-  assert.strictEqual(ctoWait.phase, "cto");
-  assert.ok(ctoWait.waitingFor);
+  const productWait = await heartbeat("pc-parent-1");
+  assert.strictEqual(productWait.status, "blocked");
+  assert.strictEqual(productWait.completed, true);
+  assert.strictEqual(productWait.phase, "product");
+  assert.ok(productWait.waitingFor);
   assert.deepStrictEqual(api.state.parent.blockedByIssueIds, ["child-1"]);
   assert.strictEqual((await orchestrator.waitForCompletion("pc-parent-1")).status, "blocked");
   const duplicate = await heartbeat("pc-parent-1");
   assert.strictEqual(duplicate.duplicate, true);
   assert.strictEqual(api.state.creates.length, 1);
 
+  api.complete(":product:0]", "PRODUCT: READY");
+
+  const ctoWait = await heartbeat("pc-parent-2");
+  assert.strictEqual(ctoWait.status, "blocked");
+  assert.strictEqual(ctoWait.phase, "cto");
+  assert.deepStrictEqual(api.state.parent.blockedByIssueIds, ["child-2"]);
+  const architect = api.state.creates.find((item) => item.issue.title.includes(":cto:0]"));
+  assert.strictEqual(architect.issue.assigneeAgentId, "cto-id");
+  assert.match(architect.issue.description, /Product requirements/i);
   api.complete(":cto:0]", "PLAN: READY");
 
-  const developerWait = await heartbeat("pc-parent-2");
+  const developerWait = await heartbeat("pc-parent-3");
   assert.strictEqual(developerWait.status, "blocked");
   assert.strictEqual(developerWait.phase, "developer");
-  assert.deepStrictEqual(api.state.parent.blockedByIssueIds, ["child-2"]);
+  assert.deepStrictEqual(api.state.parent.blockedByIssueIds, ["child-3"]);
   const firstDev = api.state.creates.find((item) => item.issue.title.includes(":developer:0]"));
   assert.strictEqual(firstDev.issue.assigneeAgentId, "developer-id");
   assert.match(firstDev.issue.description, /final working-tree diff/i);
@@ -184,7 +195,7 @@ async function main() {
 
   api.complete(":developer:0]", "DEV: COMPLETE");
 
-  const testWait = await heartbeat("pc-parent-3");
+  const testWait = await heartbeat("pc-parent-4");
   assert.strictEqual(testWait.status, "blocked");
   assert.strictEqual(testWait.phase, "test");
   const firstTest = api.state.creates.find((item) => item.issue.title.includes(":test:0]"));
@@ -201,7 +212,7 @@ async function main() {
     "TEST: PASS",
   ].join("\n"));
 
-  const reviewerWait0 = await heartbeat("pc-parent-4");
+  const reviewerWait0 = await heartbeat("pc-parent-5");
   assert.strictEqual(reviewerWait0.status, "blocked");
   assert.strictEqual(reviewerWait0.phase, "reviewer");
   const reviewer0 = api.state.creates.find((item) => item.issue.title.includes(":reviewer:0]"));
@@ -217,7 +228,7 @@ async function main() {
     "FILE JUSTIFICATION: public/index.html required; pages/Home.js is not executed by the served path.\nREVIEW: CHANGES_REQUIRED - revert redundant pages/Home.js edit",
   );
 
-  const repairWait = await heartbeat("pc-parent-5");
+  const repairWait = await heartbeat("pc-parent-6");
   assert.strictEqual(repairWait.status, "blocked");
   assert.strictEqual(repairWait.phase, "developer-repair");
   const repair = api.state.creates.find((item) => item.issue.title.includes(":developer-repair:1]"));
@@ -227,7 +238,7 @@ async function main() {
 
   api.complete(":developer-repair:1]", "DEV: COMPLETE");
 
-  const retestWait = await heartbeat("pc-parent-6");
+  const retestWait = await heartbeat("pc-parent-7");
   assert.strictEqual(retestWait.status, "blocked");
   assert.strictEqual(retestWait.phase, "test");
   assert.ok(api.state.creates.some((item) => item.issue.title.includes(":test:1]")));
@@ -237,7 +248,7 @@ async function main() {
     "RUNTIME PATH: public/index.html is served.\nFILE NECESSITY: public/index.html REQUIRED.\nTEST: PASS",
   );
 
-  const reviewerWait = await heartbeat("pc-parent-7");
+  const reviewerWait = await heartbeat("pc-parent-8");
   assert.strictEqual(reviewerWait.status, "blocked");
   assert.strictEqual(reviewerWait.phase, "reviewer");
   const reviewer = api.state.creates.find((item) => item.issue.title.includes(":reviewer:1]"));
@@ -245,7 +256,7 @@ async function main() {
 
   api.complete(":reviewer:1]", "FILE JUSTIFICATION: public/index.html required.\nREVIEW: APPROVED");
 
-  const done = await heartbeat("pc-parent-8");
+  const done = await heartbeat("pc-parent-9");
   assert.strictEqual(done.status, "done");
   assert.strictEqual(done.repairCycles, 1);
   assert.deepStrictEqual(api.state.parent.blockedByIssueIds, []);
@@ -258,6 +269,7 @@ async function main() {
   );
 
   const phases = api.state.creates.map((item) => item.issue.title);
+  assert.ok(phases.some((title) => title.includes(":product:0]")));
   assert.ok(phases.some((title) => title.includes(":cto:0]")));
   assert.ok(phases.some((title) => title.includes(":developer:0]")));
   assert.ok(phases.some((title) => title.includes(":test:0]")));
@@ -279,12 +291,14 @@ async function main() {
     context: { taskId: "parent-1" },
   });
   await testFailureHeartbeat("test-failure-1");
-  testFailureApi.complete(":cto:0]", "PLAN: READY");
+  testFailureApi.complete(":product:0]", "PRODUCT: READY");
   await testFailureHeartbeat("test-failure-2");
-  testFailureApi.complete(":developer:0]", "DEV: COMPLETE");
+  testFailureApi.complete(":cto:0]", "PLAN: READY");
   await testFailureHeartbeat("test-failure-3");
+  testFailureApi.complete(":developer:0]", "DEV: COMPLETE");
+  await testFailureHeartbeat("test-failure-4");
   testFailureApi.complete(":test:0]", "TEST: FAIL - public/index.html is correct but pages/Home.js is redundant");
-  const testFailureRepair = await testFailureHeartbeat("test-failure-4");
+  const testFailureRepair = await testFailureHeartbeat("test-failure-5");
   assert.strictEqual(testFailureRepair.phase, "developer-repair");
   assert.ok(testFailureApi.state.creates.some((item) => item.issue.title.includes(":developer-repair:1]")));
 
