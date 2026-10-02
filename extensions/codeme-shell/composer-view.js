@@ -1,9 +1,13 @@
 const fs = require("fs");
 const path = require("path");
+const { modeOptions } = require("./mode-contracts");
 
 function renderComposer(nonce) {
   const client = fs.readFileSync(path.join(__dirname, "composer-client.js"), "utf8")
     .replace(/if \(typeof module[\s\S]*$/, "");
+  const modeHtml = modeOptions()
+    .map((item) => '<option value="' + escapeHtml(item.internalComposerMode) + '">' + escapeHtml(item.label) + '</option>')
+    .join("");
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -228,13 +232,7 @@ function renderComposer(nonce) {
           <button type="button" id="attach" title="Add context">＋ Context</button>
           <button type="button" id="mic" title="Voice to text" aria-pressed="false">Mic</button>
           <button type="button" id="hub-tools-button" title="n8n MCP tools" aria-expanded="false">n8n</button>
-          <select id="mode" aria-label="Mode">
-            <option value="ask">Chat</option>
-            <option value="plan">Plan</option>
-            <option value="code">Code</option>
-            <option value="debug">Debug</option>
-            <option value="multitask">Multitask</option>
-          </select>
+          <select id="mode" aria-label="Mode">${modeHtml}</select>
           <select id="model" aria-label="Model"></select>
           <button type="button" id="model-refresh" title="Refresh models" aria-label="Refresh models">↻</button>
           <span class="perm" id="perm"></span>
