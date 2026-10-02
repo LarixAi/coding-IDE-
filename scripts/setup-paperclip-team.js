@@ -16,9 +16,9 @@ const TEAM = [
   },
   {
     key: "cto",
-    name: "CodeMe CTO",
+    name: "CodeMe Software Architect",
     role: "engineer",
-    title: "CTO Agent",
+    title: "Software Architect Agent",
     capabilities: "Plans architecture, decomposes technical work, delegates bounded tasks, and reviews engineering risk.",
     parent: "controller",
     canAssignTasks: true,
