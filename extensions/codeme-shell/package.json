@@ -57,6 +57,12 @@
         "command": "codeme.attach",
         "title": "CodeMe: Attach Workspace File",
         "category": "CodeMe"
+      },
+      {
+        "command": "codeme.openSettings",
+        "title": "CodeMe: Settings",
+        "category": "CodeMe",
+        "icon": "$(gear)"
       }
     ],
     "configurationDefaults": {
@@ -81,6 +87,15 @@
           "description": "Allow CodeMe to send attached image bytes to image-capable n8n MCP tools. Images are never sent to n8n when this is off."
         }
       }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "codeme.openSettings",
+          "when": "view == codeme.agent",
+          "group": "navigation@90"
+        }
+      ]
     }
   }
 }
