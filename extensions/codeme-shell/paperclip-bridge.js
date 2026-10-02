@@ -131,7 +131,6 @@ class PaperclipBridge {
         title: title || "CodeMe Multitask",
         description: text,
         status: "todo",
-        assigneeAgentId: controller.agentId,
       },
     });
     const taskId = String(parent && (parent.id || parent.issueId) || "").trim();
