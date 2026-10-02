@@ -23,6 +23,7 @@ Cursor or any coding agent working in this repository must read these files befo
 13. `docs/GATE_9_CAPABILITY_REGISTRY.md` — capability registry and name routing.
 14. `docs/GATE_10_RESEARCH_ASSISTED_CODING.md` — research-assisted coding qualification.
 15. `docs/GATE_11_AUTONOMOUS_HARDENING.md` — autonomous agent hardening.
+16. `docs/CODEME_MODES.md` — Chat, Plan, Code, Debug and Multitask authority contracts.
 
 ## Current state
 
