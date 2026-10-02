@@ -8,7 +8,7 @@ async function main() {
     apiKey: "controller-key",
     async createIssue({ companyId, issue }) {
       assert.strictEqual(companyId, "company-1");
-      assert.strictEqual(issue.assigneeAgentId, "controller-id");
+      assert.strictEqual(issue.assigneeAgentId, undefined);
       return { id: "parent-1", companyId, ...issue };
     },
     async getIssue(id) {
