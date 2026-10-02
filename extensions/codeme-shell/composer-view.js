@@ -162,7 +162,7 @@ function renderComposer(nonce) {
     .bar button:hover, .bar select:hover { background: #2a2f36; color: #d6dbe3; }
     .bar button:disabled, .bar select:disabled { opacity: 0.4; cursor: default; }
     #attach { flex: 0 0 auto; }
-    #mode { flex: 0 0 auto; max-width: 64px; color: #b8c0cb; }
+    #mode { flex: 0 0 auto; max-width: 92px; color: #b8c0cb; }
     #model { flex: 1 1 128px; min-width: 96px; max-width: 160px; color: #b8c0cb; text-overflow: ellipsis; overflow: hidden; }
     #model-refresh { flex: 0 0 auto; width: 22px; padding: 0; font-size: 13px; }
     #model-refresh.loading { animation: codeme-spin 0.8s linear infinite; }
@@ -229,10 +229,11 @@ function renderComposer(nonce) {
           <button type="button" id="mic" title="Voice to text" aria-pressed="false">Mic</button>
           <button type="button" id="hub-tools-button" title="n8n MCP tools" aria-expanded="false">n8n</button>
           <select id="mode" aria-label="Mode">
-            <option value="chat">Chat</option>
-            <option value="ask">Ask</option>
+            <option value="ask">Chat</option>
             <option value="plan">Plan</option>
             <option value="code">Code</option>
+            <option value="debug">Debug</option>
+            <option value="multitask">Multitask</option>
           </select>
           <select id="model" aria-label="Model"></select>
           <button type="button" id="model-refresh" title="Refresh models" aria-label="Refresh models">↻</button>
