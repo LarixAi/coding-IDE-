@@ -16,6 +16,7 @@ const { N8nIntegration } = require("./n8n-integration");
 const { wrapToolCallCompat } = require("./model-tool-compat");
 const { wrapResponsePolicy } = require("./model-response-policy");
 const { PaperclipBridge } = require("./paperclip-bridge");
+const { DebugToolProvider } = require("./debug-tool-provider");
 const { SettingsPanel } = require("./settings-panel");
 
 let N8nCapabilityProvider;
@@ -845,9 +846,15 @@ class ComposerViewProvider {
         }
         throw Object.assign(new Error(`Provider ${selection.provider} is not connected`), { code: "unknown_provider" });
       },
-      createRegistry: (mode) => new ToolRegistry(
-        mode === "controlled" ? new ControlledToolProvider(host) : new ReadOnlyToolProvider(host),
-      ),
+      createRegistry: (mode) => {
+        const composerMode = this.session && this.session.composerMode;
+        if (mode === "controlled" && composerMode === "debug") {
+          return new ToolRegistry(new DebugToolProvider(host));
+        }
+        return new ToolRegistry(
+          mode === "controlled" ? new ControlledToolProvider(host) : new ReadOnlyToolProvider(host),
+        );
+      },
       capabilities: this.capabilities,
       externalTools: this.externalTools,
       n8n: this.n8n,
