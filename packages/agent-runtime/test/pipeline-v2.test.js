@@ -158,6 +158,122 @@ async function testAskLoop() {
   assert.ok(provider.calls[0].tools.every((tool) => tool.name !== "file.write"));
 }
 
+async function testLocalAskKeepsExternalToolsHidden() {
+  const registry = new FakeRegistry();
+  const externalTools = {
+    listCalls: 0,
+    async listTools() {
+      this.listCalls += 1;
+      return [{
+        name: "external_lookup",
+        description: "External lookup",
+        parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      }];
+    },
+    async call() {
+      throw new Error("local Ask must not call external tools");
+    },
+  };
+  const provider = new ScriptedProvider([
+    (input) => {
+      assert.ok(input.tools.some((tool) => tool.name === "file.read"));
+      assert.ok(!input.tools.some((tool) => tool.name === "external_lookup"));
+      const prompt = input.messages.map((message) => String(message.content || "")).join("\n");
+      assert.ok(!prompt.includes("external_lookup"));
+      return { text: "", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] };
+    },
+    { text: "The README says Demo.", toolCalls: [] },
+  ]);
+
+  const run = await startPipelineRun({
+    goal: "Review the README and tell me what you think.",
+    model: "fixture",
+    providerName: "fixture-local",
+    provider,
+    registry,
+    externalTools,
+    store: storeFor("ask-local-tools"),
+    mode: "read_only",
+    composerMode: "ask",
+    maxIterations: 6,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  assert.strictEqual(externalTools.listCalls, 0);
+  assert.strictEqual(run.pipeline.toolPolicy, "local-read-only-tools");
+}
+
+async function testRepeatedAskReadForcesAnswerOnlyTurn() {
+  const registry = new FakeRegistry();
+  const provider = new ScriptedProvider([
+    { text: "", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+    { text: "", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+    (input) => {
+      assert.deepStrictEqual(input.tools, []);
+      const prompt = input.messages.map((message) => String(message.content || "")).join("\n");
+      assert.match(prompt, /ASK MODE FINAL ANSWER/);
+      assert.match(prompt, /same evidence was already requested/i);
+      return { text: "The README says Demo. I would keep the explanation concise.", toolCalls: [] };
+    },
+  ]);
+
+  const run = await startPipelineRun({
+    goal: "Review README.md and explain it. Do not edit anything.",
+    model: "fixture",
+    providerName: "fixture-local",
+    provider,
+    registry,
+    store: storeFor("ask-repeat-read"),
+    mode: "read_only",
+    composerMode: "ask",
+    maxIterations: 6,
+    readOnlyEvidenceLimit: 10,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  const reads = registry.calls.filter((call) => call.name === "file.read" && call.args && call.args.path === "README.md");
+  assert.strictEqual(reads.length, 1, "the repeated file.read should be suppressed before hitting the workspace");
+  assert.ok(run.events.some((event) => event.type === "tool_repeat_suppressed"));
+  assert.strictEqual(run.filesChanged.length, 0);
+}
+
+async function testAskTimeoutRecoveryBecomesAnswerOnly() {
+  const registry = new FakeRegistry();
+  const provider = new ScriptedProvider([
+    { text: "", toolCalls: [{ name: "file.read", args: { path: "README.md" } }] },
+    () => {
+      const error = new Error("model request timed out");
+      error.code = "timeout";
+      throw error;
+    },
+    (input) => {
+      assert.deepStrictEqual(input.tools, []);
+      const prompt = input.messages.map((message) => String(message.content || "")).join("\n");
+      assert.match(prompt, /ASK MODE FINAL ANSWER/);
+      assert.match(prompt, /timed out after workspace evidence/i);
+      return { text: "The README says Demo.", toolCalls: [] };
+    },
+  ]);
+
+  const run = await startPipelineRun({
+    goal: "Read README.md and tell me what it says.",
+    model: "fixture",
+    providerName: "fixture-local",
+    provider,
+    registry,
+    store: storeFor("ask-timeout-recovery"),
+    mode: "read_only",
+    composerMode: "ask",
+    maxIterations: 6,
+    timeoutMs: 1000,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  assert.strictEqual(run.outcome.summary, "The README says Demo.");
+  assert.ok(run.events.some((event) => event.type === "model_retry" && event.mode === "answer_only"));
+  assert.strictEqual(run.filesChanged.length, 0);
+}
+
 async function testVerificationRepair() {
   const registry = new FakeRegistry();
   const provider = new ScriptedProvider([
@@ -459,6 +575,9 @@ function testProviderStyleToolRecovery() {
 async function main() {
   testProviderStyleToolRecovery();
   await testAskLoop();
+  await testLocalAskKeepsExternalToolsHidden();
+  await testRepeatedAskReadForcesAnswerOnlyTurn();
+  await testAskTimeoutRecoveryBecomesAnswerOnly();
   await testVerificationRepair();
   await testNoOpAfterBrowserDoesNotInvalidateVerification();
   await testVerifierReplaysBrowserAfterLaterRealEdit();
