@@ -76,10 +76,13 @@ class PaperclipBridge {
       companyIdConfigured: Boolean(this.companyId),
       controller: this.controller.snapshot(),
       team: this.agentRegistry.summary(),
-      orchestration: {
-        enabled: this.teamOrchestrationEnabled,
-        ...this.teamOrchestrator.snapshot(),
-      },
+      orchestration: (() => {
+        const team = this.teamOrchestrator.snapshot();
+        return {
+          ...team,
+          enabled: Boolean(this.teamOrchestrationEnabled && team.enabled),
+        };
+      })(),
       reason: !this.enabled
         ? "disabled"
         : !this.bridgeToken
