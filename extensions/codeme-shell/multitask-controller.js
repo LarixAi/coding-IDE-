@@ -54,6 +54,26 @@ class MultitaskController {
       return { ok: false, code: "busy", message: "Stop the current CodeMe run before starting Multitask." };
     }
 
+    const paperclipState = this.paperclip && typeof this.paperclip.status === "function"
+      ? this.paperclip.status()
+      : null;
+    const orchestrationReady = Boolean(
+      paperclipState
+      && paperclipState.enabled
+      && paperclipState.configured
+      && paperclipState.started
+      && paperclipState.companyIdConfigured
+      && paperclipState.orchestration
+      && paperclipState.orchestration.enabled
+    );
+    if (!orchestrationReady) {
+      return {
+        ok: false,
+        code: "multitask_unavailable",
+        message: "Multitask requires Paperclip online, PAPERCLIP_COMPANY_ID configured, and the complete seven-role team ready.",
+      };
+    }
+
     const requestId = "multitask_" + crypto.randomBytes(8).toString("hex");
     this.session.recordUserMessage(goal);
     this.current = {
