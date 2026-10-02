@@ -7,7 +7,7 @@ const {
   phaseTitle,
 } = require("../team-orchestrator");
 
-function fakeTeamApi() {
+function fakeTeamApi(options = {}) {
   const parent = {
     id: "parent-1",
     identifier: "COD-TEAM",
@@ -52,8 +52,17 @@ function fakeTeamApi() {
     },
     async updateIssue(input) {
       state.updates.push(input);
+      if (
+        options.failParentTerminal
+        && input.issueId === parent.id
+        && ["done", "blocked"].includes(input.status)
+      ) {
+        throw new Error("simulated parent disposition failure");
+      }
       if (input.issueId === parent.id && input.status) state.parent.status = input.status;
-      return { ok: true };
+      return input.issueId === parent.id
+        ? { ...state.parent }
+        : { ok: true };
     },
     async createIssue({ companyId, runId, issue }) {
       const id = "child-" + (state.creates.length + 1);
@@ -174,8 +183,37 @@ async function main() {
     )),
   );
 
+  const failingApi = fakeTeamApi({ failParentTerminal: true });
+  const failingOrchestrator = new PaperclipTeamOrchestrator({
+    api: failingApi,
+    agentRegistry: registry,
+    pollMs: 1,
+    maxChildMs: 1000,
+    maxWorkflowMs: 3000,
+    maxRepairCycles: 2,
+    dispositionRetryDelays: [0, 0, 0],
+  });
+  await failingOrchestrator.handleHeartbeat({
+    runId: "pc-parent-sync-failure",
+    agentId: "controller-id",
+    companyId: "company-1",
+    context: { taskId: "parent-1" },
+  });
+  const syncFailure = await failingOrchestrator.waitForCompletion("pc-parent-sync-failure");
+  assert.strictEqual(syncFailure.status, "sync_failed");
+  assert.strictEqual(syncFailure.ok, false);
+  assert.match(syncFailure.syncError, /could not persist the parent issue disposition/i);
+  assert.strictEqual(
+    failingApi.state.updates.filter((item) => (
+      item.issueId === "parent-1" && item.status === "done"
+    )).length,
+    3,
+    "parent terminal disposition must be retried before failing closed",
+  );
+
   orchestrator.dispose();
-  console.log("ok Paperclip team orchestrates CTO -> Developer -> Test -> repair -> Test -> Reviewer");
+  failingOrchestrator.dispose();
+  console.log("ok Paperclip team orchestrates roles and fails closed on parent disposition sync");
 }
 
 main().catch((error) => {
