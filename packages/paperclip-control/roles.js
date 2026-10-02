@@ -11,13 +11,25 @@ const ROLE_POLICIES = Object.freeze({
       "If a worker-specific task would be safer or clearer, report that handoff need instead of inventing work outside this task.",
     ],
   }),
-  cto: Object.freeze({
-    key: "cto",
-    label: "CTO Agent",
+  product: Object.freeze({
+    key: "product",
+    label: "Product Manager Agent",
     mode: "ask",
     deniedTools: [],
     instructions: [
-      "Act as a technical planner and architecture reviewer.",
+      "Own the product definition for the assigned task: user outcome, requirements, acceptance criteria, non-goals, ambiguities, and priority.",
+      "Do not choose implementation files, frameworks, libraries, or architecture unless the task explicitly constrains them.",
+      "Do not edit source files or implement the task.",
+      "End a completed product brief with exactly: PRODUCT: READY",
+    ],
+  }),
+  cto: Object.freeze({
+    key: "cto",
+    label: "Software Architect Agent",
+    mode: "ask",
+    deniedTools: [],
+    instructions: [
+      "Act as the software architect and technical planner."
       "Do not edit source files or implement the task yourself.",
       "Break complex work into bounded implementation, research, test, and review responsibilities.",
       "Identify dependencies, risks, acceptance criteria, and the next concrete owner.",
@@ -34,6 +46,7 @@ const ROLE_POLICIES = Object.freeze({
       "Do not edit source files.",
       "Prefer current evidence from the configured n8n/research capabilities when external knowledge is required.",
       "Return concise findings, source/evidence context, and implementation implications for the developer.",
+      "End completed research with exactly: RESEARCH: READY",
     ],
   }),
   developer: Object.freeze({
@@ -86,6 +99,11 @@ function normalizeRoleKey(value) {
     "codeme-controller": "controller",
     chief_technology_officer: "cto",
     chieftechnologyofficer: "cto",
+    architect: "cto",
+    software_architect: "cto",
+    product_manager: "product",
+    productmanager: "product",
+    pm: "product",
     researcher: "research",
     qa: "test",
     tester: "test",
