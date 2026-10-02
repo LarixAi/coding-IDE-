@@ -22,6 +22,15 @@ async function main() {
   };
 
   const paperclip = {
+    status() {
+      return {
+        enabled: true,
+        configured: true,
+        started: true,
+        companyIdConfigured: true,
+        orchestration: { enabled: true },
+      };
+    },
     async submitUserTask(goal, options) {
       assert.strictEqual(goal, "Build the booking flow");
       options.onProgress({ phase: "product", status: "done", taskId: "parent-1", runId: "team-1" });
