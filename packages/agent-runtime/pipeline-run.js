@@ -145,6 +145,16 @@ function hasEditIntent(goal) {
   return /\b(edit|change|update|write|create|add|remove|delete|fix|repair|implement|build|make|rename|refactor|restyle|redesign)\b/i.test(String(goal || ""));
 }
 
+function readOnlyNeedsExternalEvidence(goal) {
+  const text = String(goal || "");
+  return /\b(?:research|external|online|internet|web\s+search|search\s+(?:the\s+)?(?:web|internet)|look\s*up|latest|up[- ]to[- ]date|github|npm|mdn|n8n|paperclip)\b/i.test(text)
+    || /\bcurrent\s+(?:recommended|recommendation|docs?|documentation|version|release)\b/i.test(text);
+}
+
+function wantsExhaustiveRead(goal) {
+  return /\b(?:read|review|inspect|check)\s+(?:all|every)\s+(?:the\s+)?(?:files?|project files?|workspace files?)\b/i.test(String(goal || ""));
+}
+
 function isWebGoal(goal) {
   return /\b(website|web site|webpage|page|layout|css|html|browser|preview|button|form|click|frontend|front-end|ui|ux)\b/i.test(String(goal || ""));
 }
@@ -418,16 +428,23 @@ async function executePipelineRun(run, options, followUpQueue) {
     attachmentContext = await loadAttachmentContext(registry, run.attachments);
   }
 
+  const allowExternalEvidence = run.mode !== "read_only" || readOnlyNeedsExternalEvidence(run.goal);
+
   let capabilityRegistry = null;
   let capabilityDefinitions = [];
-  if (run.mode !== "chat_only" && options.capabilities) {
+  if (run.mode !== "chat_only" && allowExternalEvidence && options.capabilities) {
     capabilityRegistry = await loadCapabilityRegistry(options.capabilities);
     const listed = capabilityRegistry.list();
     if (listed.length) capabilityDefinitions = capabilityToolDefinitions(listed);
   }
 
   let externalDefinitions = [];
-  if (run.mode !== "chat_only" && options.externalTools && typeof options.externalTools.listTools === "function") {
+  if (
+    run.mode !== "chat_only"
+    && allowExternalEvidence
+    && options.externalTools
+    && typeof options.externalTools.listTools === "function"
+  ) {
     try {
       const listed = await options.externalTools.listTools(signal);
       if (Array.isArray(listed)) externalDefinitions = listed;
@@ -441,6 +458,7 @@ async function executePipelineRun(run, options, followUpQueue) {
     ? []
     : registry.definitions().filter((tool) => run.mode !== "read_only" || !READ_ONLY_BLOCKED.has(tool.name));
   const definitions = [...baseDefinitions, ...capabilityDefinitions, ...externalDefinitions];
+  run.pipeline.toolPolicy = allowExternalEvidence ? "all-legal-tools" : "local-read-only-tools";
   const context = buildModelContext({
     goal: run.goal,
     system: instructionsForMode(run.mode, run.composerMode),
@@ -546,6 +564,13 @@ async function executePipelineRun(run, options, followUpQueue) {
     maxToolCallsPerTurn: options.maxToolCallsPerTurn ?? 8,
     turnDeadlineMs: options.timeoutMs || 240000,
     wallClockMs: options.wallClockMs || 45 * 60 * 1000,
+    mode: run.mode,
+    composerMode: run.composerMode,
+    goal: run.goal,
+    forceReadOnlyAnswerOnRepeat: true,
+    readOnlyEvidenceLimit: run.mode === "read_only" && !wantsExhaustiveRead(run.goal)
+      ? (options.readOnlyEvidenceLimit ?? 6)
+      : 0,
     signal,
     takeFollowUps: () => followUpQueue.splice(0, followUpQueue.length),
     onEvent(event) {
