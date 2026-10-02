@@ -28,8 +28,16 @@ function latestCommentText(body) {
   return "";
 }
 
+function normalizeMarkerText(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/\s+/g, " ")
+    .replace(/\s*:\s*/g, ":")
+    .trim();
+}
+
 function includesMarker(text, marker) {
-  return String(text || "").toUpperCase().includes(String(marker || "").toUpperCase());
+  return normalizeMarkerText(text).includes(normalizeMarkerText(marker));
 }
 
 function phaseTitle(parent, phase, cycle, label) {
