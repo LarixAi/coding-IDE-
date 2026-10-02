@@ -9,7 +9,8 @@ const { classifyTask, selectStrategy } = require("./strategy");
 const { diagnose } = require("./diagnosis");
 const { selectCapability, recommendCapability, isSiteLayoutGoal } = require("./progress");
 const { decideProject, isDependencyFreeStatic } = require("./project-decision");
-const { hasNoEditDirective, stripNegatedEditing, hasEditIntent, isResearchOnlyRequest } = require("./intent");\nconst { createProjectBrain, addRequirement, addDecision, addVerifiedLesson, rememberFile, invalidateChangedFiles, retrieveProjectContext, projectBrainText } = require("./project-brain");
+const { hasNoEditDirective, stripNegatedEditing, hasEditIntent, isResearchOnlyRequest } = require("./intent");
+const { createProjectBrain, addRequirement, addDecision, addVerifiedLesson, rememberFile, invalidateChangedFiles, retrieveProjectContext, projectBrainText } = require("./project-brain");
 const { loadProjectBrain, saveProjectBrain, loadOrCreateProjectBrain } = require("./project-brain-store");
 
 
