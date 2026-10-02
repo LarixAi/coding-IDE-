@@ -145,6 +145,17 @@ class PaperclipBridge {
     onProgress({ phase: "product", status: "starting", taskId, runId: rootRunId });
 
     for (let step = 0; step < 32; step += 1) {
+      if (typeof options.isCancelled === "function" && options.isCancelled()) {
+        return {
+          ok: false,
+          accepted: true,
+          completed: true,
+          status: "cancelled",
+          taskId,
+          runId: rootRunId,
+          phase: "cancelled",
+        };
+      }
       const heartbeatRunId = rootRunId + "-step-" + String(step + 1);
       const result = await this.teamOrchestrator.handleHeartbeat({
         runId: heartbeatRunId,
@@ -183,6 +194,7 @@ class PaperclipBridge {
             runId: rootRunId,
             childIssueId: result.childIssueId,
           }),
+          options.isCancelled,
         );
         if (String(child && child.status || "") !== "done") {
           return {
@@ -306,9 +318,14 @@ class PaperclipBridge {
   }
 }
 
-async function waitForIssueTerminal(api, issueId, timeoutMs, pollMs, onProgress) {
+async function waitForIssueTerminal(api, issueId, timeoutMs, pollMs, onProgress, isCancelled) {
   const deadline = Date.now() + Math.max(1000, Number(timeoutMs || 0));
   while (Date.now() < deadline) {
+    if (typeof isCancelled === "function" && isCancelled()) {
+      const error = new Error("Multitask was cancelled.");
+      error.code = "paperclip_multitask_cancelled";
+      throw error;
+    }
     const issue = await api.getIssue(issueId);
     if (typeof onProgress === "function") onProgress(issue);
     const status = String(issue && issue.status || "");
