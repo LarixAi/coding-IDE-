@@ -29,7 +29,7 @@ const ROLE_POLICIES = Object.freeze({
     mode: "ask",
     deniedTools: [],
     instructions: [
-      "Act as the software architect and technical planner."
+      "Act as the software architect and technical planner.",
       "Do not edit source files or implement the task yourself.",
       "Break complex work into bounded implementation, research, test, and review responsibilities.",
       "Identify dependencies, risks, acceptance criteria, and the next concrete owner.",
