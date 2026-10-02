@@ -87,7 +87,7 @@ function renderAgents(state) {
   const agents = paperclip.team && Array.isArray(paperclip.team.agents) ? paperclip.team.agents : [];
   return [
     '<div class="hero-card"><span class="eyebrow">Team architecture</span><h3>Paperclip coordinates. CodeMe executes.</h3>',
-    '<p>The selected CodeMe model remains unchanged while Paperclip delegates CTO, Developer, Test and Reviewer phases.</p></div>',
+    '<p>The selected CodeMe model remains unchanged while Paperclip coordinates Product Manager, Software Architect, Research, Developer, Test and Reviewer roles.</p></div>',
     '<div class="card"><h3>Configured team</h3>',
     agents.length ? agents.map((agent) => [
       '<div class="list-row"><span><strong>' + escapeHtml(agent.label || agent.role) + '</strong><small>' + escapeHtml((agent.role || "") + " · " + (agent.mode || "")) + '</small></span>',
