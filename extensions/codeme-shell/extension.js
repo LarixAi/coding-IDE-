@@ -17,6 +17,7 @@ const { wrapToolCallCompat } = require("./model-tool-compat");
 const { wrapResponsePolicy } = require("./model-response-policy");
 const { PaperclipBridge } = require("./paperclip-bridge");
 const { DebugToolProvider } = require("./debug-tool-provider");
+const { VerificationToolProvider } = require("./verification-tool-provider");
 const { MultitaskController } = require("./multitask-controller");
 const { SettingsPanel } = require("./settings-panel");
 
@@ -854,6 +855,9 @@ class ComposerViewProvider {
         const composerMode = this.session && this.session.composerMode;
         if (mode === "controlled" && composerMode === "debug") {
           return new ToolRegistry(new DebugToolProvider(host));
+        }
+        if (mode === "controlled" && composerMode === "test") {
+          return new ToolRegistry(new VerificationToolProvider(host));
         }
         return new ToolRegistry(
           mode === "controlled" ? new ControlledToolProvider(host) : new ReadOnlyToolProvider(host),
