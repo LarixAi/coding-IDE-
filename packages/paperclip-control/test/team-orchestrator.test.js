@@ -104,6 +104,9 @@ function fakeTeamApi(options = {}) {
 
 async function main() {
   assert.strictEqual(includesMarker("result: TEST: PASS", "test: pass"), true);
+  assert.strictEqual(includesMarker("TEST:PASS", "TEST: PASS"), true);
+  assert.strictEqual(includesMarker("REVIEW:APPROVED", "REVIEW: APPROVED"), true);
+  assert.strictEqual(includesMarker("REVIEW :   APPROVED", "REVIEW: APPROVED"), true);
   assert.strictEqual(includesMarker("TEST: FAIL", "TEST: PASS"), false);
   assert.strictEqual(
     latestCommentText({
