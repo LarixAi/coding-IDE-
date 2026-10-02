@@ -16,6 +16,7 @@ const { N8nIntegration } = require("./n8n-integration");
 const { wrapToolCallCompat } = require("./model-tool-compat");
 const { wrapResponsePolicy } = require("./model-response-policy");
 const { PaperclipBridge } = require("./paperclip-bridge");
+const { SettingsPanel } = require("./settings-panel");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -116,6 +117,34 @@ function activate(context) {
   };
   refreshHub();
 
+  const settingsPanel = new SettingsPanel(context, {
+    getState: (scope) => buildSettingsState({
+      scope,
+      composer,
+      paperclip,
+      state,
+    }),
+    updateN8n: async (patch) => {
+      const next = patch && typeof patch === "object" ? { ...patch } : {};
+      if (typeof next.allowImageUpload === "boolean") {
+        await vscode.workspace.getConfiguration("codeme.n8n").update(
+          "allowImageUpload",
+          next.allowImageUpload,
+          vscode.ConfigurationTarget.Global,
+        );
+        delete next.allowImageUpload;
+      }
+      await composer.n8n.update(next);
+      composer.syncExternalPermissions();
+      await refreshHub();
+      return composer.n8n.snapshot();
+    },
+    onSettingsChanged: async () => {
+      composer.post(composer.session.snapshot());
+    },
+  });
+  context.subscriptions.push(settingsPanel);
+
   const modelTimer = setInterval(refreshModels, 15000);
   const hubTimer = setInterval(refreshHub, 15000);
   context.subscriptions.push(
@@ -129,6 +158,7 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("codeme.ask", () => vscode.commands.executeCommand("codeme.agent.focus")),
     vscode.commands.registerCommand("codeme.attach", () => composer.pickFiles()),
+    vscode.commands.registerCommand("codeme.openSettings", () => settingsPanel.open()),
     vscode.commands.registerCommand("codeme.hideStart", () => emptyEditor.suppress(1500)),
   );
 }
@@ -137,6 +167,123 @@ function applyHub(item, state) {
   const hub = state.hub || {};
   item.text = hub.connected ? "$(radio-tower) hub" : "$(radio-tower) hub offline";
   item.tooltip = hub.detail || "";
+}
+
+async function probePaperclipHealth(paperclip) {
+  const status = paperclip && typeof paperclip.status === "function"
+    ? paperclip.status()
+    : { enabled: false, configured: false, started: false, reason: "unavailable" };
+
+  if (!status.enabled) {
+    return { status: "offline", detail: "Paperclip is disabled." };
+  }
+  if (!status.started) {
+    return { status: "offline", detail: "CodeMe Paperclip bridge is not running." };
+  }
+  if (!status.configured) {
+    return {
+      status: "degraded",
+      detail: "Paperclip bridge is running, but credentials or agent configuration are incomplete.",
+    };
+  }
+
+  try {
+    if (paperclip.api && typeof paperclip.api.request === "function") {
+      await paperclip.api.request("GET", "/api/agents/me");
+    }
+    const team = status.team || {};
+    const agents = Array.isArray(team.agents) ? team.agents : [];
+    const missing = agents.filter((agent) => !agent.configured);
+    if (missing.length) {
+      return {
+        status: "degraded",
+        detail: "Paperclip control plane is reachable, but " + missing.length + " team agent(s) are not configured.",
+      };
+    }
+    return {
+      status: "online",
+      detail: "Bridge, control plane and configured team are ready.",
+    };
+  } catch (error) {
+    return {
+      status: "degraded",
+      detail: "CodeMe bridge is running, but the Paperclip control plane is unavailable: "
+        + (error instanceof Error ? error.message : String(error)),
+    };
+  }
+}
+
+function modelHealth(snapshot) {
+  const sources = Array.isArray(snapshot && snapshot.modelSources) ? snapshot.modelSources : [];
+  const available = sources.filter((source) => source && source.available);
+  if (snapshot && snapshot.selected && available.length) {
+    return {
+      status: "online",
+      detail: String(snapshot.selected.label || snapshot.selected.id || "Selected model") + " is ready.",
+    };
+  }
+  if (available.length) {
+    return {
+      status: "degraded",
+      detail: "Model server is reachable, but no model is selected.",
+    };
+  }
+  return {
+    status: "offline",
+    detail: sources.length
+      ? sources.map((source) => source.label + ": " + (source.message || "unavailable")).join(" · ")
+      : "No model server has been discovered.",
+  };
+}
+
+async function buildSettingsState({ scope, composer, paperclip, state }) {
+  const snapshot = composer.session.snapshot();
+  let n8nStatus;
+  try {
+    n8nStatus = await composer.n8n.connectionStatus();
+  } catch (error) {
+    n8nStatus = {
+      connected: false,
+      error: { message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+  await composer.n8n.refreshTokenFlag();
+  const n8n = composer.n8n.snapshot();
+  const paperclipStatus = paperclip.status();
+  const paperclipHealth = await probePaperclipHealth(paperclip);
+  const root = workspaceRoot();
+
+  return {
+    scope,
+    workspace: {
+      name: root ? path.basename(root) : "",
+      path: root || "",
+    },
+    health: {
+      paperclip: paperclipHealth,
+      n8n: {
+        status: n8nStatus && n8nStatus.connected ? "online" : "offline",
+        detail: n8nStatus && n8nStatus.connected
+          ? "n8n MCP connected with " + String(n8nStatus.toolCount || 0) + " discovered tool(s)."
+          : (n8nStatus && n8nStatus.error && n8nStatus.error.message) || "n8n MCP is unavailable.",
+      },
+      model: modelHealth(snapshot),
+    },
+    models: {
+      selected: snapshot.selected || null,
+      sources: Array.isArray(snapshot.modelSources) ? snapshot.modelSources : [],
+      available: Array.isArray(snapshot.models) ? snapshot.models : [],
+    },
+    n8n,
+    paperclip: {
+      ...paperclipStatus,
+      apiUrl: paperclip.api && paperclip.api.baseUrl || "",
+      bridgeUrl: paperclipStatus.host && paperclipStatus.port
+        ? "http://" + paperclipStatus.host + ":" + paperclipStatus.port
+        : "",
+    },
+    hub: state.hub || {},
+  };
 }
 
 async function applyPreferredSettings() {
