@@ -287,7 +287,7 @@ function renderSettings(state, nonce) {
     + '@media(max-width:760px){.shell{grid-template-columns:190px minmax(0,1fr)}.health-grid{grid-template-columns:1fr}.content{padding:20px 16px}}'
     + '</style></head><body><div class="shell"><aside class="sidebar"><div class="side-head"><h1>CodeMe Settings</h1><input id="search" class="search" placeholder="Search settings..." /><select id="scope" class="scope"><option value="global"' + (scope === "global" ? " selected" : "") + '>Global</option><option value="workspace"' + (scope === "workspace" ? " selected" : "") + '>Workspace: ' + escapeHtml((state.workspace && state.workspace.name) || "current") + "</option></select></div><nav class=\"nav\">" + navHtml + '</nav></aside>'
     + '<main class="main"><div class="topbar"><span id="scope-label">' + escapeHtml(scope === "workspace" ? "Workspace overrides" : "Global settings") + '</span><span class="saved" id="saved">● Saved</span></div><div class="content">' + panels + "</div></main></div>"
-    + '<script nonce="' + escapeHtml(nonce) + '">const vscode=acquireVsCodeApi();const initial=' + safeJson(state) + ';'
+    + '<script nonce="' + escapeHtml(nonce) + '">const vscode=acquireVsCodeApi();'
     + 'const nav=[...document.querySelectorAll(".nav-item")],panels=[...document.querySelectorAll(".panel")],saved=document.getElementById("saved");let scope=document.getElementById("scope").value;'
     + 'function openPanel(id){nav.forEach(b=>b.classList.toggle("active",b.dataset.panel===id));panels.forEach(p=>p.classList.toggle("active",p.id==="panel-"+id));vscode.setState({panel:id,scope});}'
     + 'nav.forEach(b=>b.addEventListener("click",()=>openPanel(b.dataset.panel)));const prior=vscode.getState();if(prior&&prior.panel)openPanel(prior.panel);'
