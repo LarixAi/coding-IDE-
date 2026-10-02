@@ -1,0 +1,31 @@
+name: CodeMe Settings UI
+
+on:
+  pull_request:
+    paths:
+      - "extensions/codeme-shell/settings-*.js"
+      - "extensions/codeme-shell/extension.js"
+      - "extensions/codeme-shell/package.json"
+      - "extensions/codeme-shell/test/settings-*.test.js"
+      - ".github/workflows/codeme-settings.yml"
+  workflow_dispatch:
+
+jobs:
+  settings-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Syntax check settings extension
+        run: |
+          node --check extensions/codeme-shell/settings-store.js
+          node --check extensions/codeme-shell/settings-view.js
+          node --check extensions/codeme-shell/settings-panel.js
+          node --check extensions/codeme-shell/extension.js
+      - name: Run settings tests
+        run: |
+          node extensions/codeme-shell/test/settings-store.test.js
+          node extensions/codeme-shell/test/settings-view.test.js
+          node extensions/codeme-shell/test/panel.test.js
