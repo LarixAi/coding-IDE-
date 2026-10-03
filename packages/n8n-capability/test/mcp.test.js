@@ -7,6 +7,7 @@ const {
   classifyN8nTool,
   buildImageArguments,
   safeMcpContent,
+  loopbackCandidates,
 } = require("../mcp");
 
 function listen(handler) {
@@ -69,6 +70,15 @@ function runMetadataTests() {
 
 async function main() {
   runMetadataTests();
+
+  assert.deepStrictEqual(loopbackCandidates("http://127.0.0.1:5678/mcp-server/http"), [
+    "http://127.0.0.1:5678/mcp-server/http",
+    "http://localhost:5678/mcp-server/http",
+  ]);
+  assert.deepStrictEqual(loopbackCandidates("http://localhost:5678/mcp-server/http"), [
+    "http://localhost:5678/mcp-server/http",
+    "http://127.0.0.1:5678/mcp-server/http",
+  ]);
 
   assert.strictEqual(wireName("Research Docs / Current"), "mcp_n8n_Research_Docs___Current");
   assert.deepStrictEqual(

@@ -16,6 +16,21 @@ function defaultMcpUrl() {
   return base + "/mcp-server/http";
 }
 
+function loopbackCandidates(value) {
+  const original = String(value || "").trim();
+  if (!original) return [];
+  const out = [original];
+  try {
+    const parsed = new URL(original);
+    if (parsed.hostname === "127.0.0.1") parsed.hostname = "localhost";
+    else if (parsed.hostname === "localhost") parsed.hostname = "127.0.0.1";
+    else return out;
+    const alternate = parsed.toString();
+    if (!out.includes(alternate)) out.push(alternate);
+  } catch {}
+  return out;
+}
+
 function wireName(name) {
   return ("mcp_n8n_" + String(name || "").replace(/[^a-zA-Z0-9_-]/g, "_")).slice(0, 64);
 }
@@ -216,37 +231,51 @@ class N8nMcpProvider {
     if (this.session) headers["mcp-session-id"] = this.session;
 
     let response;
-    try {
-      response = await fetch(this.url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(
-          notify
-            ? { jsonrpc: "2.0", method, params }
-            : { jsonrpc: "2.0", id, method, params },
-        ),
-        signal,
-      });
-    } catch (error) {
-      if (options.signal && options.signal.aborted) {
-        throw Object.assign(new Error("n8n MCP call cancelled"), { code: "cancelled" });
+    let lastError = null;
+    const body = JSON.stringify(
+      notify
+        ? { jsonrpc: "2.0", method, params }
+        : { jsonrpc: "2.0", id, method, params },
+    );
+    for (const candidate of loopbackCandidates(this.url)) {
+      try {
+        response = await fetch(candidate, {
+          method: "POST",
+          headers,
+          body,
+          signal,
+        });
+        if (candidate !== this.url) {
+          this.url = candidate;
+          this.ready = false;
+          this.session = "";
+        }
+        break;
+      } catch (error) {
+        lastError = error;
+        if (options.signal && options.signal.aborted) {
+          throw Object.assign(new Error("n8n MCP call cancelled"), { code: "cancelled" });
+        }
+        if (timeoutSignal.aborted) {
+          throw Object.assign(new Error("n8n MCP request timed out"), { code: "timeout" });
+        }
       }
-      if (timeoutSignal.aborted) {
-        throw Object.assign(new Error("n8n MCP request timed out"), { code: "timeout" });
-      }
-      throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { code: "unavailable" });
+    }
+    if (!response) {
+      const detail = lastError instanceof Error ? lastError.message : String(lastError || "fetch failed");
+      throw Object.assign(new Error("n8n MCP could not be reached at " + this.url + ": " + detail), { code: "unavailable" });
     }
 
     const sid = response.headers.get("mcp-session-id");
     if (sid) this.session = sid;
-    const body = await response.text();
+    const responseBody = await response.text();
     if (!response.ok) {
-      const detail = body.trim().slice(0, 240);
+      const detail = responseBody.trim().slice(0, 240);
       const message = "n8n MCP " + method + " returned HTTP " + response.status + (detail ? ": " + detail : "");
       throw Object.assign(new Error(message), { code: response.status === 401 || response.status === 403 ? "auth_required" : "http_error" });
     }
     if (notify) return null;
-    const parsed = parseMcpBody(body, id);
+    const parsed = parseMcpBody(responseBody, id);
     if (!parsed) throw Object.assign(new Error("n8n MCP " + method + " returned no JSON-RPC response"), { code: "malformed_response" });
     if (parsed.error) {
       throw Object.assign(
@@ -500,6 +529,7 @@ module.exports = {
   MAX_MCP_IMAGE_BYTES,
   N8nMcpProvider,
   defaultMcpUrl,
+  loopbackCandidates,
   wireName,
   parseMcpBody,
   categoryForTool,

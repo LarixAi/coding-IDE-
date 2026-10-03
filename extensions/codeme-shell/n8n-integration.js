@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { N8nMcpProvider, defaultMcpUrl } = require("../../packages/n8n-capability/mcp");
+const { N8nMcpProvider, defaultMcpUrl, loopbackCandidates } = require("../../packages/n8n-capability/mcp");
 const { analyzeImages, safeAttachmentPath } = require("./vision-integration");
 
 const SETTINGS_KEY = "codeme.n8n.settings";
@@ -27,6 +27,74 @@ function publicDefaults() {
     enhanceWebhookUrl: configuredEnhanceUrl,
     enhanceTimeoutMs,
   };
+}
+
+function n8nServiceCandidates(settings = {}) {
+  const values = [
+    process.env.CODEME_N8N_URL,
+    settings.enhanceWebhookUrl,
+    settings.mcpUrl,
+  ].filter(Boolean);
+  const out = [];
+  for (const value of values) {
+    try {
+      const parsed = new URL(String(value).trim());
+      const origin = parsed.origin;
+      for (const candidate of loopbackCandidates(origin)) {
+        const normalized = String(candidate || "").replace(/\/$/, "");
+        if (normalized && !out.includes(normalized)) out.push(normalized);
+      }
+    } catch {}
+  }
+  if (!out.length) out.push("http://127.0.0.1:5678", "http://localhost:5678");
+  return out;
+}
+
+async function probeN8nService(settings = {}, timeoutMs = 2500) {
+  let lastError = null;
+  const candidates = n8nServiceCandidates(settings);
+  for (const baseUrl of candidates) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(baseUrl + "/healthz", {
+        method: "GET",
+        headers: { accept: "application/json, text/plain" },
+        signal: controller.signal,
+      });
+      const text = await response.text();
+      if (response.ok) {
+        return { connected: true, endpoint: baseUrl, statusCode: response.status, detail: text.slice(0, 240) };
+      }
+      lastError = new Error("n8n health returned HTTP " + response.status);
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return {
+    connected: false,
+    endpoint: candidates[0] || "",
+    error: {
+      code: lastError && lastError.name === "AbortError" ? "timeout" : "unavailable",
+      message: lastError instanceof Error ? lastError.message : String(lastError || "n8n is unreachable"),
+    },
+  };
+}
+
+async function fetchWithLoopbackFallback(url, init) {
+  let lastError = null;
+  for (const candidate of loopbackCandidates(url)) {
+    try {
+      const response = await fetch(candidate, init);
+      return { response, url: candidate };
+    } catch (error) {
+      lastError = error;
+      if (init && init.signal && init.signal.aborted) throw error;
+    }
+  }
+  throw lastError || new Error("fetch failed");
 }
 
 function recentConversation(history) {
@@ -334,8 +402,25 @@ class N8nIntegration {
   }
 
   async connectionStatus() {
+    const settings=this.settings();
+    const service=await probeN8nService(settings);
     const provider=await this.getProvider();
-    if (!provider) return {connected:false,endpoint:this.settings().mcpUrl,toolCount:0,tools:[],toolRecords:[],categories:{},imageUploadAllowed:this.runtime.allowImageUpload,actionsAllowed:false,error:{code:"disabled",message:"n8n MCP is disabled"}};
+    if (!provider) {
+      return {
+        connected:false,
+        serviceConnected:Boolean(service.connected),
+        serviceEndpoint:service.endpoint||"",
+        endpoint:settings.mcpUrl,
+        toolCount:0,
+        tools:[],
+        toolRecords:[],
+        categories:{},
+        imageUploadAllowed:this.runtime.allowImageUpload,
+        actionsAllowed:false,
+        error:{code:"disabled",message:"n8n MCP is disabled"},
+        serviceError:service.error||null,
+      };
+    }
     try {
       const status=await provider.connectionStatus();
       this.toolCount=status.toolCount||0;
@@ -343,13 +428,34 @@ class N8nIntegration {
       this.toolNames=Array.isArray(status.tools)?status.tools.slice():[];
       this.categories=status.categories&&typeof status.categories==="object"?{...status.categories}:{};
       this.safeToolCount=this.toolRecords.filter((item)=>!item.sideEffect).length;
-      this.lastError="";
-      return {...status,actionsAllowed:false,actionToolsLocked:true};
+      this.lastError=status.connected?"":(status.error&&status.error.message||"");
+      return {
+        ...status,
+        serviceConnected:Boolean(service.connected),
+        serviceEndpoint:service.endpoint||"",
+        serviceError:service.error||null,
+        actionsAllowed:false,
+        actionToolsLocked:true,
+      };
     } catch (error) {
-      return {connected:false,endpoint:this.settings().mcpUrl,toolCount:0,tools:[],toolRecords:[],categories:{},imageUploadAllowed:this.runtime.allowImageUpload,actionsAllowed:false,error:{code:error&&error.code?String(error.code):"unavailable",message:error instanceof Error?error.message:String(error)}};
+      const message=error instanceof Error?error.message:String(error);
+      this.lastError=message;
+      return {
+        connected:false,
+        serviceConnected:Boolean(service.connected),
+        serviceEndpoint:service.endpoint||"",
+        endpoint:settings.mcpUrl,
+        toolCount:0,
+        tools:[],
+        toolRecords:[],
+        categories:{},
+        imageUploadAllowed:this.runtime.allowImageUpload,
+        actionsAllowed:false,
+        serviceError:service.error||null,
+        error:{code:error&&error.code?String(error.code):"unavailable",message},
+      };
     }
   }
-
   async test() {
     const status=await this.connectionStatus();
     if (!status.connected) throw Object.assign(new Error(status.error&&status.error.message||"n8n MCP unavailable"),{code:status.error&&status.error.code||"unavailable"});
@@ -385,7 +491,7 @@ class N8nIntegration {
     const timeoutMs = Number(options.timeoutMs || settings.enhanceTimeoutMs || 200000);
     const request = timedSignal(options.signal, timeoutMs);
     try {
-      response = await fetch(url, {
+      const sent = await fetchWithLoopbackFallback(url, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -409,6 +515,7 @@ class N8nIntegration {
         }),
         signal: request.signal,
       });
+      response = sent.response;
     } catch (error) {
       const message = request.didTimeout()
         ? "Prompt enhancement timed out after " + Math.ceil(timeoutMs / 1000) + " seconds."
@@ -544,4 +651,4 @@ function listWorkspaceHints(root) {
   return found;
 }
 
-module.exports={N8nIntegration,listWorkspaceHints,localEnhance,attachmentRefs,parseEnhancementResponse,timedSignal};
+module.exports={N8nIntegration,listWorkspaceHints,localEnhance,attachmentRefs,parseEnhancementResponse,timedSignal,n8nServiceCandidates,probeN8nService,fetchWithLoopbackFallback};
