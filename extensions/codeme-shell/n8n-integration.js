@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { N8nMcpProvider, defaultMcpUrl } = require("../../packages/n8n-capability/mcp");
+const { N8nMcpProvider, defaultMcpUrl, loopbackCandidates } = require("../../packages/n8n-capability/mcp");
 const { analyzeImages, safeAttachmentPath } = require("./vision-integration");
 
 const SETTINGS_KEY = "codeme.n8n.settings";
@@ -27,6 +27,74 @@ function publicDefaults() {
     enhanceWebhookUrl: configuredEnhanceUrl,
     enhanceTimeoutMs,
   };
+}
+
+function n8nServiceCandidates(settings = {}) {
+  const values = [
+    process.env.CODEME_N8N_URL,
+    settings.enhanceWebhookUrl,
+    settings.mcpUrl,
+  ].filter(Boolean);
+  const out = [];
+  for (const value of values) {
+    try {
+      const parsed = new URL(String(value).trim());
+      const origin = parsed.origin;
+      for (const candidate of loopbackCandidates(origin)) {
+        const normalized = String(candidate || "").replace(/\/$/, "");
+        if (normalized && !out.includes(normalized)) out.push(normalized);
+      }
+    } catch {}
+  }
+  if (!out.length) out.push("http://127.0.0.1:5678", "http://localhost:5678");
+  return out;
+}
+
+async function probeN8nService(settings = {}, timeoutMs = 2500) {
+  let lastError = null;
+  const candidates = n8nServiceCandidates(settings);
+  for (const baseUrl of candidates) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(baseUrl + "/healthz", {
+        method: "GET",
+        headers: { accept: "application/json, text/plain" },
+        signal: controller.signal,
+      });
+      const text = await response.text();
+      if (response.ok) {
+        return { connected: true, endpoint: baseUrl, statusCode: response.status, detail: text.slice(0, 240) };
+      }
+      lastError = new Error("n8n health returned HTTP " + response.status);
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return {
+    connected: false,
+    endpoint: candidates[0] || "",
+    error: {
+      code: lastError && lastError.name === "AbortError" ? "timeout" : "unavailable",
+      message: lastError instanceof Error ? lastError.message : String(lastError || "n8n is unreachable"),
+    },
+  };
+}
+
+async function fetchWithLoopbackFallback(url, init) {
+  let lastError = null;
+  for (const candidate of loopbackCandidates(url)) {
+    try {
+      const response = await fetch(candidate, init);
+      return { response, url: candidate };
+    } catch (error) {
+      lastError = error;
+      if (init && init.signal && init.signal.aborted) throw error;
+    }
+  }
+  throw lastError || new Error("fetch failed");
 }
 
 function recentConversation(history) {
