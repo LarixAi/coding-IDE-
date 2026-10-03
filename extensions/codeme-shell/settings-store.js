@@ -31,6 +31,9 @@ const DEFAULTS = Object.freeze({
     projectKnowledgeEnabled: true,
     reusableMemoryEnabled: true,
   },
+  skills: {
+    enabled: true,
+  },
   advanced: {
     experimentalFeatures: false,
   },
