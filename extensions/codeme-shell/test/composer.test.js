@@ -592,6 +592,8 @@ async function main() {
   assert.strictEqual(isProgressTalk("The layout now uses a tighter header and a two-column showroom."), false);
   assert.strictEqual(looksLikeWorkspaceEdit("make a better website layout"), true);
   assert.strictEqual(looksLikeWorkspaceEdit("implement the repair and verify with tests"), true);
+  assert.strictEqual(looksLikeWorkspaceEdit("can you fix the website the css is not working on all pages"), true);
+  assert.strictEqual(looksLikeWorkspaceEdit("build me a responsive dealership website"), true);
   const inventoryText = finalAssistantText({
     lifecycle: "completed",
     taskClass: "inspect",
