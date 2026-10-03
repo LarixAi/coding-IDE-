@@ -177,6 +177,14 @@ function installPromptPaperclipHandoff(options = {}) {
         return result;
       }
 
+      if (String(this.composerMode || "").toLowerCase() === "code" && isWebsiteBuildGoal(routeGoal)) {
+        const baseGoal = String(optionsForRun.goalOverride || originalGoal).trim();
+        return originalSubmit.call(this, text, epoch, {
+          ...optionsForRun,
+          goalOverride: [baseGoal, websiteQualityContract()].join("\n\n"),
+        });
+      }
+
       return originalSubmit.call(this, text, epoch, optionsForRun);
     }
 
