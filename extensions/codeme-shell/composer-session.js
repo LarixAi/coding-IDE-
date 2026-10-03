@@ -242,7 +242,7 @@ class ComposerSession {
       attachments: this.attachments.map((item) => ({ ...item })),
       conversationId: this.conversationId,
       conversations: this.historyStore ? this.historyStore.list(this.root) : [],
-      n8n: this.n8n && typeof this.n8n.snapshot === "function" ? this.n8n.snapshot() : null,
+      n8n: this.n8n && typeof this.n8n.snapshot === "function" ? this.n8n.snapshot() : null,\n      runLedger: this.runId && this.store && typeof this.store.loadLedger === "function"\n        ? this.store.loadLedger(this.runId)\n        : null,
     };
   }
 
