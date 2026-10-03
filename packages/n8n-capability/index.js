@@ -20,6 +20,10 @@ class N8nCapabilityProvider {
     }
     this.baseUrl = String(options.baseUrl || process.env.CODEME_N8N_URL || "http://127.0.0.1:5678").replace(/\/$/, "");
     this.token = options.token || process.env.CODEME_N8N_TOKEN || "";
+    this.gatewayPath = normalizeGatewayPath(options.gatewayPath !== undefined ? options.gatewayPath : process.env.CODEME_N8N_GATEWAY_PATH);
+    this.gatewayCapabilities = normalizeGatewayCapabilities(
+      options.gatewayCapabilities !== undefined ? options.gatewayCapabilities : process.env.CODEME_N8N_GATEWAY_CAPABILITIES,
+    );
     this.retries = options.retries ?? 2;
     this.retryDelayMs = options.retryDelayMs ?? 200;
     this.logs = [];
@@ -62,7 +66,11 @@ class N8nCapabilityProvider {
         const name = typeof item === "string" ? item : item && item.name;
         if (!name || !Object.prototype.hasOwnProperty.call(ROUTES, name)) continue;
         const raw = typeof item === "string" ? { name, provider: "n8n" } : { ...item, provider: item.provider || "n8n" };
-        if (typeof raw.route === "string" && raw.route !== ROUTES[name]) continue;
+        if (typeof raw.route === "string") {
+          const directRoute = ROUTES[name];
+          const gatewayRoute = this.gatewayPath && this.gatewayCapabilities.has(name) ? this.gatewayPath : "";
+          if (raw.route !== directRoute && (!gatewayRoute || raw.route !== gatewayRoute)) continue;
+        }
         registry.register(raw);
       }
       return registry.list();
@@ -78,7 +86,9 @@ class N8nCapabilityProvider {
       this.record({ event: "invoke", requestId: request && request.requestId, runId: request && request.runId, capability: request && request.capability, status: "error", code: invalid.code });
       return finish(request, "error", null, invalid, started);
     }
-    const pathname = ROUTES[request.capability];
+    const pathname = this.gatewayPath && this.gatewayCapabilities.has(request.capability)
+      ? this.gatewayPath
+      : ROUTES[request.capability];
     if (!pathname) {
       const error = { code: "capability_unavailable", message: "This capability is not available" };
       this.record({ event: "invoke", requestId: request.requestId, runId: request.runId, capability: request.capability, status: "unavailable", code: error.code });
@@ -177,6 +187,24 @@ class N8nCapabilityProvider {
     if (this.token) out = out.split(this.token).join("[redacted]");
     return out;
   }
+}
+
+
+function normalizeGatewayPath(value) {
+  const path = String(value || "").trim();
+  if (!path) return "";
+  return path.startsWith("/") ? path : "/" + path;
+}
+
+function normalizeGatewayCapabilities(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || "research.problem").split(",");
+  return new Set(
+    source
+      .map((item) => String(item || "").trim())
+      .filter((name) => Object.prototype.hasOwnProperty.call(ROUTES, name)),
+  );
 }
 
 function finish(request, status, data, error, started) {
