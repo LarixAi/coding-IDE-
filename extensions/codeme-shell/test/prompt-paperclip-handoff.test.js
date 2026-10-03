@@ -168,6 +168,20 @@ async function main() {
     "Change only the heading to Hello and verify it.",
   );
 
+  const directWebsiteSession = new composerModule.ComposerSession(null);
+  const directWebsite = await directWebsiteSession.submit(
+    "Create a responsive website for a local dealership with a strong book-a-viewing CTA.",
+    3,
+  );
+  assert.strictEqual(directWebsite.direct, true);
+  assert.strictEqual(directWebsiteSession.originalCalls.length, 1);
+  assert.match(directWebsiteSession.originalCalls[0].options.goalOverride, /WEBSITE QUALITY CONTRACT/);
+  assert.match(directWebsiteSession.originalCalls[0].options.goalOverride, /CSS strategy/i);
+  assert.match(directWebsiteSession.originalCalls[0].options.goalOverride, /primary CTA/i);
+  assert.match(directWebsiteSession.originalCalls[0].options.goalOverride, /Product Manager angle/i);
+  assert.match(directWebsiteSession.originalCalls[0].options.goalOverride, /Software Architect angle/i);
+  assert.match(directWebsiteSession.originalCalls[0].options.goalOverride, /Developer angle/i);
+
   let recursiveEnhanceCalls = 0;
   const assignedSession = new composerModule.ComposerSession({
     async enhanceForSubmit() {
@@ -182,7 +196,7 @@ async function main() {
   assert.strictEqual(assignedSession.originalCalls[0].options.skipEnhancement, true);
   assert.strictEqual(assignedSession.originalCalls[0].options.skipPaperclip, true);
 
-  console.log("ok prompt.enrich -> Paperclip handoff, simple-task bypass, trace propagation, and recursion guard");
+  console.log("ok prompt.enrich -> Paperclip handoff, website quality injection, simple-task bypass, trace propagation, and recursion guard");
 }
 
 main().catch((error) => {
