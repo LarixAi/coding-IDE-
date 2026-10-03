@@ -1,3 +1,14 @@
+const {
+  DEFAULT_RECONNECT_DELAYS_MS,
+  compactMessages,
+  isTimeoutError,
+  isConnectionLoss,
+  checkpointState,
+} = require("./pipeline-recovery");
+
+const CODE_TURN_DEADLINE_MS = 300000;
+const NORMAL_TURN_DEADLINE_MS = 180000;
+
 let fallbackCallCounter = 0;
 
 function nextCallId(name) {
@@ -205,11 +216,14 @@ async function runPipeline(options) {
   const maxTurns = options.maxTurns ?? 20;
   const maxRepairRounds = options.maxRepairRounds ?? 2;
   const maxToolCallsPerTurn = options.maxToolCallsPerTurn ?? 8;
-  const turnDeadlineMs = options.turnDeadlineMs ?? 240000;
+  const turnDeadlineMs = options.turnDeadlineMs ?? NORMAL_TURN_DEADLINE_MS;
+  const retryDeadlineMs = options.retryDeadlineMs ?? turnDeadlineMs;
   const wallClockMs = options.wallClockMs ?? 45 * 60 * 1000;
   const onEvent = options.onEvent || (() => {});
   const started = Date.now();
-  const messages = (options.messages || []).map((message) => ({ ...message }));
+  const resumed = options.resumeFrom && typeof options.resumeFrom === "object" ? options.resumeFrom : null;
+  const messages = (resumed && Array.isArray(resumed.messages) ? resumed.messages : (options.messages || []))
+    .map((message) => ({ ...message }));
   const tools = Array.isArray(options.tools) ? options.tools : [];
   const knownNames = new Set(tools.map((tool) => tool.name));
   const readOnlyMode = options.mode === "read_only";
@@ -219,12 +233,31 @@ async function runPipeline(options) {
   let answerOnlyPending = false;
   let answerOnlyReason = "";
   let readOnlyEvidenceCount = 0;
-  let turn = 0;
+  let turn = resumed ? Number(resumed.turn || 0) : 0;
   let idleTurns = 0;
-  let repairs = 0;
-  let toolCallCount = 0;
-  let finalText = "";
+  let repairs = resumed ? Number(resumed.repairs || 0) : 0;
+  let toolCallCount = resumed ? Number(resumed.toolCallCount || 0) : 0;
+  let finalText = resumed ? String(resumed.finalText || "") : "";
   let lastVerify = null;
+  let lastCheckpoint = resumed ? { ...resumed, messages: messages.map((message) => ({ ...message })) } : null;
+
+  const saveCheckpoint = () => {
+    lastCheckpoint = checkpointState({ turn, messages, toolCallCount, repairs, finalText });
+    if (typeof options.onCheckpoint === "function") options.onCheckpoint(lastCheckpoint);
+    return lastCheckpoint;
+  };
+
+  const sleep = (ms) => new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, Math.max(0, Number(ms) || 0));
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(Object.assign(new Error("model call cancelled"), { code: "cancelled" }));
+    };
+    if (options.signal && options.signal.aborted) return onAbort();
+    if (options.signal) options.signal.addEventListener("abort", onAbort, { once: true });
+  }).finally(() => {
+    // listener is one-shot and harmless if already removed by AbortSignal
+  });
 
   const finish = (reason, text) => {
     const answer = String(text || finalText || "Done.").trim() || "Done.";
@@ -236,6 +269,7 @@ async function runPipeline(options) {
       messages,
       verify: lastVerify,
       toolCallCount,
+      ...(reason === "model_offline" || reason === "timeout" ? { checkpoint: lastCheckpoint || saveCheckpoint() } : {}),
     };
   };
 
@@ -275,32 +309,108 @@ async function runPipeline(options) {
       reply = await withDeadline(options.signal, turnDeadlineMs, requestModel);
     } catch (error) {
       if (options.signal && options.signal.aborted) return finish("cancelled", finalText);
-      const retryAsAnswerOnly = readOnlyMode && (answerOnlyPending || readOnlyEvidenceCount > 0);
-      onEvent({
-        type: "model_retry",
-        turn,
-        reason: error instanceof Error ? error.message : String(error),
-        ...(retryAsAnswerOnly ? { mode: "answer_only" } : {}),
-      });
-      if (retryAsAnswerOnly) {
-        answerOnlyPending = true;
-        answerOnlyReason = "The previous model request timed out after workspace evidence had already been collected.";
-        turnTools = [];
-        turnKnownNames = new Set();
-        turnMessages = compactReadOnlyAnswerMessages(messages, options.goal, answerOnlyReason);
+
+      if (isTimeoutError(error)) {
+        const retryAsAnswerOnly = readOnlyMode && (answerOnlyPending || readOnlyEvidenceCount > 0);
+        saveCheckpoint();
+        const compacted = compactMessages(messages);
+        messages.splice(0, messages.length, ...compacted.messages);
+        onEvent({
+          type: "model_retry",
+          turn,
+          reason: error instanceof Error ? error.message : String(error),
+          ...(retryAsAnswerOnly ? { mode: "answer_only" } : {}),
+        });
+        onEvent({
+          type: "model_timeout",
+          turn,
+          diagnostics: {
+            model: String(options.model || ""),
+            turn,
+            deadlineMs: turnDeadlineMs,
+            retryDeadlineMs,
+            filesRead: compacted.filesRead,
+            filesChanged: compacted.filesChanged,
+            compaction: {
+              beforeChars: compacted.beforeChars,
+              afterChars: compacted.afterChars,
+              summarized: compacted.summarized,
+            },
+            retry: 1,
+            maxRetries: 1,
+            outcome: "retrying",
+          },
+        });
+
+        if (retryAsAnswerOnly) {
+          answerOnlyPending = true;
+          answerOnlyReason = "The previous model request timed out after workspace evidence had already been collected.";
+          turnTools = [];
+          turnKnownNames = new Set();
+          turnMessages = compactReadOnlyAnswerMessages(messages, options.goal, answerOnlyReason);
+        } else {
+          turnMessages = messages;
+        }
+
+        try {
+          reply = await withDeadline(
+            options.signal,
+            retryDeadlineMs,
+            (signal) => options.provider.complete({
+              model: options.model,
+              messages: turnMessages,
+              tools: turnTools,
+              signal,
+              timeoutMs: retryDeadlineMs,
+            }),
+          );
+          onEvent({ type: "model_timeout_recovered", turn });
+        } catch (retryError) {
+          if (options.signal && options.signal.aborted) return finish("cancelled", finalText);
+          onEvent({
+            type: "model_timeout_failed",
+            turn,
+            reason: retryError instanceof Error ? retryError.message : String(retryError),
+          });
+          saveCheckpoint();
+          return finish(
+            "timeout",
+            "Model timed out after one compacted recovery retry. The run checkpoint was preserved so it can be resumed.",
+          );
+        }
+      } else if (isConnectionLoss(error)) {
+        saveCheckpoint();
+        const delays = Array.isArray(options.reconnectDelaysMs) ? options.reconnectDelaysMs : DEFAULT_RECONNECT_DELAYS_MS;
+        for (let attempt = 0; !reply && attempt < delays.length; attempt += 1) {
+          const delayMs = Number(delays[attempt] || 0);
+          onEvent({
+            type: "model_reconnect",
+            turn,
+            attempt: attempt + 1,
+            max: delays.length,
+            delayMs,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          try {
+            await sleep(delayMs);
+            reply = await withDeadline(options.signal, turnDeadlineMs, requestModel);
+            onEvent({ type: "model_reconnected", turn, attempt: attempt + 1 });
+          } catch (reconnectError) {
+            if (options.signal && options.signal.aborted) return finish("cancelled", finalText);
+            if (!isConnectionLoss(reconnectError) && !isTimeoutError(reconnectError)) throw reconnectError;
+          }
+        }
+        if (!reply) {
+          saveCheckpoint();
+          onEvent({ type: "model_offline", turn, reason: error instanceof Error ? error.message : String(error) });
+          return finish(
+            "model_offline",
+            "Model connection is offline. CodeMe preserved a checkpoint and can resume this run when the model is available.",
+          );
+        }
+      } else {
+        throw error;
       }
-      const retryDeadlineMs = Math.max(60000, Math.floor(turnDeadlineMs / 2));
-      reply = await withDeadline(
-        options.signal,
-        retryDeadlineMs,
-        (signal) => options.provider.complete({
-          model: options.model,
-          messages: turnMessages,
-          tools: turnTools,
-          signal,
-          timeoutMs: retryDeadlineMs,
-        }),
-      );
     }
 
     let toolCalls = Array.isArray(reply && reply.toolCalls) ? reply.toolCalls : [];
@@ -464,6 +574,7 @@ async function runPipeline(options) {
         name: call.name,
         content: JSON.stringify(result).slice(0, 12000),
       });
+      saveCheckpoint();
       if (
         call.name === "browser.interact"
         && result
@@ -492,4 +603,6 @@ module.exports = {
   recoverTextToolCalls,
   embeddedJsonObjects,
   normalizeArgs,
+  CODE_TURN_DEADLINE_MS,
+  NORMAL_TURN_DEADLINE_MS,
 };

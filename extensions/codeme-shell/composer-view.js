@@ -23,6 +23,9 @@ function renderComposer(nonce) {
     .header-action { display: inline-flex; align-items: center; justify-content: center; height: 22px; min-width: 22px; padding: 0 5px; border: 0; border-radius: 4px; background: transparent; color: #778291; cursor: pointer; font: inherit; font-size: 10px; }
     .header-action:hover { background: #232830; color: #d9dee7; }
     .header-action:disabled { opacity: 0.35; cursor: default; }
+    .workspace-actions { display: inline-flex; align-items: center; gap: 1px; margin-right: 3px; }
+    .workspace-action { min-width: 0; padding: 0 5px; color: #8b96a4; font-size: 9px; }
+    .workspace-action:hover { color: #d9dee7; }
     #new-chat { font-size: 15px; line-height: 1; }
     .history-panel { display: none; position: absolute; z-index: 20; top: 32px; left: 7px; right: 7px; max-height: min(420px, 62%); overflow: hidden; border: 1px solid #343a44; border-radius: 7px; background: #171a1f; box-shadow: 0 12px 28px #0008; }
     .history-panel.on { display: flex; flex-direction: column; }
@@ -106,6 +109,8 @@ function renderComposer(nonce) {
     .tool-add { color: #64bd88; }
     .tool-remove { color: #df7780; }
     .tool-state { flex: 0 0 auto; width: 12px; color: #687382; font-size: 10px; text-align: center; }
+    .tool-action, .changed-open { flex: 0 0 auto; height: 19px; padding: 0 5px; border: 0; border-radius: 4px; background: transparent; color: #7f8a98; cursor: pointer; font: inherit; font-size: 9px; }
+    .tool-action:hover, .changed-open:hover { background: #2a3038; color: #d9dee7; }
     .tool-card.running .tool-state { color: #7fc9dd; animation: codeme-pulse 1.1s ease-in-out infinite; }
     .tool-card.failed .tool-state { color: #ff918b; }
     @keyframes codeme-pulse { 50% { opacity: 0.35; } }
@@ -122,6 +127,16 @@ function renderComposer(nonce) {
     .code-text { min-width: 0; padding: 0 7px 0 2px; white-space: pre; overflow-x: visible; color: #bbc2cc; }
     .code-truncated { padding: 5px 8px; border-top: 1px solid #252a31; color: #687382; font-size: 9px; }
 
+    .timeout-card { margin: 4px 0 8px; padding: 8px 9px; border: 1px solid #3a414b; border-radius: 6px; background: #1d2127; color: #aeb7c3; font-size: 10px; line-height: 1.45; }
+    .timeout-card[hidden] { display: none; }
+    .timeout-head { display:flex; align-items:center; gap:7px; margin-bottom:5px; color:#d5dbe4; }
+    .timeout-state { margin-left:auto; color:#7fc9dd; }
+    .timeout-state.failed { color:#ff918b; }
+    .timeout-grid { display:grid; grid-template-columns:88px minmax(0,1fr); gap:2px 7px; }
+    .timeout-key { color:#6f7a88; }
+    .timeout-value { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .timeout-actions { margin-top:7px; display:flex; gap:6px; }
+    .timeout-actions button { height:22px; padding:0 7px; border:1px solid #3b4652; border-radius:4px; background:#252c34; color:#c8ced8; cursor:pointer; font:inherit; font-size:9px; }
     .result { margin: 7px 0 0; }
     .result-summary { margin: 0 1px 8px; color: #c8ced8; line-height: 1.48; white-space: pre-wrap; }
     .error { margin: 0 1px 7px; color: #ff918b; font-size: 11px; }
@@ -179,6 +194,9 @@ function renderComposer(nonce) {
     #mic.on { color: #ff918b; }
     .perm { display: none; }
 
+    @media (max-width: 310px) {
+      .workspace-actions { display: none; }
+    }
     @media (max-width: 230px) {
       h1 { display: none; }
       #model { max-width: 86px; }
@@ -191,6 +209,11 @@ function renderComposer(nonce) {
     <header>
       <div class="title-tools">
         <h1>CodeMe</h1>
+        <div class="workspace-actions" aria-label="Workspace">
+          <button type="button" class="header-action workspace-action" id="explorer-button" title="Show real Explorer">Files</button>
+          <button type="button" class="header-action workspace-action" id="terminal-button" title="Show real Terminal">Terminal</button>
+          <button type="button" class="header-action workspace-action" id="preview-button" title="Open real integrated Preview">Preview</button>
+        </div>
         <button type="button" class="header-action" id="new-chat" title="New chat" aria-label="New chat">＋</button>
         <button type="button" class="header-action" id="history-toggle" title="Chat history" aria-label="Chat history">History</button>
       </div>
@@ -208,10 +231,11 @@ function renderComposer(nonce) {
       <div class="clarification" id="clarification" hidden></div>
       <div class="project-decision" id="project-decision"></div>
       <p class="activity" id="activity"></p>
-      <details class="work-panel" id="work-panel" open hidden>
-        <summary><span class="work-chevron">›</span><span id="work-panel-label">Work details</span></summary>
+      <details class="work-panel" id="work-panel" hidden>
+        <summary><span class="work-chevron">›</span><span id="work-panel-label">View technical activity</span></summary>
         <div class="work-panel-body"><div class="tools" id="tools"></div></div>
       </details>
+      <div class="timeout-card" id="timeout-card" hidden></div>
       <div class="result" id="result"></div>
     </div>
     <footer>
@@ -259,12 +283,16 @@ function renderComposer(nonce) {
     const historyPanel = document.getElementById("history-panel");
     const historyClose = document.getElementById("history-close");
     const historyList = document.getElementById("history-list");
+    const explorerButton = document.getElementById("explorer-button");
+    const terminalButton = document.getElementById("terminal-button");
+    const previewButton = document.getElementById("preview-button");
     const projectDecision = document.getElementById("project-decision");
     const messages = document.getElementById("messages");
     const clarification = document.getElementById("clarification");
     const workPanel = document.getElementById("work-panel");
     const workPanelLabel = document.getElementById("work-panel-label");
     const tools = document.getElementById("tools");
+    const timeoutCard = document.getElementById("timeout-card");
     const result = document.getElementById("result");
     const changedFiles = document.getElementById("changed-files");
     const chips = document.getElementById("chips");
@@ -348,6 +376,9 @@ function renderComposer(nonce) {
       historyPanel.classList.toggle("on");
     });
     historyClose.addEventListener("click", () => historyPanel.classList.remove("on"));
+    explorerButton.addEventListener("click", () => vscode.postMessage({ type: "open-explorer" }));
+    terminalButton.addEventListener("click", () => vscode.postMessage({ type: "open-terminal" }));
+    previewButton.addEventListener("click", () => vscode.postMessage({ type: "open-preview" }));
     function setMic(on) {
       listening = on;
       mic.classList.toggle("on", on);
@@ -601,8 +632,9 @@ function renderComposer(nonce) {
       renderProjectDecision(state.projectDecision || null);
       renderTools(streamItems);
       workPanel.hidden = !streamItems.length;
-      workPanelLabel.textContent = "Work details" + (streamItems.length ? " · " + streamItems.length : "");
+      workPanelLabel.textContent = "View technical activity" + (streamItems.length ? " · " + streamItems.length : "");
       renderChangedFiles(state);
+      renderTimeoutDiagnostics(state.timeoutDiagnostics || null, state.reconnect || null);
       if (running) {
         result.innerHTML = "";
         shownRun = "";
@@ -769,6 +801,74 @@ function renderComposer(nonce) {
       }
     }
 
+    function renderTimeoutDiagnostics(data, reconnect) {
+      timeoutCard.innerHTML = "";
+      const offline = reconnect && reconnect.status === "offline";
+      if (!data && !offline) {
+        timeoutCard.hidden = true;
+        return;
+      }
+      timeoutCard.hidden = false;
+
+      const d = data || {};
+      const outcome = offline ? "failed" : String(d.outcome || "retrying");
+      const label = offline ? "Model offline" : outcome === "recovered" ? "Recovered" : outcome === "failed" ? "Retry failed" : "Retrying…";
+
+      const head = document.createElement("div");
+      head.className = "timeout-head";
+      const title = document.createElement("strong");
+      title.textContent = offline ? "Model connection interrupted" : "Model timed out";
+      const stateLabel = document.createElement("span");
+      stateLabel.className = "timeout-state" + (outcome === "failed" ? " failed" : "");
+      stateLabel.textContent = label;
+      head.appendChild(title);
+      head.appendChild(stateLabel);
+      timeoutCard.appendChild(head);
+
+      const rows = [];
+      if (d.model) rows.push(["Model", d.model]);
+      if (d.turn) rows.push(["Turn", String(d.turn)]);
+      if (d.deadlineMs) rows.push(["Deadline", Math.round(d.deadlineMs / 1000) + "s · retry " + Math.round((d.retryDeadlineMs || d.deadlineMs) / 1000) + "s"]);
+      if (Array.isArray(d.filesRead)) rows.push(["Files read", d.filesRead.length ? d.filesRead.slice(0, 5).join(", ") : "none"]);
+      if (Array.isArray(d.filesChanged)) rows.push(["Files changed", d.filesChanged.length ? d.filesChanged.slice(0, 5).join(", ") : "none"]);
+      if (d.compaction) rows.push(["Compaction", Math.round(Number(d.compaction.beforeChars || 0) / 1000) + "k → " + Math.round(Number(d.compaction.afterChars || 0) / 1000) + "k chars · " + Number(d.compaction.summarized || 0) + " summarized"]);
+      if (d.retry) rows.push(["Retry", String(d.retry) + "/" + String(d.maxRetries || 1)]);
+      if (reconnect && reconnect.status === "retrying") rows.push(["Reconnect", String(reconnect.attempt || 0) + "/" + String(reconnect.max || 0)]);
+
+      const grid = document.createElement("div");
+      grid.className = "timeout-grid";
+      for (const row of rows) {
+        const key = document.createElement("span");
+        key.className = "timeout-key";
+        key.textContent = row[0];
+        const value = document.createElement("span");
+        value.className = "timeout-value";
+        value.textContent = row[1];
+        grid.appendChild(key);
+        grid.appendChild(value);
+      }
+      timeoutCard.appendChild(grid);
+
+      if (outcome === "failed" || offline) {
+        const actions = document.createElement("div");
+        actions.className = "timeout-actions";
+        const resume = document.createElement("button");
+        resume.type = "button";
+        resume.textContent = "Resume from checkpoint";
+        resume.addEventListener("click", () => vscode.postMessage({ type: "resume-run" }));
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.textContent = "Copy diagnostics";
+        copy.addEventListener("click", () => {
+          const text = rows.map((row) => row[0] + ": " + row[1]).join("\\n");
+          navigator.clipboard && navigator.clipboard.writeText(text);
+        });
+        actions.appendChild(resume);
+        actions.appendChild(copy);
+        timeoutCard.appendChild(actions);
+      }
+    }
+
     function renderProjectDecision(decision) {
       projectDecision.innerHTML = "";
       projectDecision.classList.toggle("on", Boolean(decision));
@@ -890,6 +990,32 @@ function renderComposer(nonce) {
           stats.appendChild(add);
           stats.appendChild(remove);
           summary.appendChild(stats);
+        }
+
+        const action = document.createElement("button");
+        action.type = "button";
+        action.className = "tool-action";
+        let actionMessage = null;
+        if (item.path && /^file\./.test(String(item.name || ""))) {
+          action.textContent = "Open";
+          action.title = "Open in the real editor";
+          actionMessage = { type: "open-file", path: item.path };
+        } else if (/^(terminal\.|tests\.|process\.|sandbox\.)/.test(String(item.name || ""))) {
+          action.textContent = "Terminal";
+          action.title = "Show the real integrated terminal";
+          actionMessage = { type: "open-terminal" };
+        } else if (/^browser\./.test(String(item.name || ""))) {
+          action.textContent = "Preview";
+          action.title = "Open the real integrated preview";
+          actionMessage = { type: "open-preview" };
+        }
+        if (actionMessage) {
+          action.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            vscode.postMessage(actionMessage);
+          });
+          summary.appendChild(action);
         }
 
         const state = document.createElement("span");
@@ -1028,7 +1154,7 @@ function renderComposer(nonce) {
       count.textContent = files.length + (files.length === 1 ? " file changed" : " files changed");
       const hint = document.createElement("span");
       hint.className = "changed-hint";
-      hint.textContent = "Expand to review";
+      hint.textContent = "Review here · open in editor";
       head.appendChild(count);
       head.appendChild(hint);
       changedFiles.appendChild(head);
@@ -1057,6 +1183,17 @@ function renderComposer(nonce) {
         summary.appendChild(icon);
         summary.appendChild(label);
         if (file.diff) summary.appendChild(stats);
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "changed-open";
+        open.textContent = "Open";
+        open.title = "Open " + file.path + " in the real editor";
+        open.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          vscode.postMessage({ type: "open-file", path: file.path });
+        });
+        summary.appendChild(open);
         row.appendChild(summary);
         if (file.diff) {
           const pre = document.createElement("pre");

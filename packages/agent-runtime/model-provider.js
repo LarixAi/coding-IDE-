@@ -101,7 +101,7 @@ function chatBody(input) {
     options: {
       temperature: 0,
       num_ctx: boundedGenerationNumber(process.env.CODEME_OLLAMA_NUM_CTX, 32768, 8192, 262144),
-      num_predict: boundedGenerationNumber(process.env.CODEME_OLLAMA_NUM_PREDICT, 8192, 1024, 16384),
+      num_predict: boundedGenerationNumber(process.env.CODEME_OLLAMA_NUM_PREDICT, 4096, 1024, 16384),
     },
   };
 }

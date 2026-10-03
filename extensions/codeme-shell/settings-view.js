@@ -161,6 +161,60 @@ function renderOverview(state, values) {
   ].join("");
 }
 
+function renderProjectBrain(state, values) {
+  const brain = state.projectBrain || {};
+  const counts = brain.counts || {};
+  const rows = [
+    ["Requirements", counts.requirements || 0],
+    ["Decisions", counts.decisions || 0],
+    ["Verified lessons", counts.lessons || 0],
+    ["Known files", counts.files || 0],
+  ];
+  const decisions = Array.isArray(brain.decisions) ? brain.decisions : [];
+  const lessons = Array.isArray(brain.lessons) ? brain.lessons : [];
+  return [
+    '<div class="page-title"><div><h2>Memory &amp; Knowledge</h2><p>Durable project context stored inside the workspace. Source code remains the authority.</p></div></div>',
+    '<div class="card">',
+    toggle("memory.projectKnowledgeEnabled", "Project Brain retrieval", values.memory.projectKnowledgeEnabled, "Inject relevant project identity, requirements, decisions, verified lessons and current file knowledge into new runs."),
+    toggle("memory.reusableMemoryEnabled", "Allow durable memory writes", values.memory.reusableMemoryEnabled, "Allow the agent to save verified fixes and project decisions for future sessions."),
+    '</div>',
+    '<div class="card"><h3>Project Brain</h3>',
+    '<div class="info-row"><span>Storage</span><code>' + escapeHtml(brain.path || ".codeme/project-brain.json") + '</code></div>',
+    '<div class="info-row"><span>Status</span><span class="badge ' + (brain.exists ? "ok" : "") + '">' + escapeHtml(brain.exists ? "Active" : "Not created yet") + '</span></div>',
+    brain.identity && brain.identity.purpose ? '<div class="info-row"><span>Project identity</span><span>' + escapeHtml(brain.identity.purpose) + '</span></div>' : '',
+    rows.map((row) => '<div class="info-row"><span>' + escapeHtml(row[0]) + '</span><span>' + escapeHtml(String(row[1])) + '</span></div>').join(""),
+    '<div class="actions"><button class="secondary" data-action="clear-project-brain">Clear Project Brain</button></div>',
+    '</div>',
+    decisions.length ? '<div class="card"><h3>Recent decisions</h3>' + decisions.slice(-8).reverse().map((item) => '<div class="list-row"><span><strong>' + escapeHtml(item.title || item.text || "Decision") + '</strong><small>' + escapeHtml(item.rationale || item.status || "") + '</small></span></div>').join("") + '</div>' : '',
+    lessons.length ? '<div class="card"><h3>Verified lessons</h3>' + lessons.slice(-8).reverse().map((item) => '<div class="list-row"><span><strong>' + escapeHtml(item.text || item.summary || "Lesson") + '</strong><small>Verified</small></span></div>').join("") + '</div>' : '',
+    '<div class="notice">Project Brain is guidance, not source truth. CodeMe must reread current source before editing when stored file knowledge is stale or conflicting.</div>',
+  ].join("");
+}
+
+function renderSkills(state, values) {
+  const items = state.skills && Array.isArray(state.skills.items) ? state.skills.items : [];
+  return [
+    '<div class="page-title"><div><h2>Skills</h2><p>Reusable workflows that teach the agent how to handle repeatable jobs.</p></div></div>',
+    '<div class="card">',
+    toggle("skills.enabled", "Enable skills", values.skills ? values.skills.enabled !== false : true, "Expose built-in and workspace skills to CodeMe agent runs."),
+    '</div>',
+    '<div class="card"><h3>Available skills</h3>',
+    items.length ? items.map((item) => [
+      '<div class="list-row"><span><strong>/' + escapeHtml(item.name) + '</strong><small>' + escapeHtml(item.description || item.path || item.source || "") + '</small></span>',
+      '<span style="display:flex;gap:6px;align-items:center"><span class="badge ' + (item.source === "workspace" ? "ok" : "") + '">' + escapeHtml(item.source || "builtin") + '</span>',
+      item.source === "workspace" ? '<button class="secondary delete-skill" data-skill="' + escapeHtml(item.name) + '">Delete</button>' : '',
+      '</span></div>',
+    ].join("")).join("") : '<p class="muted">No skills are available.</p>',
+    '</div>',
+    '<div class="card"><h3>Create workspace skill</h3>',
+    '<label class="field"><span>Name</span><input id="skill-name" placeholder="debug-api" /></label>',
+    '<label class="field"><span>Description</span><input id="skill-description" placeholder="Diagnose an API failure and verify the repair" /></label>',
+    '<label class="field"><span>Instructions</span><textarea id="skill-instructions" class="json-editor" placeholder="1. Read the failing request..."></textarea></label>',
+    '<div class="actions"><button data-action="save-skill">Save to .codeme/skills</button></div>',
+    '</div>',
+  ].join("");
+}
+
 function renderPanel(id, state, values) {
   if (id === "overview") return renderOverview(state, values);
   if (id === "general") return [
@@ -186,23 +240,39 @@ function renderPanel(id, state, values) {
   if (id === "agents") return '<div class="page-title"><div><h2>Agents & Teams</h2><p>Paperclip team structure and future custom-agent management.</p></div></div>' + renderAgents(state);
   if (id === "paperclip") return '<div class="page-title"><div><h2>Paperclip</h2><p>Control-plane health, bridge state and team orchestration.</p></div></div>' + renderPaperclip(state);
   if (id === "n8n") return '<div class="page-title"><div><h2>n8n & Automation</h2><p>Prompt enhancement, research and MCP capability access.</p></div></div>' + renderN8n(state);
-  if (id === "mcp") return [
-    '<div class="page-title"><div><h2>MCP & Tools</h2><p>One place for CodeMe tools, n8n MCP capabilities and future connectors.</p></div></div>',
-    '<div class="card"><h3>Current external tool hub</h3><div class="info-row"><span>n8n MCP tools</span><span>' + escapeHtml(String((state.n8n && state.n8n.toolCount) || 0)) + '</span></div><div class="info-row"><span>Action tools</span><span class="badge">Locked</span></div></div>',
-    planned("MCP server registry", "Add, remove, enable and inspect multiple MCP servers without changing the CodeMe core."),
-  ].join("");
+  if (id === "mcp") {
+    const mcp = state.mcp || { servers: [], status: [] };
+    const servers = Array.isArray(mcp.servers) ? mcp.servers : [];
+    const status = Array.isArray(mcp.status) ? mcp.status : [];
+    const registryJson = JSON.stringify(servers.map((server) => ({
+      id: server.id,
+      name: server.name,
+      enabled: server.enabled !== false,
+      transport: server.transport || "http",
+      ...(server.url ? { url: server.url } : {}),
+      ...(server.command ? { command: server.command } : {}),
+      ...(Array.isArray(server.args) && server.args.length ? { args: server.args } : {}),
+      ...(server.allowActions ? { allowActions: true } : {}),
+    })), null, 2);
+    return [
+      '<div class="page-title"><div><h2>MCP & Tools</h2><p>Connect n8n plus additional HTTP/SSE or local stdio MCP servers.</p></div></div>',
+      '<div class="card"><h3>External tool hub</h3><div class="info-row"><span>n8n MCP tools</span><span>' + escapeHtml(String((state.n8n && state.n8n.toolCount) || 0)) + '</span></div><div class="info-row"><span>Custom MCP servers</span><span>' + escapeHtml(String(servers.length)) + '</span></div></div>',
+      status.length
+        ? '<div class="card"><h3>Server status</h3>' + status.map((item) => '<div class="list-row"><span><strong>' + escapeHtml(item.name || item.id) + '</strong><small>' + escapeHtml(item.transport || (item.builtIn ? "built-in" : "")) + '</small></span><span class="badge ' + (item.ok ? "ok" : "") + '">' + escapeHtml(item.ok ? String(item.count || 0) + " tools" : item.error || "Offline") + '</span></div>').join("") + '</div>'
+        : '',
+      '<div class="card"><h3>MCP server registry</h3><p class="muted">Edit the JSON array below. HTTP/SSE uses <code>url</code>. Local desktop servers use <code>transport: "stdio"</code>, <code>command</code> and optional <code>args</code>. Add a temporary <code>token</code> field to save a bearer token into SecretStorage; it will not be shown again.</p>',
+      '<textarea id="mcp-servers-json" class="json-editor" spellcheck="false">' + escapeHtml(registryJson) + '</textarea>',
+      '<div class="actions"><button data-action="save-mcp">Save MCP servers</button><button class="secondary" data-action="refresh-health">Probe all</button></div></div>',
+    ].join("");
+  }
   if (id === "research") return [
     '<div class="page-title"><div><h2>Research & Web</h2><p>Control when current external evidence is required.</p></div></div><div class="card">',
     toggle("research.requireFreshEvidenceWhenNeeded", "Require fresh evidence when needed", values.research.requireFreshEvidenceWhenNeeded, "Do not let a coding model guess current APIs or published rules."),
     toggle("research.preferN8nResearch", "Prefer n8n research capability", values.research.preferN8nResearch, "Use the shared hub when research is required and available."),
     "</div>",
   ].join("");
-  if (id === "memory") return [
-    '<div class="page-title"><div><h2>Memory & Knowledge</h2><p>Project knowledge and reusable context preferences.</p></div></div><div class="card">',
-    toggle("memory.projectKnowledgeEnabled", "Project knowledge", values.memory.projectKnowledgeEnabled, "Allow CodeMe to use project-scoped knowledge when the knowledge capability is connected."),
-    toggle("memory.reusableMemoryEnabled", "Reusable memory", values.memory.reusableMemoryEnabled, "Prepare for durable reusable knowledge across related work."),
-    "</div>",
-  ].join("");
+  if (id === "memory") return renderProjectBrain(state, values);
+  if (id === "skills") return renderSkills(state, values);
   if (id === "workspace") return '<div class="page-title"><div><h2>Workspace</h2><p>Workspace boundaries, indexing and external-path policy.</p></div></div>' + planned("Workspace policy", "Configure allowed roots, ignore patterns, indexing rules and explicit outside-workspace approvals.");
   if (id === "terminal") return '<div class="page-title"><div><h2>Terminal</h2><p>Shell execution and command approval policy.</p></div></div>' + planned("Terminal permissions", "Separate safe commands, app startup, dependency installs, destructive commands and sudo into Allow / Ask / Block policies.");
   if (id === "browser") return '<div class="page-title"><div><h2>Browser & Preview</h2><p>Preview lifecycle and browser verification defaults.</p></div></div>' + planned("Preview policy", "Manage preview ports, process reuse, browser verification and automatic startup checks.");
@@ -254,6 +324,7 @@ function renderSettings(state, nonce) {
     ["mcp", "MCP & Tools", "SERVICES"],
     ["research", "Research & Web", "KNOWLEDGE"],
     ["memory", "Memory & Knowledge", "KNOWLEDGE"],
+    ["skills", "Skills", "KNOWLEDGE"],
     ["workspace", "Workspace", "RUNTIME"],
     ["terminal", "Terminal", "RUNTIME"],
     ["browser", "Browser & Preview", "RUNTIME"],
@@ -283,7 +354,7 @@ function renderSettings(state, nonce) {
     + '.topbar .saved{color:#7e8997;font-size:11px}.content{max-width:940px;margin:0 auto;padding:24px 30px 50px}.panel{display:none}.panel.active{display:block}.page-title{display:flex;gap:20px;justify-content:space-between;align-items:flex-start;margin-bottom:18px}.page-title h2{margin:0 0 5px;font-size:22px}.page-title p,.hero-card p,.card p{margin:0;color:#8d98a6;line-height:1.5}.eyebrow{display:block;color:#71808f;font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px}'
     + '.card,.hero-card{border:1px solid #2f353e;border-radius:8px;background:#1d2127;margin:0 0 14px;padding:14px 16px}.hero-card{background:#1b2026}.hero-card h3,.card h3{margin:0 0 10px;font-size:14px}.hero-line{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.health-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}.health-card{border:1px solid #2f353e;border-radius:8px;padding:12px;background:#1d2127}.health-title{display:flex;justify-content:space-between;gap:10px;align-items:center}.health-card p{margin:8px 0 0;color:#7f8a98;font-size:11px;line-height:1.4}.health-state{display:inline-flex;gap:5px;align-items:center;color:#aab3bf;font-size:11px}.health-dot{width:7px;height:7px;border-radius:50%;background:#697482}.health-dot.online{background:#6fbd8b}.health-dot.degraded{background:#d7ad67}.health-dot.starting{background:#7fb7dd}.health-dot.offline{background:#d36f78}'
     + '.setting-row,.list-row,.info-row{display:flex;align-items:center;justify-content:space-between;gap:18px;min-height:42px;border-top:1px solid #2a3038}.setting-row:first-child,.list-row:first-child,.info-row:first-child{border-top:0}.setting-copy,.list-row span:first-child{display:flex;flex-direction:column;min-width:0}.setting-copy small,.list-row small{margin-top:3px;color:#778391;font-size:10px}.toggle{width:16px;height:16px}.badge{border:1px solid #39414b;border-radius:999px;padding:2px 7px;color:#9ca7b5;font-size:10px}.badge.ok{border-color:#355743;color:#82c99d}code{color:#b9c2ce;font-family:var(--vscode-editor-font-family,monospace);font-size:11px;overflow-wrap:anywhere}'
-    + 'select,input,button{font:inherit}select,.field input{background:#181c21;border:1px solid #353c46;border-radius:5px;color:#d8dde6;padding:6px 8px}.field{display:flex;flex-direction:column;gap:5px;margin:0 0 11px}.field span{color:#aeb7c3;font-size:11px}.field input{width:100%;box-sizing:border-box}button{border:1px solid #3b4652;border-radius:5px;background:#2b3943;color:#dce4ea;padding:6px 10px;cursor:pointer}button:hover{background:#344650}.secondary{background:transparent}.actions{display:flex;gap:8px;margin-top:12px}.planned,.notice,.warning{display:flex;gap:10px;border:1px dashed #39414b;border-radius:8px;padding:12px 14px;margin:0 0 12px;color:#909baa}.planned>span{height:max-content;border:1px solid #46505c;border-radius:999px;padding:2px 6px;font-size:9px;text-transform:uppercase}.planned strong{color:#c5ccd6}.planned p{margin:3px 0 0;color:#7e8996}.notice{display:block;border-style:solid;background:#1b2228}.warning{display:block;border-color:#64513a;background:#251f19;color:#d7b987}.muted{color:#76818f!important}'
+    + 'select,input,button,textarea{font:inherit}select,.field input,.json-editor{background:#181c21;border:1px solid #353c46;border-radius:5px;color:#d8dde6;padding:6px 8px}.field{display:flex;flex-direction:column;gap:5px;margin:0 0 11px}.field span{color:#aeb7c3;font-size:11px}.field input{width:100%;box-sizing:border-box}.json-editor{width:100%;min-height:220px;box-sizing:border-box;resize:vertical;font-family:var(--vscode-editor-font-family,monospace);font-size:11px;line-height:1.45}button{border:1px solid #3b4652;border-radius:5px;background:#2b3943;color:#dce4ea;padding:6px 10px;cursor:pointer}button:hover{background:#344650}.secondary{background:transparent}.actions{display:flex;gap:8px;margin-top:12px}.planned,.notice,.warning{display:flex;gap:10px;border:1px dashed #39414b;border-radius:8px;padding:12px 14px;margin:0 0 12px;color:#909baa}.planned>span{height:max-content;border:1px solid #46505c;border-radius:999px;padding:2px 6px;font-size:9px;text-transform:uppercase}.planned strong{color:#c5ccd6}.planned p{margin:3px 0 0;color:#7e8996}.notice{display:block;border-style:solid;background:#1b2228}.warning{display:block;border-color:#64513a;background:#251f19;color:#d7b987}.muted{color:#76818f!important}'
     + '@media(max-width:760px){.shell{grid-template-columns:190px minmax(0,1fr)}.health-grid{grid-template-columns:1fr}.content{padding:20px 16px}}'
     + '</style></head><body><div class="shell"><aside class="sidebar"><div class="side-head"><h1>CodeMe Settings</h1><input id="search" class="search" placeholder="Search settings..." /><select id="scope" class="scope"><option value="global"' + (scope === "global" ? " selected" : "") + '>Global</option><option value="workspace"' + (scope === "workspace" ? " selected" : "") + '>Workspace: ' + escapeHtml((state.workspace && state.workspace.name) || "current") + "</option></select></div><nav class=\"nav\">" + navHtml + '</nav></aside>'
     + '<main class="main"><div class="topbar"><span id="scope-label">' + escapeHtml(scope === "workspace" ? "Workspace overrides" : "Global settings") + '</span><span class="saved" id="saved">● Saved</span></div><div class="content">' + panels + "</div></main></div>"
@@ -294,7 +365,8 @@ function renderSettings(state, nonce) {
     + 'document.getElementById("search").addEventListener("input",e=>{const q=String(e.target.value||"").toLowerCase().trim();nav.forEach(b=>b.style.display=!q||b.dataset.search.includes(q)?"":"none");});'
     + 'document.getElementById("scope").addEventListener("change",e=>{scope=e.target.value;saved.textContent="Refreshing…";vscode.postMessage({type:"settings-scope",scope});});'
     + 'document.querySelectorAll("[data-setting]").forEach(el=>el.addEventListener("change",()=>{const value=el.type==="checkbox"?el.checked:el.value;saved.textContent="Saving…";vscode.postMessage({type:"settings-save",scope,path:el.dataset.setting,value});}));'
-    + 'document.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",()=>{const action=el.dataset.action;if(action==="refresh-health"){saved.textContent="Refreshing…";vscode.postMessage({type:"settings-refresh",scope});}if(action==="save-n8n"){const token=document.getElementById("n8n-token");saved.textContent="Saving…";vscode.postMessage({type:"settings-n8n-update",scope,patch:{mcpEnabled:document.getElementById("n8n-enabled").checked,mcpUrl:document.getElementById("n8n-mcp-url").value,autoEnhance:document.getElementById("n8n-auto-enhance").checked,enhanceWebhookUrl:document.getElementById("n8n-enhance-url").value,mcpToken:token&&token.value?token.value:undefined,allowImageUpload:document.getElementById("n8n-image-upload").checked}});}}));'
+    + 'document.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",()=>{const action=el.dataset.action;if(action==="refresh-health"){saved.textContent="Refreshing…";vscode.postMessage({type:"settings-refresh",scope});}if(action==="save-n8n"){const token=document.getElementById("n8n-token");saved.textContent="Saving…";vscode.postMessage({type:"settings-n8n-update",scope,patch:{mcpEnabled:document.getElementById("n8n-enabled").checked,mcpUrl:document.getElementById("n8n-mcp-url").value,autoEnhance:document.getElementById("n8n-auto-enhance").checked,enhanceWebhookUrl:document.getElementById("n8n-enhance-url").value,mcpToken:token&&token.value?token.value:undefined,allowImageUpload:document.getElementById("n8n-image-upload").checked}});}if(action==="save-mcp"){const field=document.getElementById("mcp-servers-json");try{const servers=JSON.parse(field&&field.value||"[]");if(!Array.isArray(servers))throw new Error("Registry must be a JSON array");saved.textContent="Saving…";vscode.postMessage({type:"settings-mcp-update",scope,servers});}catch(error){saved.textContent="! "+String(error&&error.message||error);}}if(action==="clear-project-brain"){saved.textContent="Clearing…";vscode.postMessage({type:"settings-memory-clear",scope});}if(action==="save-skill"){const name=document.getElementById("skill-name"),description=document.getElementById("skill-description"),instructions=document.getElementById("skill-instructions");saved.textContent="Saving…";vscode.postMessage({type:"settings-skill-save",scope,skill:{name:name&&name.value||"",description:description&&description.value||"",instructions:instructions&&instructions.value||""}});}}));'
+    + 'document.querySelectorAll(".delete-skill").forEach(el=>el.addEventListener("click",()=>{saved.textContent="Deleting…";vscode.postMessage({type:"settings-skill-delete",scope,name:el.dataset.skill||""});}));'
     + 'window.addEventListener("message",event=>{const m=event.data||{};if(m.type==="settings-saved"){saved.textContent="● Saved";}if(m.type==="settings-error"){saved.textContent="! "+String(m.message||"Could not save");}if(m.type==="settings-reload"){location.reload();}});'
     + '</script></body></html>';
 }

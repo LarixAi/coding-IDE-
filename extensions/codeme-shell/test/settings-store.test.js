@@ -25,6 +25,7 @@ async function main() {
   const initial = store.snapshot("global");
   assert.strictEqual(initial.effective.chatActivity.showN8nOnlyWhenUsed, true);
   assert.strictEqual(initial.effective.appearance.showServiceStatus, true);
+  assert.strictEqual(initial.effective.skills.enabled, true);
 
   await store.update("global", "general.defaultMode", "team");
   assert.strictEqual(store.snapshot("global").effective.general.defaultMode, "team");

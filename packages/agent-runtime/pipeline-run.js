@@ -9,6 +9,25 @@ const {
 const { buildModelContext } = require("./pipeline-context");
 const { instructionsForMode } = require("./pipeline-instructions");
 const { runPipeline } = require("./pipeline-loop");
+const {
+  addRequirement: brainAddRequirement,
+  addDecision: brainAddDecision,
+  addVerifiedLesson,
+  rememberFile,
+  retrieveProjectContext,
+  projectBrainText,
+} = require("./project-brain");
+const {
+  loadOrCreateProjectBrain,
+  saveProjectBrain,
+} = require("./project-brain-store");
+const {
+  loadSkills,
+  matchSlashSkill,
+  skillCatalogText,
+  skillToolDefinition,
+  runSkill,
+} = require("./skills");
 
 const MUTATION_TOOLS = new Set(["file.write", "file.patch", "dir.create"]);
 const READ_ONLY_BLOCKED = new Set([
@@ -23,6 +42,31 @@ const READ_ONLY_BLOCKED = new Set([
 ]);
 const CODE_FILE = /\.(?:js|mjs|cjs|jsx|ts|tsx|py|go|rs|java|cs|rb|php|swift|dart|c|cc|cpp|h|hpp)$/i;
 const WEB_FILE = /\.(?:html?|css|js|jsx|ts|tsx)$/i;
+
+const MEMORY_TOOL_DEFINITIONS = [
+  {
+    name: "memory.recall",
+    description: "Recall relevant durable Project Brain knowledge for the current workspace. Source code remains the authority.",
+    parameters: {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "memory.save",
+    description: "Save a durable project decision, preference, note, or verified fix to Project Brain.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: { type: "string" },
+        kind: { type: "string", enum: ["decision", "preference", "note", "fix"] },
+        verified: { type: "boolean" },
+      },
+      required: ["text"],
+    },
+  },
+];
 
 function touch(run, lifecycle, inFlight) {
   run.lifecycle = lifecycle;
@@ -412,10 +456,14 @@ async function executePipelineRun(run, options, followUpQueue) {
   let workspace = null;
   let projectRules = "";
   let attachmentContext = [];
+  let projectBrain = null;
+  let projectRoot = String(options.workspaceRoot || "").trim();
+  let skills = [];
   if (run.mode !== "chat_only") {
     const inspected = await safeContextCall(registry, "workspace.inspect", {});
     if (inspected && inspected.ok) {
       workspace = inspected.data || {};
+      projectRoot = projectRoot || String(workspace.root || "").trim();
       run.workspace = workspace;
       run.workspaceInspected = true;
       recordTool(run, { name: "workspace.inspect", args: {} }, inspected, "context");
@@ -426,6 +474,36 @@ async function executePipelineRun(run, options, followUpQueue) {
     }
     projectRules = await loadProjectRules(registry);
     attachmentContext = await loadAttachmentContext(registry, run.attachments);
+    if (projectRoot && options.projectBrainEnabled !== false) {
+      projectBrain = loadOrCreateProjectBrain(projectRoot, {
+        originalPrompt: run.originalGoal || run.goal,
+        projectId: projectRoot,
+      });
+      for (const requirement of run.requirements || []) {
+        brainAddRequirement(projectBrain, {
+          text: requirement.text || requirement.title || String(requirement),
+          status: requirement.status || "confirmed",
+          source: requirement.source || "user",
+        });
+      }
+      const recalled = retrieveProjectContext(projectBrain, run.goal, { limitPerType: 8 });
+      const memoryText = projectBrainText(recalled);
+      if (memoryText) {
+        projectRules = [projectRules, "PROJECT BRAIN (durable project memory; current source code wins on conflict):\n" + memoryText]
+          .filter(Boolean)
+          .join("\n\n");
+      }
+      saveProjectBrain(projectRoot, projectBrain);
+    }
+    if (projectRoot && options.skillsEnabled !== false) {
+      skills = loadSkills(projectRoot);
+      const catalog = skillCatalogText(skills);
+      const explicit = matchSlashSkill(run.originalGoal || run.goal, skills);
+      const skillText = explicit
+        ? "EXPLICIT SKILL /" + explicit.skill.name + ":\n" + explicit.skill.instructions
+        : catalog;
+      if (skillText) projectRules = [projectRules, skillText].filter(Boolean).join("\n\n");
+    }
   }
 
   const allowExternalEvidence = run.mode !== "read_only" || readOnlyNeedsExternalEvidence(run.goal);
@@ -457,7 +535,11 @@ async function executePipelineRun(run, options, followUpQueue) {
   const baseDefinitions = run.mode === "chat_only"
     ? []
     : registry.definitions().filter((tool) => run.mode !== "read_only" || !READ_ONLY_BLOCKED.has(tool.name));
-  const definitions = [...baseDefinitions, ...capabilityDefinitions, ...externalDefinitions];
+  const memoryDefinitions = run.mode === "chat_only" || !projectRoot || options.projectBrainEnabled === false
+    ? []
+    : MEMORY_TOOL_DEFINITIONS.filter((tool) => options.memoryWriteEnabled !== false || tool.name !== "memory.save");
+  const skillDefinitions = run.mode === "chat_only" || !projectRoot || options.skillsEnabled === false ? [] : [skillToolDefinition()];
+  const definitions = [...baseDefinitions, ...memoryDefinitions, ...skillDefinitions, ...capabilityDefinitions, ...externalDefinitions];
   run.pipeline.toolPolicy = allowExternalEvidence ? "all-legal-tools" : "local-read-only-tools";
   const context = buildModelContext({
     goal: run.goal,
@@ -501,6 +583,30 @@ async function executePipelineRun(run, options, followUpQueue) {
           tool: name,
           error: { code: "mutation_blocked", message: name + " is not available in read-only mode." },
         };
+      } else if (name === "memory.recall" && projectRoot) {
+        projectBrain = loadOrCreateProjectBrain(projectRoot, { originalPrompt: run.originalGoal || run.goal, projectId: projectRoot });
+        const recalled = retrieveProjectContext(projectBrain, String(call.args.query || run.goal), { limitPerType: 8 });
+        result = {
+          ok: true,
+          tool: name,
+          data: { text: projectBrainText(recalled), context: recalled },
+        };
+      } else if (name === "skill.run" && projectRoot) {
+        result = runSkill(skills, call.args.name);
+      } else if (name === "memory.save" && projectRoot) {
+        projectBrain = loadOrCreateProjectBrain(projectRoot, { originalPrompt: run.originalGoal || run.goal, projectId: projectRoot });
+        const text = String(call.args.text || "").trim().slice(0, 2000);
+        const kind = String(call.args.kind || "decision");
+        if (!text) {
+          result = { ok: false, tool: name, error: { code: "invalid_args", message: "text is required" } };
+        } else if (kind === "fix" && call.args.verified !== true) {
+          result = { ok: false, tool: name, error: { code: "verification_required", message: "A durable fix must be verified before it is saved." } };
+        } else {
+          if (kind === "fix") addVerifiedLesson(projectBrain, { text, verified: true, evidence: ["memory.save"] });
+          else brainAddDecision(projectBrain, { title: text, source: "model", tags: [kind] });
+          saveProjectBrain(projectRoot, projectBrain);
+          result = { ok: true, tool: name, data: { saved: true, kind, text } };
+        }
       } else if (name === "capability.list" || name === "capability.invoke") {
         result = await dispatchCapability(options.capabilities, run, call, signal, capabilityRegistry);
       } else if (externalToolNames.has(name) && options.externalTools && typeof options.externalTools.call === "function") {
@@ -562,7 +668,14 @@ async function executePipelineRun(run, options, followUpQueue) {
     maxTurns: options.maxIterations || 20,
     maxRepairRounds: options.maxRepairRounds ?? 2,
     maxToolCallsPerTurn: options.maxToolCallsPerTurn ?? 8,
-    turnDeadlineMs: options.timeoutMs || 240000,
+    turnDeadlineMs: options.timeoutMs || 180000,
+    retryDeadlineMs: options.retryTimeoutMs || options.timeoutMs || 180000,
+    reconnectDelaysMs: options.reconnectDelaysMs,
+    resumeFrom: options.resumeFrom || run.pipelineCheckpoint || null,
+    onCheckpoint(checkpoint) {
+      run.pipelineCheckpoint = checkpoint;
+      store.save(run);
+    },
     wallClockMs: options.wallClockMs || 45 * 60 * 1000,
     mode: run.mode,
     composerMode: run.composerMode,
@@ -586,6 +699,29 @@ async function executePipelineRun(run, options, followUpQueue) {
           summary: event.reason,
           at: new Date().toISOString(),
         });
+      } else if (event.type === "model_timeout") {
+        run.timeoutDiagnostics = { ...event.diagnostics };
+        run.modelTimeoutRetriesUsed = Number(run.modelTimeoutRetriesUsed || 0) + 1;
+        run.timeoutRetryPending = true;
+      } else if (event.type === "model_timeout_recovered") {
+        if (run.timeoutDiagnostics) run.timeoutDiagnostics = { ...run.timeoutDiagnostics, outcome: "recovered" };
+        run.timeoutRetryPending = false;
+      } else if (event.type === "model_timeout_failed") {
+        if (run.timeoutDiagnostics) run.timeoutDiagnostics = { ...run.timeoutDiagnostics, outcome: "failed" };
+        run.timeoutRetryPending = false;
+      } else if (event.type === "model_reconnect") {
+        run.reconnect = {
+          status: "retrying",
+          turn: event.turn,
+          attempt: event.attempt,
+          max: event.max,
+          delayMs: event.delayMs,
+          reason: event.reason,
+        };
+      } else if (event.type === "model_reconnected") {
+        run.reconnect = { status: "recovered", turn: event.turn, attempt: event.attempt };
+      } else if (event.type === "model_offline") {
+        run.reconnect = { status: "offline", turn: event.turn, reason: event.reason };
       } else if (event.type === "model_end") {
         run.decisions.push({
           iteration: event.turn,
@@ -624,17 +760,50 @@ async function executePipelineRun(run, options, followUpQueue) {
 
   run.messages = result.messages;
   run.inFlight = null;
+  if (result.checkpoint) run.pipelineCheckpoint = result.checkpoint;
   run.outcome = {
     status: result.reason,
     summary: result.finalText,
   };
   const success = result.reason === "verified" || result.reason === "answered";
+  if (success && projectRoot && options.projectBrainEnabled !== false) {
+    try {
+      projectBrain = loadOrCreateProjectBrain(projectRoot, { originalPrompt: run.originalGoal || run.goal, projectId: projectRoot });
+      const verified = Boolean(run.verification && run.verification.status === "passed");
+      if (verified && result.finalText) {
+        addVerifiedLesson(projectBrain, {
+          text: String(result.finalText).slice(0, 1200),
+          verified: true,
+          evidence: (run.verification && run.verification.evidence) || [],
+          tags: ["run:" + run.id],
+        });
+      }
+      for (const filePath of run.filesChanged.slice(0, 30)) {
+        const read = await safeContextCall(registry, "file.read", { path: filePath });
+        const contents = read && read.ok && read.data && typeof read.data.contents === "string" ? read.data.contents : "";
+        if (!contents) continue;
+        rememberFile(projectBrain, {
+          path: filePath,
+          hash: crypto.createHash("sha256").update(contents).digest("hex"),
+          summary: contents.replace(/\s+/g, " ").slice(0, 360),
+          status: "current",
+          tags: ["verified-run"],
+        });
+      }
+      saveProjectBrain(projectRoot, projectBrain);
+    } catch {
+      // Project Brain is best-effort and must never fail a completed coding run.
+    }
+  }
+  const resumable = result.reason === "model_offline" || result.reason === "timeout";
   run.lifecycle = result.reason === "cancelled"
     ? "cancelled"
     : success
       ? "completed"
-      : "failed";
-  if (!success && result.reason !== "cancelled") {
+      : resumable
+        ? "awaiting_user"
+        : "failed";
+  if (!success && result.reason !== "cancelled" && !resumable) {
     run.error = {
       code: result.reason,
       message: result.finalText,
@@ -706,8 +875,69 @@ function startPipelineRun(options) {
   };
 }
 
+
+function resumePipelineRun(id, options) {
+  const existing = options.store.load(id);
+  if (!existing) {
+    throw Object.assign(new Error("No run " + id), { code: "not_found" });
+  }
+  if (!existing.pipelineCheckpoint) {
+    throw Object.assign(new Error("Run " + id + " has no resumable checkpoint"), { code: "no_checkpoint" });
+  }
+  if (!["awaiting_user", "failed"].includes(existing.lifecycle)) {
+    throw Object.assign(new Error("Run " + id + " is not waiting to resume"), { code: "not_resumable" });
+  }
+
+  const controller = new AbortController();
+  const followUpQueue = [];
+  existing.lifecycle = "running";
+  existing.error = null;
+  existing.outcome = null;
+  existing.reconnect = { status: "resuming" };
+  existing.updatedAt = new Date().toISOString();
+  options.store.save(existing);
+
+  const done = executePipelineRun(existing, {
+    ...options,
+    signal: controller.signal,
+    resumeFrom: existing.pipelineCheckpoint,
+  }, followUpQueue).catch((error) => {
+    existing.lifecycle = controller.signal.aborted ? "cancelled" : "failed";
+    existing.inFlight = null;
+    existing.error = controller.signal.aborted ? null : {
+      code: error && error.code ? String(error.code) : "pipeline_failed",
+      message: error instanceof Error ? error.message : String(error),
+    };
+    existing.outcome = {
+      status: existing.lifecycle,
+      summary: controller.signal.aborted ? "Stopped." : existing.error.message,
+    };
+    existing.updatedAt = new Date().toISOString();
+    options.store.save(existing);
+    return existing;
+  });
+
+  return {
+    id: existing.id,
+    run: existing,
+    cancel() {
+      existing.cancelRequested = true;
+      controller.abort();
+    },
+    followUp(text) {
+      const value = String(text || "").trim();
+      if (!value) return;
+      followUpQueue.push(value);
+      applyFollowUp(existing, value);
+      options.store.save(existing);
+    },
+    done,
+  };
+}
+
 module.exports = {
   startPipelineRun,
+  resumePipelineRun,
   executePipelineRun,
   createVerifier,
 };

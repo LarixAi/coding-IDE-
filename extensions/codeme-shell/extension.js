@@ -20,6 +20,12 @@ const { DebugToolProvider } = require("./debug-tool-provider");
 const { VerificationToolProvider } = require("./verification-tool-provider");
 const { MultitaskController } = require("./multitask-controller");
 const { SettingsPanel } = require("./settings-panel");
+const { CodeMeSettingsStore } = require("./settings-store");
+const { UniversalMcpRegistry } = require("./universal-mcp");
+const { loadProjectBrain, brainPath } = require("../../packages/agent-runtime/project-brain-store");
+const { loadSkills } = require("../../packages/agent-runtime/skills");
+const { TerminalObserver } = require("./terminal-observer");
+const { analyzeImages } = require("./vision-integration");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -45,7 +51,16 @@ function activate(context) {
     detail: "Checking the local model server.",
     hub: { connected: false, capabilities: [], detail: "Checking the intelligence hub." },
   };
-  const composer = new ComposerViewProvider(context, state);
+  const settingsStore = new CodeMeSettingsStore(context);
+  const composer = new ComposerViewProvider(context, state, settingsStore);
+  context.subscriptions.push(
+    composer.terminalObserver,
+    {
+      dispose: () => {
+        if (composer.externalTools && typeof composer.externalTools.close === "function") composer.externalTools.close();
+      },
+    },
+  );
   const paperclip = new PaperclipBridge({ session: composer.session });
   composer.setPaperclip(paperclip);
   paperclip.start().then((status) => {
@@ -122,12 +137,29 @@ function activate(context) {
   refreshHub();
 
   const settingsPanel = new SettingsPanel(context, {
+    store: settingsStore,
     getState: (scope) => buildSettingsState({
       scope,
       composer,
       paperclip,
       state,
     }),
+    clearProjectBrain: async () => {
+      const root = workspaceRoot();
+      if (!root) throw new Error("Open a workspace before clearing Project Brain.");
+      fs.rmSync(brainPath(root), { force: true });
+      return projectBrainSettingsState(root);
+    },
+    saveSkill: async (skill) => saveWorkspaceSkill(workspaceRoot(), skill),
+    deleteSkill: async (name) => deleteWorkspaceSkill(workspaceRoot(), name),
+    updateMcp: async (servers) => {
+      if (!composer.externalTools || typeof composer.externalTools.updateServers !== "function") {
+        throw new Error("Universal MCP registry is not connected");
+      }
+      const next = await composer.externalTools.updateServers(servers);
+      await refreshHub();
+      return next;
+    },
     updateN8n: async (patch) => {
       const next = patch && typeof patch === "object" ? { ...patch } : {};
       if (typeof next.allowImageUpload === "boolean") {
@@ -163,6 +195,10 @@ function activate(context) {
     vscode.commands.registerCommand("codeme.ask", () => vscode.commands.executeCommand("codeme.agent.focus")),
     vscode.commands.registerCommand("codeme.attach", () => composer.pickFiles()),
     vscode.commands.registerCommand("codeme.openSettings", () => settingsPanel.open()),
+    vscode.commands.registerCommand("codeme.openExplorer", () => vscode.commands.executeCommand("workbench.view.explorer")),
+    vscode.commands.registerCommand("codeme.openTerminal", () => openTerminalPanel()),
+    vscode.commands.registerCommand("codeme.openPreview", () => openIntegratedPreview()),
+    vscode.commands.registerCommand("codeme.openFile", (filePath) => openWorkspaceFile(filePath)),
     vscode.commands.registerCommand("codeme.hideStart", () => emptyEditor.suppress(1500)),
   );
 }
@@ -240,6 +276,79 @@ function modelHealth(snapshot) {
   };
 }
 
+function projectBrainSettingsState(root) {
+  if (!root) return { exists: false, path: ".codeme/project-brain.json", counts: {}, identity: null, requirements: [], decisions: [], lessons: [], files: [] };
+  const brain = loadProjectBrain(root);
+  if (!brain) return { exists: false, path: ".codeme/project-brain.json", counts: {}, identity: null, requirements: [], decisions: [], lessons: [], files: [] };
+  const files = Object.values(brain.files || {});
+  return {
+    exists: true,
+    path: ".codeme/project-brain.json",
+    identity: brain.identity || null,
+    counts: {
+      requirements: (brain.requirements || []).length,
+      decisions: (brain.decisions || []).length,
+      lessons: (brain.lessons || []).length,
+      files: files.length,
+    },
+    requirements: (brain.requirements || []).slice(-12).map((item) => ({ ...item })),
+    decisions: (brain.decisions || []).slice(-12).map((item) => ({ ...item })),
+    lessons: (brain.lessons || []).slice(-12).map((item) => ({ ...item })),
+    files: files.slice(-20).map((item) => ({ ...item })),
+  };
+}
+
+function safeSkillSlug(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function skillsSettingsState(root) {
+  if (!root) return { items: [] };
+  return {
+    items: loadSkills(root).map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      source: skill.source,
+      path: skill.path || "",
+    })),
+  };
+}
+
+function saveWorkspaceSkill(root, input = {}) {
+  if (!root) throw new Error("Open a workspace before saving a skill.");
+  const name = safeSkillSlug(input.name);
+  if (!name) throw new Error("Skill name is required.");
+  const description = String(input.description || "").trim().slice(0, 300);
+  const instructions = String(input.instructions || "").trim();
+  if (!instructions) throw new Error("Skill instructions are required.");
+  const dir = path.join(root, ".codeme", "skills", name);
+  fs.mkdirSync(dir, { recursive: true });
+  const body = [
+    "---",
+    "name: " + name,
+    description ? "description: " + JSON.stringify(description) : "",
+    "---",
+    instructions,
+    "",
+  ].filter((line) => line !== "").join("\n");
+  fs.writeFileSync(path.join(dir, "SKILL.md"), body, "utf8");
+  return skillsSettingsState(root);
+}
+
+function deleteWorkspaceSkill(root, rawName) {
+  if (!root) throw new Error("Open a workspace before deleting a skill.");
+  const name = safeSkillSlug(rawName);
+  if (!name) throw new Error("Skill name is required.");
+  const dir = path.join(root, ".codeme", "skills", name);
+  const base = path.join(root, ".codeme", "skills");
+  const resolved = path.resolve(dir);
+  if (resolved !== path.resolve(base) && !resolved.startsWith(path.resolve(base) + path.sep)) {
+    throw new Error("Skill path escaped the workspace.");
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+  return skillsSettingsState(root);
+}
+
 async function buildSettingsState({ scope, composer, paperclip, state }) {
   const snapshot = composer.session.snapshot();
   let n8nStatus;
@@ -263,6 +372,8 @@ async function buildSettingsState({ scope, composer, paperclip, state }) {
       name: root ? path.basename(root) : "",
       path: root || "",
     },
+    projectBrain: projectBrainSettingsState(root),
+    skills: skillsSettingsState(root),
     health: {
       paperclip: paperclipHealth,
       n8n: {
@@ -279,6 +390,9 @@ async function buildSettingsState({ scope, composer, paperclip, state }) {
       available: Array.isArray(snapshot.models) ? snapshot.models : [],
     },
     n8n,
+    mcp: composer.externalTools && typeof composer.externalTools.snapshot === "function"
+      ? composer.externalTools.snapshot()
+      : { servers: [], status: [] },
     paperclip: {
       ...paperclipStatus,
       apiUrl: paperclip.api && paperclip.api.baseUrl || "",
@@ -297,6 +411,12 @@ async function applyPreferredSettings() {
     ["chat.titleBar.signIn.enabled", false],
     ["chat.titleBar.openInAgentsWindow.enabled", false],
     ["workbench.secondarySideBar.defaultVisibility", "visible"],
+    ["workbench.panel.defaultLocation", "bottom"],
+    ["explorer.compactFolders", false],
+    ["explorer.decorations.badges", true],
+    ["explorer.decorations.colors", true],
+    ["workbench.tree.indent", 12],
+    ["workbench.tree.renderIndentGuides", "always"],
     ["workbench.tips.enabled", false],
     ["workbench.editor.empty.hint", "hidden"],
   ];
@@ -321,6 +441,66 @@ async function runCommand(command) {
   }
 }
 
+async function openWorkspaceFile(filePath) {
+  const root = workspaceRoot();
+  const requested = String(filePath || "").trim();
+  if (!root || !requested) return false;
+  const candidate = path.isAbsolute(requested)
+    ? path.resolve(requested)
+    : path.resolve(root, requested);
+  const resolvedRoot = path.resolve(root);
+  if (candidate !== resolvedRoot && !candidate.startsWith(resolvedRoot + path.sep)) {
+    await vscode.window.showWarningMessage("CodeMe can only open files inside the current workspace.");
+    return false;
+  }
+  try {
+    await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(candidate), { preview: false });
+    return true;
+  } catch (error) {
+    await vscode.window.showWarningMessage(
+      "Could not open " + requested + ": " + (error && error.message ? error.message : String(error)),
+    );
+    return false;
+  }
+}
+
+async function openTerminalPanel() {
+  await runCommand("workbench.action.positionPanelBottom");
+  await runCommand("workbench.action.terminal.focus");
+  return true;
+}
+
+async function openIntegratedPreview() {
+  let status;
+  try {
+    status = await host.processStatus();
+  } catch (error) {
+    await vscode.window.showWarningMessage(
+      "CodeMe could not read the preview session: " + (error && error.message ? error.message : String(error)),
+    );
+    return false;
+  }
+  const url = status && status.status === "running"
+    ? String(status.url || status.origin || "")
+    : "";
+  if (!url) {
+    await vscode.window.showInformationMessage(
+      "No CodeMe preview is running yet. Start the app from Code mode, then open Preview.",
+    );
+    return false;
+  }
+  try {
+    await vscode.commands.executeCommand("simpleBrowser.show", url);
+    return true;
+  } catch (error) {
+    await vscode.window.showWarningMessage(
+      "The integrated Simple Browser could not open " + url + ". " +
+      (error && error.message ? error.message : String(error)),
+    );
+    return false;
+  }
+}
+
 async function arrangeShell(welcome, emptyEditor) {
   if (!folderOpen()) {
     if (emptyEditor) emptyEditor.dispose();
@@ -332,6 +512,8 @@ async function arrangeShell(welcome, emptyEditor) {
   }
   if (welcome.panel) welcome.panel.dispose();
   await runCommand("workbench.view.explorer");
+  await runCommand("workbench.action.positionPanelBottom");
+  await runCommand("workbench.action.terminal.focus");
   await runCommand("workbench.action.closeChat");
   await runCommand("codeme.agent.focus");
   if (emptyEditor) {
@@ -814,7 +996,7 @@ function fileType(name) {
 }
 
 class ComposerViewProvider {
-  constructor(context, state) {
+  constructor(context, state, settingsStore = null) {
     this.context = context;
     this.state = state;
     this.view = undefined;
@@ -822,7 +1004,8 @@ class ComposerViewProvider {
     this.multitask = null;
     this.capabilities = N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null;
     this.n8n = new N8nIntegration(context);
-    this.externalTools = this.n8n;
+    this.terminalObserver = new TerminalObserver(vscode).start();
+    this.externalTools = new UniversalMcpRegistry(context, this.n8n, [this.terminalObserver]);
     this.syncExternalPermissions();
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
@@ -866,6 +1049,8 @@ class ComposerViewProvider {
       capabilities: this.capabilities,
       externalTools: this.externalTools,
       n8n: this.n8n,
+      analyzeImages,
+      settingsProvider: () => settingsStore ? settingsStore.effectiveValues() : {},
       root: workspaceRoot(),
       onChange: (snapshot) => this.post(snapshot),
     });
@@ -1009,6 +1194,15 @@ class ComposerViewProvider {
       }
       return;
     }
+    if (message.type === "resume-run") {
+      const result = this.session.resume();
+      if (!result.ok) {
+        this.view.webview.postMessage({ type: "rejected", code: result.code, message: result.message });
+      } else {
+        this.view.webview.postMessage({ type: "accepted", epoch: this.session.epoch, requestId: result.requestId, runId: result.runId, text: "" });
+      }
+      return;
+    }
     if (message.type === "cancel") {
       const multitask = this.multitask ? this.multitask.snapshot() : null;
       if (multitask && multitask.active) {
@@ -1061,6 +1255,22 @@ class ComposerViewProvider {
     }
     if (message.type === "detach") {
       this.session.detach(message.id);
+      return;
+    }
+    if (message.type === "open-file") {
+      await openWorkspaceFile(message.path);
+      return;
+    }
+    if (message.type === "open-terminal") {
+      await openTerminalPanel();
+      return;
+    }
+    if (message.type === "open-preview") {
+      await openIntegratedPreview();
+      return;
+    }
+    if (message.type === "open-explorer") {
+      await vscode.commands.executeCommand("workbench.view.explorer");
       return;
     }
     if (message.type === "attach") {
