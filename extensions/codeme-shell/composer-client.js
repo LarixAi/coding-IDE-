@@ -408,13 +408,44 @@ function composerVoiceAction(listening, available) {
   return listening ? "stop" : "start";
 }
 
+function browserDropFiles(transfer) {
+  if (!transfer) return [];
+  const fromItems = [];
+  if (transfer.items && transfer.items.length) {
+    for (const item of transfer.items) {
+      if (!item || item.kind !== "file" || typeof item.getAsFile !== "function") continue;
+      const file = item.getAsFile();
+      if (file) fromItems.push(file);
+    }
+  }
+  if (fromItems.length) return fromItems;
+  return transfer.files ? Array.from(transfer.files) : [];
+}
+
+function droppedPathValue(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value !== "object") return String(value).trim();
+  for (const key of ["path", "fsPath", "uri", "resourceUri", "resource", "url"]) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    if (candidate && typeof candidate.toString === "function") {
+      const text = String(candidate.toString()).trim();
+      if (text && text !== "[object Object]") return text;
+    }
+  }
+  return "";
+}
+
 function droppedPaths(transfer) {
   const found = [];
   const seen = new Set();
   function add(value) {
-    const next = String(value || "").trim();
-    if (!next || next.startsWith("#") || seen.has(next)) return;
-    seen.add(next);
+    const next = droppedPathValue(value);
+    if (!next || next.startsWith("#")) return;
+    const key = next.replace(/\\/g, "/");
+    if (seen.has(key)) return;
+    seen.add(key);
     found.push({ path: next });
   }
   if (!transfer) return found;
@@ -430,21 +461,42 @@ function droppedPaths(transfer) {
     if (typeof transfer.getData !== "function") continue;
     const raw = transfer.getData(name);
     if (!raw) continue;
-    if (name === "ResourceURLs" || name === "resourceurls" || name === "CodeFiles") {
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          for (const item of parsed) add(item);
-          continue;
-        }
-      } catch {
-        // Fall through to line splitting for a plain path.
-      }
+    let parsed = null;
+    if (
+      name === "ResourceURLs"
+      || name === "resourceurls"
+      || name === "CodeFiles"
+      || String(raw).trim().startsWith("[")
+      || String(raw).trim().startsWith("{")
+    ) {
+      try { parsed = JSON.parse(raw); } catch {}
+    }
+    if (Array.isArray(parsed)) {
+      for (const item of parsed) add(item);
+      continue;
+    }
+    if (parsed && typeof parsed === "object") {
+      const values = Array.isArray(parsed.resources)
+        ? parsed.resources
+        : Array.isArray(parsed.files)
+          ? parsed.files
+          : Array.isArray(parsed.uris)
+            ? parsed.uris
+            : [parsed];
+      for (const item of values) add(item);
+      continue;
     }
     for (const line of String(raw).split(/\r?\n/)) add(line);
   }
   if (transfer.files && transfer.files.length) {
     for (const file of transfer.files) {
+      if (file && file.path) add(file.path);
+    }
+  }
+  if (transfer.items && transfer.items.length) {
+    for (const item of transfer.items) {
+      if (!item || item.kind !== "file" || typeof item.getAsFile !== "function") continue;
+      const file = item.getAsFile();
       if (file && file.path) add(file.path);
     }
   }
@@ -471,6 +523,8 @@ if (typeof module !== "undefined" && module.exports) {
     formatGoal,
     sameRequest,
     droppedPaths,
+    droppedPathValue,
+    browserDropFiles,
     composerVoiceAction,
     looksLikeWorkspaceEdit,
     isProgressTalk,
