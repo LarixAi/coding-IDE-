@@ -44,7 +44,7 @@ class MultitaskController {
     this.onChange(this.snapshot());
   }
 
-  start(text, epoch) {
+  start(text, epoch, options = {}) {
     const goal = String(text || "").trim();
     if (!goal) return { ok: false, code: "empty", message: "Enter a message first." };
     if (this.current && this.current.active) {
@@ -74,8 +74,10 @@ class MultitaskController {
       };
     }
 
-    const requestId = "multitask_" + crypto.randomBytes(8).toString("hex");
-    this.session.recordUserMessage(goal);
+    const requestId = String(options.requestId || "").trim() || ("multitask_" + crypto.randomBytes(8).toString("hex"));
+    const visibleText = String(options.visibleText || goal).trim() || goal;
+    const returnMode = String(options.returnMode || "").trim();
+    this.session.recordUserMessage(visibleText);
     this.current = {
       active: true,
       cancelled: false,
@@ -93,6 +95,8 @@ class MultitaskController {
     Promise.resolve().then(async () => {
       try {
         const result = await this.paperclip.submitUserTask(goal, {
+          traceId: String(options.traceId || requestId).trim() || requestId,
+          source: String(options.source || "").trim(),
           isCancelled: () => Boolean(this.current && this.current.cancelled),
           onProgress: (progress) => {
             if (!this.current || this.current.requestId !== requestId) return;
@@ -111,7 +115,7 @@ class MultitaskController {
         this.current.status = String(result && result.status || (result && result.ok ? "done" : "blocked"));
         this.current.runId = String(result && result.runId || this.current.runId || requestId);
         this.current.taskId = String(result && result.taskId || this.current.taskId || "");
-        this.session.selectMode("multitask");
+        this.session.selectMode(returnMode || "multitask");
         this.session.recordAssistantMessage(messageForResult(result), this.current.runId);
         this.emit();
       } catch (error) {
@@ -120,7 +124,7 @@ class MultitaskController {
         this.current.active = false;
         this.current.status = this.current.cancelled ? "cancelled" : "failed";
         this.current.error = message;
-        this.session.selectMode("multitask");
+        this.session.selectMode(returnMode || "multitask");
         this.session.recordAssistantMessage(
           this.current.cancelled ? "Multitask stopped." : "Multitask failed: " + message,
           this.current.runId,
@@ -135,8 +139,10 @@ class MultitaskController {
       runId: requestId,
       conversationId: this.session.conversationId || "",
       multitask: true,
-      mode: "read_only",
-      composerMode: "multitask",
+      orchestrated: Boolean(options.source),
+      source: String(options.source || ""),
+      mode: options.mode || "read_only",
+      composerMode: options.composerMode || "multitask",
     };
   }
 
