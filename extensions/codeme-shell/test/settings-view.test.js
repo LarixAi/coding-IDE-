@@ -18,6 +18,25 @@ const state = {
     sources: [{ id: "local", label: "Local", url: "http://127.0.0.1:11434", available: true, count: 1 }],
     available: [{ label: "Local · Qwen 3.5 9B", id: "qwen3.5:9b", provider: "ollama-local" }],
   },
+  projectBrain: {
+    exists: true,
+    path: ".codeme/project-brain.json",
+    identity: { purpose: "Dealership website" },
+    counts: { requirements: 3, decisions: 2, lessons: 1, files: 4 },
+    decisions: [{ title: "Use existing stack", rationale: "Preserve project architecture" }],
+    lessons: [{ text: "Booking route passed tests", verified: true }],
+    files: [{ path: "src/app.js" }],
+  },
+  skills: {
+    items: [
+      { name: "fix-terminal-error", description: "Repair a terminal failure", source: "builtin" },
+      { name: "debug-api", description: "Debug the API", source: "workspace", path: ".codeme/skills/debug-api/SKILL.md" },
+    ],
+  },
+  mcp: {
+    servers: [{ id: "github", name: "GitHub", enabled: true, transport: "http", url: "https://example.test/mcp" }],
+    status: [{ id: "github", name: "GitHub", ok: true, count: 2, transport: "http" }],
+  },
   n8n: {
     mcpEnabled: true,
     mcpUrl: "http://127.0.0.1:5678/mcp-server/http",
@@ -54,6 +73,13 @@ assert.ok(html.includes("n8n &amp; Automation"));
 assert.ok(html.includes("MCP &amp; Tools"));
 assert.ok(html.includes("Research &amp; Web"));
 assert.ok(html.includes("Memory &amp; Knowledge"));
+assert.ok(html.includes("Skills"));
+assert.ok(html.includes("Project Brain"));
+assert.ok(html.includes(".codeme/project-brain.json"));
+assert.ok(html.includes("Dealership website"));
+assert.ok(html.includes("/debug-api"));
+assert.ok(html.includes("MCP server registry"));
+assert.ok(html.includes("GitHub"));
 assert.ok(html.includes("Workspace"));
 assert.ok(html.includes("Terminal"));
 assert.ok(html.includes("Browser &amp; Preview"));

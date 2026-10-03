@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { startAgentRun, startPipelineRun } = require("../../packages/agent-runtime");
+const { startAgentRun, startPipelineRun, resumePipelineRun } = require("../../packages/agent-runtime");
 const { stripNegatedEditing } = require("../../packages/agent-runtime/intent");
 const { composerStage, composerActivity, compactTools, compactRunStream, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
 
@@ -172,6 +172,8 @@ class ComposerSession {
     this.capabilities = options.capabilities || null;
     this.externalTools = options.externalTools || null;
     this.n8n = options.n8n || null;
+    this.analyzeImages = typeof options.analyzeImages === "function" ? options.analyzeImages : null;
+    this.settingsProvider = typeof options.settingsProvider === "function" ? options.settingsProvider : null;
     this.root = options.root || "";
     this.attachments = [];
     this.models = [];
@@ -192,6 +194,8 @@ class ComposerSession {
     this.stream = [];
     this.thread = [];
     this.verification = null;
+    this.timeoutDiagnostics = null;
+    this.reconnect = null;
     this.projectDecision = null;
     this.clarification = null;
     this.researchRequest = null;
@@ -221,6 +225,8 @@ class ComposerSession {
       stream: this.stream.map((item) => ({ ...item })),
       thread: this.thread.map((item) => ({ ...item })),
       verification: this.verification,
+      timeoutDiagnostics: this.timeoutDiagnostics ? { ...this.timeoutDiagnostics } : null,
+      reconnect: this.reconnect ? { ...this.reconnect } : null,
       projectDecision: this.projectDecision ? { ...this.projectDecision } : null,
       clarification: this.clarification ? {
         ...this.clarification,
@@ -313,6 +319,8 @@ class ComposerSession {
     this.tools = [];
     this.stream = [];
     this.verification = null;
+    this.timeoutDiagnostics = null;
+    this.reconnect = null;
     this.projectDecision = null;
     this.clarification = null;
     this.researchRequest = null;
@@ -669,10 +677,32 @@ class ComposerSession {
   }
 
   async submit(text, epoch, options = {}) {
-    const originalGoal = formatGoal(text, this.attachments);
+    let originalGoal = formatGoal(text, this.attachments);
     if (!originalGoal.trim()) return reject("empty", "Enter a message first.");
 
     const visibleText = String(text || "").trim() || originalGoal;
+    if (
+      !options.skipEnhancement
+      && this.analyzeImages
+      && this.attachments.some((item) => item && item.kind === "image")
+    ) {
+      try {
+        this.notice = "Analyzing attached image" + (this.attachments.filter((item) => item && item.kind === "image").length === 1 ? "…" : "s…");
+        this.emit();
+        const vision = await this.analyzeImages(this.root, this.attachments, visibleText);
+        if (vision && vision.ok && vision.spec) {
+          originalGoal += "\n\nLOCAL VISION ANALYSIS (evidence from attached image(s); the user's request remains authoritative):\n"
+            + JSON.stringify(vision.spec, null, 2);
+          this.notice = "Image context ready · " + String(vision.sourceLabel || vision.source || "vision") + " · " + String(vision.model || "");
+        } else if (vision && vision.notice) {
+          this.notice = String(vision.notice);
+        }
+        this.emit();
+      } catch (error) {
+        this.notice = "Image analysis unavailable: " + (error instanceof Error ? error.message : String(error));
+        this.emit();
+      }
+    }
 
     if (this.clarification && !options.resumeFromClarification) {
       return this.submitClarification([{ id: "freeform", answer: visibleText }], visibleText, epoch);
@@ -767,6 +797,7 @@ class ComposerSession {
 
     const requestId = crypto.randomBytes(8).toString("hex");
     if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
+    const runtimeSettings = this.settingsProvider ? (this.settingsProvider() || {}) : {};
     const provider = this.createProvider(this.selected);
     const registry = this.createRegistry(this.mode);
     this.requestId = requestId;
@@ -821,7 +852,12 @@ class ComposerSession {
           size: item.size,
         })),
         inferRequirements: true,
+        workspaceRoot: this.root,
+        projectBrainEnabled: !runtimeSettings.memory || runtimeSettings.memory.projectKnowledgeEnabled !== false,
+        memoryWriteEnabled: !runtimeSettings.memory || runtimeSettings.memory.reusableMemoryEnabled !== false,
+        skillsEnabled: !runtimeSettings.skills || runtimeSettings.skills.enabled !== false,
         timeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
+        retryTimeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
         maxIterations: this.composerMode === "code" ? 20 : 12,
         maxRepairRounds: 2,
         maxToolCallsPerTurn: 8,
@@ -861,6 +897,74 @@ class ComposerSession {
     return { ok: true, requestId: this.active.requestId, runId: this.active.runId };
   }
 
+  resume() {
+    if (this.running) return reject("busy", "The current run is still active.");
+    if (!this.runId) return reject("no_checkpoint", "There is no run to resume.");
+    const stored = this.store.load(this.runId);
+    if (!stored || !stored.pipelineCheckpoint) return reject("no_checkpoint", "This run has no saved checkpoint.");
+
+    const selection = {
+      provider: stored.provider || (this.selected && this.selected.provider) || "ollama-local",
+      id: stored.effectiveModel || stored.requestedModel || (this.selected && this.selected.id) || "",
+    };
+    if (!selection.id) return reject("no_model", "The saved run has no model.");
+    let provider;
+    try {
+      provider = this.createProvider(selection);
+    } catch (error) {
+      return reject("provider_unavailable", error instanceof Error ? error.message : String(error));
+    }
+
+    const registry = this.createRegistry(stored.mode || "controlled");
+    const requestId = crypto.randomBytes(8).toString("hex");
+    const publishing = new PublishingStore(this.store, (run) => this.publish(requestId, run));
+    const runtimeSettings = this.settingsProvider ? (this.settingsProvider() || {}) : {};
+    let handle;
+    try {
+      handle = resumePipelineRun(stored.id, {
+        provider,
+        registry,
+        store: publishing,
+        capabilities: this.capabilities,
+        externalTools: this.externalTools,
+        workspaceRoot: this.root,
+        projectBrainEnabled: !runtimeSettings.memory || runtimeSettings.memory.projectKnowledgeEnabled !== false,
+        memoryWriteEnabled: !runtimeSettings.memory || runtimeSettings.memory.reusableMemoryEnabled !== false,
+        skillsEnabled: !runtimeSettings.skills || runtimeSettings.skills.enabled !== false,
+        timeoutMs: stored.timeoutMs || (stored.composerMode === "code" ? 300000 : 180000),
+        retryTimeoutMs: stored.timeoutMs || (stored.composerMode === "code" ? 300000 : 180000),
+        maxIterations: stored.maxIterations || 20,
+        maxRepairRounds: 2,
+        maxToolCallsPerTurn: 8,
+      });
+    } catch (error) {
+      return reject(error && error.code ? String(error.code) : "resume_failed", error instanceof Error ? error.message : String(error));
+    }
+
+    this.requestId = requestId;
+    this.runId = handle.id;
+    this.running = true;
+    this.stage = "Understanding";
+    this.activity = "Resuming from checkpoint…";
+    this.error = "";
+    this.notice = "";
+    this.active = {
+      requestId,
+      runId: handle.id,
+      handle,
+      baseThread: this.thread.map((item) => ({ ...item })),
+    };
+    this.emit();
+    handle.done.then((run) => {
+      this.publish(requestId, run);
+      this.finishRequest(requestId, run);
+    }).catch((error) => {
+      this.failRequest(requestId, error instanceof Error ? error.message : String(error));
+    });
+
+    return { ok: true, requestId, runId: handle.id, resumed: true };
+  }
+
   publish(requestId, run) {
     if (!this.active || this.active.requestId !== requestId || !run) return;
     if (this.active.runId && this.active.runId !== run.id) return;
@@ -878,6 +982,8 @@ class ComposerSession {
     this.thread = (this.active.baseThread || []).concat(assistantItems);
 
     this.verification = run.verification || null;
+    this.timeoutDiagnostics = run.timeoutDiagnostics ? { ...run.timeoutDiagnostics } : null;
+    this.reconnect = run.reconnect ? { ...run.reconnect } : null;
     this.projectDecision = run.projectDecision ? { ...run.projectDecision } : null;
     this.outcome = run.outcome || null;
     this.error = run.lifecycle === "failed" && run.error ? run.error.message : "";

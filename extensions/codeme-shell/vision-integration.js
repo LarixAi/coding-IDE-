@@ -86,6 +86,40 @@ function parseObject(text) {
   return null;
 }
 
+function stringArray(value, limit=30) {
+  return (Array.isArray(value) ? value : [])
+    .map((item)=>String(item||"").trim())
+    .filter(Boolean)
+    .slice(0,limit);
+}
+
+function normalizeVisionSpec(raw, fallbackText="") {
+  const value=raw&&typeof raw==="object"&&!Array.isArray(raw)?raw:{};
+  return {
+    kind:["website","mockup","error","diagram","other"].includes(String(value.kind||""))
+      ? String(value.kind)
+      : (stringArray(value.errors,1).length ? "error" : "other"),
+    summary:String(value.summary||fallbackText||"No summary returned").trim().slice(0,3000),
+    layout:String(value.layout||"").trim().slice(0,2500),
+    visualHierarchy:String(value.visualHierarchy||value.hierarchy||"").trim().slice(0,2500),
+    sections:stringArray(value.sections),
+    palette:stringArray(value.palette,20),
+    typography:String(value.typography||"").trim().slice(0,2000),
+    spacing:String(value.spacing||"").trim().slice(0,1200),
+    components:stringArray(value.components),
+    textContent:stringArray(value.textContent||value.visibleText,80),
+    errors:stringArray(value.errors,30),
+    implementationNotes:stringArray(value.implementationNotes,40),
+    detectedUrl:typeof value.detectedUrl==="string"&&value.detectedUrl.trim()
+      ? value.detectedUrl.trim().slice(0,1000)
+      : null,
+  };
+}
+
+function formatVisionSpec(spec) {
+  return JSON.stringify(normalizeVisionSpec(spec), null, 2);
+}
+
 async function analyzeImages(root, attachments, goal, signal) {
   const images=readImages(root,attachments);
   if (!images.length) return { ok:false, reason:"no_images" };
@@ -94,9 +128,10 @@ async function analyzeImages(root, attachments, goal, signal) {
   const prompt=[
     "Analyze these attached images for a coding assistant.",
     "Be factual. Do not invent details that are not visible.",
-    "For UI screenshots describe layout, hierarchy, colours, typography, spacing, components, and visible text.",
-    "For error screenshots transcribe the visible error and list concrete diagnostic clues.",
-    "Return JSON with keys: summary, visibleText, layout, components, errors, implementationNotes.",
+    "For UI screenshots extract layout, visual hierarchy, section order, palette/colours, typography, spacing, reusable components, and all important visible text.",
+    "For error screenshots transcribe visible errors and list concrete diagnostic clues without guessing hidden state.",
+    "If a browser address bar, footer domain, or clear URL is visible, include detectedUrl; otherwise use null.",
+    "Return JSON only with keys: kind, summary, layout, visualHierarchy, sections, palette, typography, spacing, components, textContent, errors, implementationNotes, detectedUrl.",
     goal ? "User request: "+String(goal).slice(0,2500) : "",
   ].filter(Boolean).join("\n\n");
   const body={
@@ -120,8 +155,16 @@ async function analyzeImages(root, attachments, goal, signal) {
     sourceLabel:selected.endpoint.label,
     model:selected.model,
     imageCount:images.length,
-    spec:parsed || { summary:text || "Vision model returned no text." },
+    spec:normalizeVisionSpec(parsed, text || "Vision model returned no text."),
   };
 }
 
-module.exports={ VISION_RE, endpoints, selectVisionModel, analyzeImages, safeAttachmentPath };
+module.exports={
+  VISION_RE,
+  endpoints,
+  selectVisionModel,
+  analyzeImages,
+  safeAttachmentPath,
+  normalizeVisionSpec,
+  formatVisionSpec,
+};

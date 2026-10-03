@@ -50,7 +50,7 @@ const OPERATIONAL_DEFAULTS = {
     description: "Gather short evidence for a problem. Returns sources and excerpts.",
     inputSchema: { type: "object", properties: { problem: { type: "string" } }, required: ["problem"] },
     outputSchema: { type: "object", properties: { problem: { type: "string" }, confidence: { type: "string" } }, required: [] },
-    timeout: 20000,
+    timeout: 60000,
   }),
   "knowledge.lookup": contractDefaults({
     name: "knowledge.lookup",

@@ -1,8 +1,8 @@
 {
   "version": 1,
   "name": "CodeMe Pipeline v2 Canonical Lock",
-  "baselineCommit": "8056f2b49aa601dd133c25afb4afeaecfcaa605e",
-  "baselineBranch": "pipeline-v2-locked-baseline",
+  "baselineCommit": "a0684e98c2559c5e1a212951b08c8c7f1432758d",
+  "baselineBranch": "codeme/companion-gap-port",
   "lockedAt": "2026-10-03",
   "policy": {
     "owner": "LarixAi",
@@ -10,19 +10,19 @@
     "addons": "New features should integrate through external tools, capabilities, providers, UI modules, or other extension points without changing the protected pipeline core."
   },
   "protectedFiles": {
-    "packages/agent-runtime/pipeline-run.js": "84fb365658be2f25dc5b9f2b7d399d5a0cca0212",
-    "packages/agent-runtime/pipeline-loop.js": "88efeb812c5f02e53d64cca3c36f8093a2d03eeb",
+    "packages/agent-runtime/pipeline-run.js": "fd25cdbfbf87792ca0486a8071efbf2e45dd06de",
+    "packages/agent-runtime/pipeline-loop.js": "37467e2b15635b28eaf12f75b1af0393fca00b83",
     "packages/agent-runtime/pipeline-context.js": "79c906348f6f50b1e416ca3cad0223803ff021ab",
     "packages/agent-runtime/pipeline-instructions.js": "bec7ad113d7432e1ca12a4638cd0f4e14860bd01",
     "packages/agent-runtime/agent-run.js": "94f0015ce6e2e7ebdce39ced56815d6efa36b123",
-    "packages/agent-runtime/model-provider.js": "f3c0709b66bce0f0df49dcdc78d302f70c1e57b7",
+    "packages/agent-runtime/model-provider.js": "d6991d5285f07698878c7441b88cead48b65b6a7",
     "packages/agent-runtime/tool-registry.js": "9d65de1e22be732322b17a2a2f2108a76a15a6ac",
     "packages/agent-runtime/capability.js": "3fd1f96f6b0a8e26e8a49fbdc7241dfea50e269c",
     "packages/agent-runtime/requirements.js": "9b0f98709b9e4c3f35baf85ffffd881a5c4e4339",
     "packages/agent-runtime/strategy.js": "cc9eaa7a197d43c8dc9d0f88f9923fc43ebda4c9",
     "packages/agent-runtime/intent.js": "e78006ef754dc3a3e80eeb48a0975eadc4eae74f",
     "packages/agent-runtime/project-decision.js": "85a493becad2e193f19c09fd42420c28f945a9e6",
-    "extensions/codeme-shell/composer-session.js": "e10c566c72866bd3c0ca398028fcad711aa8d3ed",
+    "extensions/codeme-shell/composer-session.js": "2d4bb1b7551179973b35c070debcd96ca1fd6c0f",
     "packages/agent-runtime/test/pipeline-v2.test.js": "48f9a48ff98d236803c9729a380583e294f8f06d",
     "extensions/codeme-shell/test/composer-pipeline-v2.test.js": "71f6062c045cb84fc5d1af7c2e3fbe36422c8ab1"
   },
