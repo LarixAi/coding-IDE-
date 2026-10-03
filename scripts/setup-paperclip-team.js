@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { parseEnvText } = require("../extensions/codeme-shell/runtime-config");
+const { paperclipLoopbackCandidates } = require("../packages/paperclip-control");
 
 const TEAM = [
   {
@@ -176,11 +177,29 @@ async function main() {
       payload = JSON.stringify(body);
     }
 
-    const response = await fetch(apiBase + pathname, {
-      method,
-      headers,
-      body: payload,
-    });
+    let response = null;
+    let lastError = null;
+    const candidates = paperclipLoopbackCandidates(apiBase);
+    for (const base of candidates) {
+      try {
+        response = await fetch(base + pathname, {
+          method,
+          headers,
+          body: payload,
+        });
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!response) {
+      throw new Error(
+        "Paperclip control plane could not be reached at "
+        + candidates.join(" or ")
+        + ": "
+        + (lastError instanceof Error ? lastError.message : String(lastError || "fetch failed")),
+      );
+    }
     const text = await response.text();
     let parsed = {};
     if (text) {
