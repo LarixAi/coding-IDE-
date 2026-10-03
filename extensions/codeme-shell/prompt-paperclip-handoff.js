@@ -131,14 +131,6 @@ function installPromptPaperclipHandoff(options = {}) {
     // clarification wrapper captures the READY decision before the original
     // method re-enters submit with skipEnhancement=true.
     if (this.running || (this.clarification && !optionsForRun.resumeFromClarification)) {
-      if (String(this.composerMode || "").toLowerCase() === "code" && isWebsiteBuildGoal(routeGoal)) {
-        const baseGoal = String(optionsForRun.goalOverride || originalGoal).trim();
-        return originalSubmit.call(this, text, epoch, {
-          ...optionsForRun,
-          goalOverride: [baseGoal, websiteQualityContract()].join("\n\n"),
-        });
-      }
-
       return originalSubmit.call(this, text, epoch, optionsForRun);
     }
 
