@@ -1,6 +1,5 @@
 const assert = require("assert");
 const { TerminalObserver, redactSecrets } = require("../terminal-observer");
-const { ExternalToolRouter } = require("../external-tool-router");
 
 function emitter() {
   const listeners = new Set();
@@ -101,54 +100,14 @@ async function main() {
     ["terminal.last", "terminal.failures", "terminal.debug_bundle"],
   );
 
-  const local = {
-    async listTools() {
-      return [{ name: "local.tool", description: "local", parameters: { type: "object", properties: {} } }];
-    },
-    async call(name) {
-      return { ok: true, tool: name, data: { source: "local" } };
-    },
-  };
-  const unavailable = {
-    async listTools() {
-      throw new Error("n8n offline");
-    },
-    async call() {
-      throw new Error("should not run");
-    },
-  };
-
-  const resilientRouter = new ExternalToolRouter([local, unavailable]);
-  const resilientTools = await resilientRouter.listTools();
-  assert.deepStrictEqual(resilientTools.map((item) => item.name), ["local.tool"]);
-  const localResult = await resilientRouter.call("local.tool", {});
-  assert.strictEqual(localResult.ok, true);
-  assert.strictEqual(localResult.data.source, "local");
-  assert.deepStrictEqual(resilientRouter.errors, ["n8n offline"]);
-
-  const remote = {
-    async listTools() {
-      return [{ name: "mcp_n8n_research_problem", description: "research", parameters: { type: "object", properties: {} } }];
-    },
-    async call(name, args) {
-      return { ok: true, tool: name, trusted: false, data: { args } };
-    },
-  };
-  const router = new ExternalToolRouter([observer, remote]);
-  const tools = await router.listTools();
-  assert.ok(tools.some((item) => item.name === "terminal.debug_bundle"));
-  assert.ok(tools.some((item) => item.name === "mcp_n8n_research_problem"));
-  const routed = await router.call("mcp_n8n_research_problem", { problem: bundle.data.debugText });
-  assert.strictEqual(routed.ok, true);
-  assert.strictEqual(routed.data.args.problem, bundle.data.debugText);
-
+  // Aggregation with n8n/custom MCP is covered by universal-mcp.test.js.
   assert.ok(redactSecrets("token=super-secret").includes("[REDACTED]"));
 
   observer.dispose();
   assert.strictEqual(fake.started.size(), 0);
   assert.strictEqual(fake.ended.size(), 0);
 
-  console.log("terminal observation and external tool routing passed");
+  console.log("terminal observation and redaction passed");
 }
 
 main().catch((error) => {
