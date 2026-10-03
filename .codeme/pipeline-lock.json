@@ -1,8 +1,8 @@
 {
   "version": 1,
   "name": "CodeMe Pipeline v2 Canonical Lock",
-  "baselineCommit": "a0684e98c2559c5e1a212951b08c8c7f1432758d",
-  "baselineBranch": "codeme/companion-gap-port",
+  "baselineCommit": "f2f81e3149bf6801ef59ba3829e95e7d7d856f5a",
+  "baselineBranch": "codeme/real-ide-v19",
   "lockedAt": "2026-10-03",
   "policy": {
     "owner": "LarixAi",
