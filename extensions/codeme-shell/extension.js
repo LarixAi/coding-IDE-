@@ -253,6 +253,34 @@ async function probePaperclipHealth(paperclip) {
   }
 }
 
+function n8nHealth(status) {
+  const value = status && typeof status === "object" ? status : {};
+  if (value.connected) {
+    return {
+      status: "online",
+      detail: "n8n MCP connected with " + String(value.toolCount || 0) + " discovered tool(s).",
+    };
+  }
+  if (value.serviceConnected) {
+    const endpoint = value.serviceEndpoint ? " at " + value.serviceEndpoint : "";
+    const mcpDetail = value.error && value.error.message ? ": " + String(value.error.message) : "";
+    return {
+      status: "degraded",
+      detail: "n8n service is online" + endpoint + ", but MCP tools are unavailable" + mcpDetail,
+    };
+  }
+  const endpoint = value.serviceEndpoint ? " at " + value.serviceEndpoint : "";
+  const detail = value.serviceError && value.serviceError.message
+    ? String(value.serviceError.message)
+    : value.error && value.error.message
+      ? String(value.error.message)
+      : "n8n is unavailable.";
+  return {
+    status: "offline",
+    detail: "n8n service is unreachable" + endpoint + ": " + detail,
+  };
+}
+
 function modelHealth(snapshot) {
   const sources = Array.isArray(snapshot && snapshot.modelSources) ? snapshot.modelSources : [];
   const available = sources.filter((source) => source && source.available);
@@ -376,12 +404,7 @@ async function buildSettingsState({ scope, composer, paperclip, state }) {
     skills: skillsSettingsState(root),
     health: {
       paperclip: paperclipHealth,
-      n8n: {
-        status: n8nStatus && n8nStatus.connected ? "online" : "offline",
-        detail: n8nStatus && n8nStatus.connected
-          ? "n8n MCP connected with " + String(n8nStatus.toolCount || 0) + " discovered tool(s)."
-          : (n8nStatus && n8nStatus.error && n8nStatus.error.message) || "n8n MCP is unavailable.",
-      },
+      n8n: n8nHealth(n8nStatus),
       model: modelHealth(snapshot),
     },
     models: {
@@ -1331,4 +1354,4 @@ class ComposerViewProvider {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, n8nHealth };
