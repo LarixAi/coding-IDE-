@@ -16,6 +16,21 @@ class PaperclipHttpError extends Error {
   }
 }
 
+function paperclipLoopbackCandidates(value) {
+  const original = String(value || "").trim().replace(/\/$/, "");
+  if (!original) return [];
+  const out = [original];
+  try {
+    const parsed = new URL(original);
+    if (parsed.hostname === "127.0.0.1") parsed.hostname = "localhost";
+    else if (parsed.hostname === "localhost") parsed.hostname = "127.0.0.1";
+    else return out;
+    const alternate = parsed.toString().replace(/\/$/, "");
+    if (!out.includes(alternate)) out.push(alternate);
+  } catch {}
+  return out;
+}
+
 class PaperclipApi {
   constructor(options = {}) {
     this.baseUrl = String(options.baseUrl || process.env.PAPERCLIP_API_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
@@ -24,7 +39,6 @@ class PaperclipApi {
   }
 
   async request(method, pathname, body, runId) {
-    const url = new URL(pathname, this.baseUrl);
     const headers = { Accept: "application/json" };
     if (this.apiKey) headers.Authorization = "Bearer " + this.apiKey;
     if (runId) headers["X-Paperclip-Run-Id"] = runId;
@@ -34,23 +48,46 @@ class PaperclipApi {
       headers["Content-Type"] = "application/json";
     }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    let response;
-    try {
-      response = await fetch(url, {
-        method,
-        headers,
-        body: payload,
-        signal: controller.signal,
-      });
-    } catch (error) {
-      const timedOut = error && (error.name === "AbortError" || error.name === "TimeoutError");
-      const wrapped = new Error(timedOut ? "Paperclip API timed out" : (error instanceof Error ? error.message : String(error)));
-      wrapped.code = timedOut ? "paperclip_timeout" : "paperclip_unavailable";
+    let response = null;
+    const failures = [];
+    const candidates = paperclipLoopbackCandidates(this.baseUrl);
+    for (const baseUrl of candidates) {
+      const url = new URL(pathname, baseUrl);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        response = await fetch(url, {
+          method,
+          headers,
+          body: payload,
+          signal: controller.signal,
+        });
+        if (baseUrl !== this.baseUrl) this.baseUrl = baseUrl;
+        break;
+      } catch (error) {
+        const timedOut = error && (error.name === "AbortError" || error.name === "TimeoutError");
+        failures.push({
+          baseUrl,
+          timedOut,
+          message: timedOut ? "timed out" : (error instanceof Error ? error.message : String(error)),
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    if (!response) {
+      const allTimedOut = failures.length > 0 && failures.every((item) => item.timedOut);
+      const attempted = failures.map((item) => item.baseUrl).join(" or ") || this.baseUrl;
+      const detail = failures.map((item) => item.baseUrl + " (" + item.message + ")").join(" · ");
+      const wrapped = new Error(
+        (allTimedOut ? "Paperclip API timed out" : "Paperclip control plane could not be reached")
+        + " at " + attempted
+        + (detail ? ": " + detail : ""),
+      );
+      wrapped.code = allTimedOut ? "paperclip_timeout" : "paperclip_unavailable";
+      wrapped.endpoints = failures.map((item) => item.baseUrl);
       throw wrapped;
-    } finally {
-      clearTimeout(timer);
     }
 
     const text = await response.text();
@@ -643,6 +680,7 @@ module.exports = {
   PaperclipHttpError,
   PaperclipAgentRegistry,
   PaperclipTeamOrchestrator,
+  paperclipLoopbackCandidates,
   normalizeHeartbeat,
   paperclipTaskPrompt,
   repeatedTool,

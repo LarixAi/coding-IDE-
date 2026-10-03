@@ -245,9 +245,12 @@ async function probePaperclipHealth(paperclip) {
       detail: "Bridge, control plane and configured team are ready.",
     };
   } catch (error) {
+    const endpoint = paperclip && paperclip.api && paperclip.api.baseUrl
+      ? " at " + String(paperclip.api.baseUrl)
+      : "";
     return {
       status: "degraded",
-      detail: "CodeMe bridge is running, but the Paperclip control plane is unavailable: "
+      detail: "CodeMe bridge is running, but the Paperclip control plane" + endpoint + " is unavailable: "
         + (error instanceof Error ? error.message : String(error)),
     };
   }

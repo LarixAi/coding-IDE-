@@ -1,6 +1,8 @@
 const assert = require("assert");
 const {
+  PaperclipApi,
   PaperclipController,
+  paperclipLoopbackCandidates,
   normalizeHeartbeat,
   paperclipTaskPrompt,
   repeatedTool,
@@ -94,7 +96,48 @@ function fakeApi(issue = {}) {
   };
 }
 
+async function paperclipLoopbackRecoveryTest() {
+  assert.deepStrictEqual(
+    paperclipLoopbackCandidates("http://127.0.0.1:3100"),
+    ["http://127.0.0.1:3100", "http://localhost:3100"],
+  );
+  assert.deepStrictEqual(
+    paperclipLoopbackCandidates("http://localhost:3100"),
+    ["http://localhost:3100", "http://127.0.0.1:3100"],
+  );
+
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url) => {
+    const value = String(url);
+    calls.push(value);
+    if (value.includes("127.0.0.1")) throw new TypeError("fetch failed");
+    return new Response(JSON.stringify({ id: "controller-id" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const api = new PaperclipApi({
+      baseUrl: "http://127.0.0.1:3100",
+      apiKey: "test-key",
+      timeoutMs: 250,
+    });
+    const result = await api.request("GET", "/api/agents/me");
+    assert.strictEqual(result.id, "controller-id");
+    assert.strictEqual(api.baseUrl, "http://localhost:3100");
+    assert.deepStrictEqual(calls, [
+      "http://127.0.0.1:3100/api/agents/me",
+      "http://localhost:3100/api/agents/me",
+    ]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
 async function main() {
+  await paperclipLoopbackRecoveryTest();
   assert.deepStrictEqual(
     normalizeHeartbeat({
       runId: "pc-run-1",
@@ -382,7 +425,7 @@ async function main() {
   clarificationSyncFailure.dispose();
   loopController.dispose();
 
-  console.log("ok Paperclip controls one CodeMe task, prevents duplicate dispatch, and stops repeated tool loops");
+  console.log("ok Paperclip recovers loopback control-plane access, controls one CodeMe task, prevents duplicate dispatch, and stops repeated tool loops");
 }
 
 main().catch((error) => {
