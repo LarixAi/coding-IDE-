@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { startAgentRun, startPipelineRun } = require("../../packages/agent-runtime");
+const { startAgentRun, startPipelineRun, resumePipelineRun } = require("../../packages/agent-runtime");
 const { stripNegatedEditing } = require("../../packages/agent-runtime/intent");
 const { composerStage, composerActivity, compactTools, compactRunStream, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
 
@@ -867,6 +867,70 @@ class ComposerSession {
     if (!this.active || !this.active.handle) return reject("idle", "No run is in progress.");
     this.active.handle.cancel();
     return { ok: true, requestId: this.active.requestId, runId: this.active.runId };
+  }
+
+  resume() {
+    if (this.running) return reject("busy", "The current run is still active.");
+    if (!this.runId) return reject("no_checkpoint", "There is no run to resume.");
+    const stored = this.store.load(this.runId);
+    if (!stored || !stored.pipelineCheckpoint) return reject("no_checkpoint", "This run has no saved checkpoint.");
+
+    const selection = {
+      provider: stored.provider || (this.selected && this.selected.provider) || "ollama-local",
+      id: stored.effectiveModel || stored.requestedModel || (this.selected && this.selected.id) || "",
+    };
+    if (!selection.id) return reject("no_model", "The saved run has no model.");
+    let provider;
+    try {
+      provider = this.createProvider(selection);
+    } catch (error) {
+      return reject("provider_unavailable", error instanceof Error ? error.message : String(error));
+    }
+
+    const registry = this.createRegistry(stored.mode || "controlled");
+    const requestId = crypto.randomBytes(8).toString("hex");
+    const publishing = new PublishingStore(this.store, (run) => this.publish(requestId, run));
+    let handle;
+    try {
+      handle = resumePipelineRun(stored.id, {
+        provider,
+        registry,
+        store: publishing,
+        capabilities: this.capabilities,
+        externalTools: this.externalTools,
+        workspaceRoot: this.root,
+        timeoutMs: stored.timeoutMs || (stored.composerMode === "code" ? 300000 : 180000),
+        retryTimeoutMs: stored.timeoutMs || (stored.composerMode === "code" ? 300000 : 180000),
+        maxIterations: stored.maxIterations || 20,
+        maxRepairRounds: 2,
+        maxToolCallsPerTurn: 8,
+      });
+    } catch (error) {
+      return reject(error && error.code ? String(error.code) : "resume_failed", error instanceof Error ? error.message : String(error));
+    }
+
+    this.requestId = requestId;
+    this.runId = handle.id;
+    this.running = true;
+    this.stage = "Understanding";
+    this.activity = "Resuming from checkpoint…";
+    this.error = "";
+    this.notice = "";
+    this.active = {
+      requestId,
+      runId: handle.id,
+      handle,
+      baseThread: this.thread.map((item) => ({ ...item })),
+    };
+    this.emit();
+    handle.done.then((run) => {
+      this.publish(requestId, run);
+      this.finishRequest(requestId, run);
+    }).catch((error) => {
+      this.failRequest(requestId, error instanceof Error ? error.message : String(error));
+    });
+
+    return { ok: true, requestId, runId: handle.id, resumed: true };
   }
 
   publish(requestId, run) {
