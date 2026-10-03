@@ -63,6 +63,30 @@
         "title": "CodeMe: Settings",
         "category": "CodeMe",
         "icon": "$(gear)"
+      },
+      {
+        "command": "codeme.openExplorer",
+        "title": "CodeMe: Show Explorer",
+        "category": "CodeMe",
+        "icon": "$(files)"
+      },
+      {
+        "command": "codeme.openTerminal",
+        "title": "CodeMe: Show Terminal",
+        "category": "CodeMe",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "codeme.openPreview",
+        "title": "CodeMe: Open Preview",
+        "category": "CodeMe",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "codeme.openFile",
+        "title": "CodeMe: Open Workspace File",
+        "category": "CodeMe",
+        "icon": "$(go-to-file)"
       }
     ],
     "configurationDefaults": {
@@ -76,7 +100,13 @@
       "chat.titleBar.openInAgentsWindow.enabled": false,
       "workbench.secondarySideBar.defaultVisibility": "visible",
       "workbench.tips.enabled": false,
-      "workbench.editor.empty.hint": "hidden"
+      "workbench.editor.empty.hint": "hidden",
+      "workbench.panel.defaultLocation": "bottom",
+      "explorer.compactFolders": false,
+      "explorer.decorations.badges": true,
+      "explorer.decorations.colors": true,
+      "workbench.tree.indent": 12,
+      "workbench.tree.renderIndentGuides": "always"
     },
     "configuration": {
       "title": "CodeMe",
@@ -94,6 +124,21 @@
           "command": "codeme.openSettings",
           "when": "view == codeme.agent",
           "group": "navigation@90"
+        },
+        {
+          "command": "codeme.openExplorer",
+          "when": "view == codeme.agent",
+          "group": "navigation@10"
+        },
+        {
+          "command": "codeme.openTerminal",
+          "when": "view == codeme.agent",
+          "group": "navigation@20"
+        },
+        {
+          "command": "codeme.openPreview",
+          "when": "view == codeme.agent",
+          "group": "navigation@30"
         }
       ]
     }
