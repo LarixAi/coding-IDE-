@@ -122,6 +122,31 @@ async function main() {
   };
 
   const session = new composerModule.ComposerSession(n8n);
+  session.attachments = [{
+    kind: "image",
+    path: ".codeme/inbox/reference.png",
+    name: "reference.png",
+    type: "image/png",
+    size: 1200,
+  }];
+  let visionCalls = 0;
+  session.analyzeImages = async () => {
+    visionCalls += 1;
+    return {
+      ok: true,
+      source: "ollama-local",
+      sourceLabel: "Local",
+      model: "qwen2.5vl:7b",
+      spec: {
+        kind: "website",
+        summary: "Luxury dealership reference",
+        layout: "Dark hero, inventory grid, premium contact CTA",
+        visualHierarchy: "Large vehicle hero then inventory cards",
+        palette: ["black", "white", "blue"],
+        components: ["hero", "inventory-card", "cta"],
+      },
+    };
+  };
   const controller = new multitaskModule.MultitaskController({ session });
 
   const routed = await session.submit(
@@ -133,9 +158,14 @@ async function main() {
   assert.strictEqual(routed.multitask, true);
   assert.strictEqual(routed.orchestrated, true);
   assert.strictEqual(enhancementCalls.length, 1);
+  assert.strictEqual(visionCalls, 1);
+  assert.match(enhancementCalls[0].prompt, /LOCAL VISION ANALYSIS/);
+  assert.match(enhancementCalls[0].prompt, /Luxury dealership reference/);
   assert.ok(enhancementCalls[0].context.requestId.startsWith("trace_"));
   assert.strictEqual(enhancementCalls[0].context.requestId, enhancementCalls[0].context.runId);
-  assert.strictEqual(controller.started.goal, "ENHANCED DEALERSHIP BRIEF");
+  assert.match(controller.started.goal, /^ENHANCED DEALERSHIP BRIEF/);
+  assert.match(controller.started.goal, /LOCAL VISION ANALYSIS/);
+  assert.match(controller.started.goal, /Luxury dealership reference/);
   assert.match(controller.started.options.visibleText, /full dealership website/i);
   assert.strictEqual(controller.started.options.traceId, enhancementCalls[0].context.requestId);
   assert.strictEqual(session.originalCalls.length, 0, "large READY task must not start the direct CodeMe model loop");
@@ -196,7 +226,7 @@ async function main() {
   assert.strictEqual(assignedSession.originalCalls[0].options.skipEnhancement, true);
   assert.strictEqual(assignedSession.originalCalls[0].options.skipPaperclip, true);
 
-  console.log("ok prompt.enrich -> Paperclip handoff, website quality injection, simple-task bypass, trace propagation, and recursion guard");
+  console.log("ok prompt.enrich -> vision -> Paperclip handoff, website quality injection, simple-task bypass, trace propagation, and recursion guard");
 }
 
 main().catch((error) => {
