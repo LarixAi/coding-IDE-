@@ -108,6 +108,16 @@ class SettingsPanel {
         await this.render();
         return;
       }
+
+      if (message.type === "settings-mcp-update") {
+        if (typeof this.options.updateMcp !== "function") {
+          throw new Error("Universal MCP settings are not connected");
+        }
+        const servers = Array.isArray(message.servers) ? message.servers : [];
+        await this.options.updateMcp(servers);
+        await this.render();
+        return;
+      }
     } catch (error) {
       if (this.panel) {
         this.panel.webview.postMessage({
