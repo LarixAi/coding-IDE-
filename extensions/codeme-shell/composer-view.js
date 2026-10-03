@@ -129,7 +129,7 @@ function renderComposer(nonce) {
 
     .result { margin: 7px 0 0; }
     .result-summary { margin: 0 1px 8px; color: #c8ced8; line-height: 1.48; white-space: pre-wrap; }
-    .error { margin: 0 1px 7px; color: #ff918b; font-size: 11px; }
+    .error { margin: 0 1px 7px; color: #ff918b; font-size: 11px; }\n    .run-inspector { margin: 7px 1px 0; border-top: 1px solid #292e36; padding-top: 6px; }\n    .run-inspector > summary { cursor: pointer; list-style: none; color: #87919f; font-size: 10px; }\n    .run-inspector > summary::-webkit-details-marker { display: none; }\n    .run-inspector > summary:hover { color: #c8ced8; }\n    .run-meta { margin: 7px 0; color: #7f8997; font-size: 9px; line-height: 1.5; }\n    .run-event { display: grid; grid-template-columns: 46px minmax(0,1fr) auto; gap: 6px; padding: 3px 2px; border-top: 1px solid #22272e; font-size: 9px; }\n    .run-event-time { color: #687382; font-family: var(--vscode-editor-font-family, ui-monospace, monospace); }\n    .run-event-name { overflow: hidden; color: #aeb7c3; text-overflow: ellipsis; white-space: nowrap; }\n    .run-event-status { color: #7f8997; }\n    .run-event-status.failed { color: #ff918b; }\n    .context-meter { margin-top: 7px; padding: 6px 7px; background: #15181c; color: #8994a2; font-size: 9px; line-height: 1.45; }
 
     footer { flex-shrink: 0; padding: 0 7px 7px; background: linear-gradient(to bottom, #191c2100, #191c21 10px); }
     .changed-files { display: none; margin: 0 1px 6px; padding-top: 6px; border-top: 1px solid #272c33; }
@@ -1237,12 +1237,72 @@ function renderComposer(nonce) {
         }
       }
 
-      if (state.verification && state.verification.status === "failed") {
+      renderRunInspector(state.runLedger);\n\n      if (state.verification && state.verification.status === "failed") {
         const verify = document.createElement("p");
         verify.className = "error";
         verify.textContent = "Verification issue" + (state.verification.summary ? " — " + state.verification.summary : "");
         result.appendChild(verify);
       }
+    }
+    function renderRunInspector(ledger) {
+      if (!ledger) return;
+      const details = document.createElement("details");
+      details.className = "run-inspector";
+      const summary = document.createElement("summary");
+      const total = ledger.summary && Number(ledger.summary.toolCalls || 0);
+      const failed = ledger.summary && Number(ledger.summary.failedToolCalls || 0);
+      summary.textContent = "View run details · " + total + " actions · " + formatDuration(ledger.durationMs)
+        + (failed ? " · " + failed + " failed" : "");
+      details.appendChild(summary);
+
+      const meta = document.createElement("div");
+      meta.className = "run-meta";
+      meta.textContent = [
+        ledger.model && ledger.model.id ? "Model: " + ledger.model.id : "",
+        ledger.request && ledger.request.mode ? "Mode: " + ledger.request.mode : "",
+        ledger.lifecycle ? "Status: " + ledger.lifecycle : "",
+        ledger.runId ? "Run: " + ledger.runId : "",
+      ].filter(Boolean).join(" · ");
+      details.appendChild(meta);
+
+      const events = Array.isArray(ledger.events) ? ledger.events : [];
+      for (const event of events) {
+        const row = document.createElement("div");
+        row.className = "run-event";
+        const time = document.createElement("span");
+        time.className = "run-event-time";
+        time.textContent = event.durationMs == null ? "—" : formatDuration(event.durationMs);
+        const name = document.createElement("span");
+        name.className = "run-event-name";
+        name.textContent = event.tool || event.type || "event";
+        const status = document.createElement("span");
+        status.className = "run-event-status " + (event.status || "");
+        status.textContent = event.status === "failed" ? "failed" : "✓";
+        row.appendChild(time);
+        row.appendChild(name);
+        row.appendChild(status);
+        details.appendChild(row);
+      }
+
+      if (ledger.context) {
+        const context = document.createElement("div");
+        context.className = "context-meter";
+        context.textContent = "Context telemetry · ~" + Number(ledger.context.approximateTokens || 0).toLocaleString()
+          + " tokens · " + Number(ledger.context.conversationMessages || 0) + " prior messages · "
+          + Number(ledger.context.toolCalls || 0) + " tool calls · compaction "
+          + Number(ledger.context.compactions || 0);
+        details.appendChild(context);
+      }
+      result.appendChild(details);
+    }
+    function formatDuration(value) {
+      const ms = Number(value);
+      if (!Number.isFinite(ms) || ms < 0) return "—";
+      if (ms < 1000) return Math.round(ms) + "ms";
+      if (ms < 60000) return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + "s";
+      const minutes = Math.floor(ms / 60000);
+      const seconds = Math.round((ms % 60000) / 1000);
+      return minutes + "m " + seconds + "s";
     }
     function renderThread(items, deferLastAssistant) {
       messages.innerHTML = "";
