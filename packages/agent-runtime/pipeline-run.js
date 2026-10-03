@@ -21,6 +21,13 @@ const {
   loadOrCreateProjectBrain,
   saveProjectBrain,
 } = require("./project-brain-store");
+const {
+  loadSkills,
+  matchSlashSkill,
+  skillCatalogText,
+  skillToolDefinition,
+  runSkill,
+} = require("./skills");
 
 const MUTATION_TOOLS = new Set(["file.write", "file.patch", "dir.create"]);
 const READ_ONLY_BLOCKED = new Set([
@@ -451,6 +458,7 @@ async function executePipelineRun(run, options, followUpQueue) {
   let attachmentContext = [];
   let projectBrain = null;
   let projectRoot = String(options.workspaceRoot || "").trim();
+  let skills = [];
   if (run.mode !== "chat_only") {
     const inspected = await safeContextCall(registry, "workspace.inspect", {});
     if (inspected && inspected.ok) {
@@ -487,6 +495,15 @@ async function executePipelineRun(run, options, followUpQueue) {
       }
       saveProjectBrain(projectRoot, projectBrain);
     }
+    if (projectRoot) {
+      skills = loadSkills(projectRoot);
+      const catalog = skillCatalogText(skills);
+      const explicit = matchSlashSkill(run.originalGoal || run.goal, skills);
+      const skillText = explicit
+        ? "EXPLICIT SKILL /" + explicit.skill.name + ":\n" + explicit.skill.instructions
+        : catalog;
+      if (skillText) projectRules = [projectRules, skillText].filter(Boolean).join("\n\n");
+    }
   }
 
   const allowExternalEvidence = run.mode !== "read_only" || readOnlyNeedsExternalEvidence(run.goal);
@@ -519,7 +536,8 @@ async function executePipelineRun(run, options, followUpQueue) {
     ? []
     : registry.definitions().filter((tool) => run.mode !== "read_only" || !READ_ONLY_BLOCKED.has(tool.name));
   const memoryDefinitions = run.mode === "chat_only" || !projectRoot ? [] : MEMORY_TOOL_DEFINITIONS;
-  const definitions = [...baseDefinitions, ...memoryDefinitions, ...capabilityDefinitions, ...externalDefinitions];
+  const skillDefinitions = run.mode === "chat_only" || !projectRoot ? [] : [skillToolDefinition()];
+  const definitions = [...baseDefinitions, ...memoryDefinitions, ...skillDefinitions, ...capabilityDefinitions, ...externalDefinitions];
   run.pipeline.toolPolicy = allowExternalEvidence ? "all-legal-tools" : "local-read-only-tools";
   const context = buildModelContext({
     goal: run.goal,
@@ -571,6 +589,8 @@ async function executePipelineRun(run, options, followUpQueue) {
           tool: name,
           data: { text: projectBrainText(recalled), context: recalled },
         };
+      } else if (name === "skill.run" && projectRoot) {
+        result = runSkill(skills, call.args.name);
       } else if (name === "memory.save" && projectRoot) {
         projectBrain = loadOrCreateProjectBrain(projectRoot, { originalPrompt: run.originalGoal || run.goal, projectId: projectRoot });
         const text = String(call.args.text || "").trim().slice(0, 2000);
