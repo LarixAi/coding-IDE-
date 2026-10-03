@@ -470,27 +470,96 @@ function renderComposer(nonce) {
       event.preventDefault();
       event.stopPropagation();
       shell.classList.remove("over");
+      notice.textContent = "Adding dropped files…";
       collectDrops(event.dataTransfer).then((files) => {
+        if (!files.length) {
+          notice.textContent = "No readable files were found in that drop.";
+          return;
+        }
+        notice.textContent = "Adding " + files.length + " file" + (files.length === 1 ? "" : "s") + "…";
         vscode.postMessage({ type: "attach", files });
+      }).catch((error) => {
+        notice.textContent = "Could not read dropped files: " + String(error && error.message || error);
       });
     });
+
+    function browserDropFiles(transfer) {
+      if (!transfer) return [];
+      const fromItems = [];
+      if (transfer.items && transfer.items.length) {
+        for (const item of transfer.items) {
+          if (!item || item.kind !== "file" || typeof item.getAsFile !== "function") continue;
+          const file = item.getAsFile();
+          if (file) fromItems.push(file);
+        }
+      }
+      if (fromItems.length) return fromItems;
+      return transfer.files ? Array.from(transfer.files) : [];
+    }
+
+    function dropBasename(value) {
+      const raw = String(value || "").replace(/\\/g, "/");
+      const last = raw.split("/").pop() || raw;
+      try { return decodeURIComponent(last); } catch { return last; }
+    }
+
+    async function inlineDropFile(file) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const chunk = 0x8000;
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      return {
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        lastModified: file.lastModified,
+        contents: btoa(binary),
+      };
+    }
+
     async function collectDrops(transfer) {
       const listed = droppedPaths(transfer);
-      const files = listed.map((item) => ({ path: item.path }));
-      const names = new Set(files.map((item) => String(item.path || "").split("/").pop()));
-      if (!transfer || !transfer.files) return files;
-      for (const file of transfer.files) {
+      const files = [];
+      const pathKeys = new Set();
+      const pathNames = new Map();
+
+      for (const item of listed) {
+        const rawPath = String(item && item.path || "").trim();
+        if (!rawPath) continue;
+        const key = rawPath.replace(/\\/g, "/");
+        if (pathKeys.has(key)) continue;
+        pathKeys.add(key);
+        files.push({ path: rawPath });
+        const base = dropBasename(rawPath);
+        if (base) pathNames.set(base, (pathNames.get(base) || 0) + 1);
+      }
+
+      for (const file of browserDropFiles(transfer)) {
+        if (!file) continue;
         if (file.path) {
-          if (!files.some((item) => item.path === file.path)) files.push({ path: file.path, name: file.name, type: file.type, size: file.size });
+          const key = String(file.path).replace(/\\/g, "/");
+          const existing = files.find((item) => String(item.path || "").replace(/\\/g, "/") === key);
+          if (existing) {
+            existing.name = existing.name || file.name;
+            existing.type = existing.type || file.type;
+            existing.size = existing.size || file.size;
+          } else {
+            files.push({ path: file.path, name: file.name, type: file.type, size: file.size });
+            pathKeys.add(key);
+          }
           continue;
         }
-        if (names.has(file.name)) continue;
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        const chunk = 0x8000;
-        let binary = "";
-        for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-        files.push({ name: file.name, type: file.type, size: file.size, contents: btoa(binary) });
+
+        // Code OSS may expose file:// resource paths and browser File objects for
+        // the same item. Only skip the in-memory copy when exactly one path already
+        // identifies that basename; otherwise preserve the File so multi-selects
+        // with duplicate names are not silently collapsed.
+        if ((pathNames.get(file.name) || 0) === 1) continue;
+        files.push(await inlineDropFile(file));
       }
+
       return files;
     }
     function current(message) {
