@@ -237,12 +237,18 @@ class HttpMcpClient {
 }
 
 class UniversalMcpRegistry {
-  constructor(context, primaryProvider = null) {
+  constructor(context, primaryProvider = null, localProviders = []) {
     this.context = context;
     this.primary = primaryProvider;
+    this.locals = Array.isArray(localProviders) ? localProviders.filter(Boolean) : [];
     this.clients = new Map();
     this.toolMap = new Map();
     this.status = [];
+  }
+
+  addLocalProvider(provider) {
+    if (provider && !this.locals.includes(provider)) this.locals.push(provider);
+    return this;
   }
 
   servers() {
@@ -304,6 +310,20 @@ class UniversalMcpRegistry {
       }
     }
 
+    for (const provider of this.locals) {
+      try {
+        const localTools = await provider.listTools(signal);
+        for (const tool of localTools || []) {
+          if (!tool || !tool.name) continue;
+          definitions.push({ ...tool, external: false });
+          this.toolMap.set(tool.name, { local: provider, wire: tool.name });
+        }
+        status.push({ id: "local_" + slug(provider.constructor && provider.constructor.name || "tools"), name: provider.constructor && provider.constructor.name || "Local tools", ok: true, count: (localTools || []).length, local: true });
+      } catch (error) {
+        status.push({ id: "local_tools", name: "Local tools", ok: false, count: 0, local: true, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
     for (const server of this.servers().filter((item) => item.enabled !== false)) {
       try {
         const client = await this.clientFor(server);
@@ -355,6 +375,7 @@ class UniversalMcpRegistry {
     const item = this.toolMap.get(name);
     if (!item) return { ok: false, tool: name, trusted: false, error: { code: "unknown_mcp_tool", message: "Unknown MCP tool " + name } };
     if (item.primary) return this.primary.call(item.wire, args || {}, signal);
+    if (item.local) return item.local.call(item.wire, args || {}, signal);
     const result = await item.client.callTool(item.externalName, args || {}, signal);
     return {
       ok: Boolean(result && result.ok),
