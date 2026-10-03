@@ -1274,19 +1274,40 @@ class ComposerViewProvider {
       return;
     }
     if (message.type === "attach") {
-      const files = message.files || [];
+      const files = Array.isArray(message.files) ? message.files : [];
       if (!files.length) {
-        this.session.notice = "Drop a file, image, or PDF onto the composer.";
+        this.session.notice = "Drop one or more files, images, or PDFs onto the composer.";
         this.session.emit();
         return;
       }
-      for (const file of files) {
-        if (file && file.contents) this.session.attach(file);
-        else this.session.attach(fileFromUri(file.path || file));
-      }
+      this.attachFiles(files);
       return;
     }
     if (message.type === "pick") await this.pickFiles();
+  }
+
+  attachFiles(files) {
+    const added = [];
+    const rejected = [];
+    for (const file of Array.isArray(files) ? files : []) {
+      const input = file && file.contents ? file : fileFromUri(file && file.path ? file.path : file);
+      const result = this.session.attach(input);
+      if (result && result.ok) added.push(result.attachment);
+      else if (result) rejected.push(result);
+    }
+
+    if (added.length || rejected.length) {
+      const parts = [];
+      if (added.length) parts.push("Attached " + added.length + " file" + (added.length === 1 ? "" : "s"));
+      if (rejected.length) {
+        const reasons = [...new Set(rejected.map((item) => item.message).filter(Boolean))];
+        parts.push(rejected.length + " skipped" + (reasons.length ? ": " + reasons.join(" · ") : ""));
+      }
+      this.session.notice = parts.join(" · ");
+      this.session.emit();
+    }
+
+    return { added, rejected };
   }
 
   async pickFiles() {
@@ -1304,7 +1325,7 @@ class ComposerViewProvider {
         { name: "Documents", extensions: ["md", "txt", "pdf", "json", "html", "css", "js", "ts"] },
       ],
     });
-    for (const uri of picked || []) this.session.attach(fileFromUri(uri.toString()));
+    this.attachFiles((picked || []).map((uri) => ({ path: uri.toString() })));
   }
 }
 
