@@ -118,6 +118,33 @@ class SettingsPanel {
         await this.render();
         return;
       }
+
+      if (message.type === "settings-memory-clear") {
+        if (typeof this.options.clearProjectBrain !== "function") {
+          throw new Error("Project Brain management is not connected");
+        }
+        await this.options.clearProjectBrain();
+        await this.render();
+        return;
+      }
+
+      if (message.type === "settings-skill-save") {
+        if (typeof this.options.saveSkill !== "function") {
+          throw new Error("Skill management is not connected");
+        }
+        await this.options.saveSkill(message.skill && typeof message.skill === "object" ? message.skill : {});
+        await this.render();
+        return;
+      }
+
+      if (message.type === "settings-skill-delete") {
+        if (typeof this.options.deleteSkill !== "function") {
+          throw new Error("Skill management is not connected");
+        }
+        await this.options.deleteSkill(String(message.name || ""));
+        await this.render();
+        return;
+      }
     } catch (error) {
       if (this.panel) {
         this.panel.webview.postMessage({
