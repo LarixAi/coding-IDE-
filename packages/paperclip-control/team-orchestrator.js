@@ -1,5 +1,10 @@
 "use strict";
 
+const {
+  isWebsiteBuildGoal,
+  websiteRoleInstructions,
+} = require("../agent-runtime/website-quality");
+
 function listItems(body, keys = []) {
   if (Array.isArray(body)) return body;
   for (const key of keys) {
@@ -239,6 +244,9 @@ class PaperclipTeamOrchestrator {
   async advance(record, parent) {
     if (this.disposed) throw new Error("Paperclip team orchestrator was disposed");
 
+    const websiteBuild = isWebsiteBuildGoal(parentTaskText(parent));
+    const websiteInstructions = (role) => websiteBuild ? websiteRoleInstructions(role) : "";
+
     const product = await this.ensurePhase({
       record,
       parent,
@@ -251,6 +259,7 @@ class PaperclipTeamOrchestrator {
         "",
         "You are the Product Manager for this parent task.",
         "Define the user outcome, bounded requirements, acceptance criteria, non-goals, ambiguities, and priority.",
+        websiteInstructions("product"),
         "Do not choose implementation files, frameworks, libraries, or architecture unless the parent task explicitly constrains them.",
         "Do not edit source files.",
         "End the final response with exactly: PRODUCT: READY",
@@ -280,6 +289,7 @@ class PaperclipTeamOrchestrator {
         "You are the Software Architect planning this parent task.",
         "Inspect the current CodeMe workspace as needed, but do not edit source files.",
         "Produce a bounded technical plan: runtime path, likely files/components, dependencies, risks, implementation steps, and verification strategy for the Developer.",
+        websiteInstructions("cto"),
         "Treat actual runtime evidence as stronger than a file-name or framework assumption.",
         "Do not implement the task.",
         "End the final response with exactly: PLAN: READY",
@@ -344,6 +354,7 @@ class PaperclipTeamOrchestrator {
           plan || "(No Software Architect comment was available; re-inspect the workspace before editing.)",
           researchSummary ? "\nResearch evidence:\n" + researchSummary : "",
           repairContext ? "\nRepair evidence from Test/Reviewer:\n" + repairContext : "",
+          websiteInstructions("developer"),
           "",
           cycle === 0
             ? "Implement only the parent task."
@@ -374,6 +385,7 @@ class PaperclipTeamOrchestrator {
           developer.summary || "(No developer comment was available.)",
           "",
           "Verify the requested behaviour independently.",
+          websiteInstructions("test"),
           "Do not edit, patch, create, or delete source files.",
           "Use diagnostics, tests, source/config reads, the CodeMe-owned preview process, and real browser verification where applicable.",
           "Identify the actual runtime/served path that produces the verified behaviour. Trace the entrypoint, server/static configuration, imports, or equivalent evidence rather than assuming every similarly named file is active.",
@@ -388,7 +400,9 @@ class PaperclipTeamOrchestrator {
       if (test.waiting) return test.result;
       this.requireDone(test, "Test");
 
-      if (!includesMarker(test.summary, "TEST: PASS")) {
+      const testPassed = includesMarker(test.summary, "TEST: PASS")
+        && (!websiteBuild || includesMarker(test.summary, "WEB QUALITY: PASS"));
+      if (!testPassed) {
         if (cycle >= this.maxRepairCycles) {
           throw new Error(
             "Test did not produce TEST: PASS after "
@@ -423,6 +437,7 @@ class PaperclipTeamOrchestrator {
           "",
           "Test evidence:",
           test.summary || "(No test comment was available.)",
+          websiteInstructions("reviewer"),
           "",
           "Review the working-tree diff, requested scope, diagnostics, and verification evidence independently. Do not accept the Test Agent's conclusion without checking its evidence.",
           "Do not edit or silently repair source files.",
@@ -439,7 +454,9 @@ class PaperclipTeamOrchestrator {
       if (reviewer.waiting) return reviewer.result;
       this.requireDone(reviewer, "Reviewer");
 
-      if (includesMarker(reviewer.summary, "REVIEW: APPROVED")) {
+      const reviewerApproved = includesMarker(reviewer.summary, "REVIEW: APPROVED")
+        && (!websiteBuild || includesMarker(reviewer.summary, "WEB REVIEW: APPROVED"));
+      if (reviewerApproved) {
         record.phase = "complete";
         await this.finishParent(
           record,
@@ -451,8 +468,8 @@ class PaperclipTeamOrchestrator {
             "Software Architect: plan completed.",
             researchSummary ? "Research: evidence completed." : "Research: not required.",
             "Developer: implementation completed.",
-            "Test: TEST: PASS.",
-            "Reviewer: REVIEW: APPROVED.",
+            "Test: TEST: PASS." + (websiteBuild ? " WEB QUALITY: PASS." : ""),
+            "Reviewer: REVIEW: APPROVED." + (websiteBuild ? " WEB REVIEW: APPROVED." : ""),
             "Repair cycles: " + cycle + ".",
           ].join("\n"),
           [],
