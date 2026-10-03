@@ -1,7 +1,7 @@
 {
   "version": 1,
   "name": "CodeMe Pipeline v2 Canonical Lock",
-  "baselineCommit": "eb85f5f5438aea5cc1d65e84f9c445ae9f7300e1",
+  "baselineCommit": "8056f2b49aa601dd133c25afb4afeaecfcaa605e",
   "baselineBranch": "pipeline-v2-locked-baseline",
   "lockedAt": "2026-10-03",
   "policy": {
@@ -10,7 +10,7 @@
     "addons": "New features should integrate through external tools, capabilities, providers, UI modules, or other extension points without changing the protected pipeline core."
   },
   "protectedFiles": {
-    "packages/agent-runtime/pipeline-run.js": "cd7d176ce454f17b1ff72dc49e41934976b609b5",
+    "packages/agent-runtime/pipeline-run.js": "84fb365658be2f25dc5b9f2b7d399d5a0cca0212",
     "packages/agent-runtime/pipeline-loop.js": "88efeb812c5f02e53d64cca3c36f8093a2d03eeb",
     "packages/agent-runtime/pipeline-context.js": "79c906348f6f50b1e416ca3cad0223803ff021ab",
     "packages/agent-runtime/pipeline-instructions.js": "bec7ad113d7432e1ca12a4638cd0f4e14860bd01",
