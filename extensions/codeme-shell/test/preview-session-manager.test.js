@@ -170,7 +170,57 @@ async function main() {
   assert.strictEqual(sessions.logs(root).sessionId, sessionId);
 
   await sessions.stop(root);
-  console.log("ok unified preview session lifecycle");
+
+  // A recorded "running" process must not be reused forever when its HTTP
+  // origin is dead. process.status refreshes reachability and marks it stale,
+  // allowing the next process.start to replace it instead of suppressing start.
+  const stalePort = await freePort();
+  const staleRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-session-stale-"));
+  fs.writeFileSync(path.join(staleRoot, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }));
+  fs.writeFileSync(path.join(staleRoot, "server.js"), `server.listen(${stalePort});\n`);
+  const staleFake = createFakeVscode(stalePort, { value: 200 });
+  let staleProbeMode = "reachable-via-localhost";
+  const staleSessions = createPreviewSessionManager(staleFake.vscode, {
+    healthGraceMs: 0,
+    probe: async (url) => {
+      if (staleProbeMode === "reachable-via-localhost") {
+        return {
+          available: true,
+          code: "ok",
+          url: String(url).replace("127.0.0.1", "localhost"),
+          statusCode: 200,
+        };
+      }
+      return {
+        available: false,
+        code: "preview_not_running",
+        cause: "ECONNREFUSED",
+        message: "connect ECONNREFUSED",
+        url,
+        statusCode: null,
+      };
+    },
+  });
+
+  const staleStart = await staleSessions.start(staleRoot, "");
+  assert.strictEqual(staleStart.status, "running");
+  const adopted = await staleSessions.refresh(staleRoot);
+  assert.strictEqual(adopted.status, "running");
+  assert.ok(adopted.origin.includes("localhost"), adopted.origin);
+  assert.strictEqual(adopted.healthCode, "reachable");
+
+  staleProbeMode = "dead";
+  const staleStatus = await staleSessions.refresh(staleRoot);
+  assert.strictEqual(staleStatus.status, "stale");
+  assert.strictEqual(staleStatus.healthCode, "ECONNREFUSED");
+
+  const replaced = await staleSessions.start(staleRoot, "");
+  assert.strictEqual(replaced.started, true);
+  assert.strictEqual(replaced.restarted, true);
+  assert.strictEqual(staleFake.terminalStarts, 2, "stale preview must be replaced, not reused");
+  await staleSessions.stop(staleRoot);
+
+  console.log("ok unified preview session lifecycle, loopback adoption, and stale-process recovery");
 }
 
 main().catch((error) => {
