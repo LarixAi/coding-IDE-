@@ -1,6 +1,7 @@
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
+const { fileURLToPath } = require("url");
 
 const PREVIEW_TERMINAL = "CodeMe Preview";
 const STATIC_SERVERS = new Map();
@@ -202,7 +203,7 @@ function workspaceFilePath(root, candidate) {
   let value = String(candidate || "");
   if (value.startsWith("file:")) {
     try {
-      value = decodeURIComponent(new URL(value).pathname);
+      value = fileURLToPath(value);
     } catch {
       return "";
     }
