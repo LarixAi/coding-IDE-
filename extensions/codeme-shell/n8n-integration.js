@@ -491,7 +491,7 @@ class N8nIntegration {
     const timeoutMs = Number(options.timeoutMs || settings.enhanceTimeoutMs || 200000);
     const request = timedSignal(options.signal, timeoutMs);
     try {
-      response = await fetch(url, {
+      const sent = await fetchWithLoopbackFallback(url, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -515,6 +515,7 @@ class N8nIntegration {
         }),
         signal: request.signal,
       });
+      response = sent.response;
     } catch (error) {
       const message = request.didTimeout()
         ? "Prompt enhancement timed out after " + Math.ceil(timeoutMs / 1000) + " seconds."
@@ -650,4 +651,4 @@ function listWorkspaceHints(root) {
   return found;
 }
 
-module.exports={N8nIntegration,listWorkspaceHints,localEnhance,attachmentRefs,parseEnhancementResponse,timedSignal};
+module.exports={N8nIntegration,listWorkspaceHints,localEnhance,attachmentRefs,parseEnhancementResponse,timedSignal,n8nServiceCandidates,probeN8nService,fetchWithLoopbackFallback};
