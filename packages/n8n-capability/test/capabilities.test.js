@@ -224,6 +224,71 @@ async function main() {
     }
   });
 
+  await test("selected capabilities can route through the shared gateway", async () => {
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const request = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+      seen.push({ url: req.url, capability: request.capability });
+      res.setHeader("Content-Type", "application/json");
+      if (req.url === "/webhook/codeme-capabilities") {
+        res.end(JSON.stringify({
+          protocolVersion: 1,
+          requestId: request.requestId,
+          status: "ok",
+          data: { capabilities: [{ name: "research.problem", description: "research" }] },
+          sources: [],
+          warnings: [],
+          error: null,
+          duration: 1,
+        }));
+        return;
+      }
+      res.end(JSON.stringify({
+        protocolVersion: 1,
+        requestId: request.requestId,
+        status: "ok",
+        data: {
+          answer: "evidence",
+          sources: [{ title: "React", url: "https://react.dev/" }],
+          query: request.input && request.input.problem,
+        },
+        sources: [],
+        warnings: [],
+        error: null,
+        duration: 1,
+      }));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const hub = new N8nCapabilityProvider({
+        baseUrl: `http://127.0.0.1:${server.address().port}`,
+        retries: 0,
+        gatewayPath: "/webhook/codeme-gateway-v1",
+        gatewayCapabilities: ["research.problem"],
+      });
+      const listed = await hub.listCapabilities();
+      assert.deepStrictEqual(listed.map((item) => item.name), ["research.problem"]);
+      const result = await hub.invoke({
+        protocolVersion: 1,
+        requestId: "req_gateway",
+        runId: "run_gateway",
+        capability: "research.problem",
+        input: { problem: "React error boundaries" },
+        context: {},
+        timeout: 10000,
+      });
+      assert.strictEqual(result.status, "ok");
+      assert.strictEqual(result.data.answer, "evidence");
+      assert.ok(seen.some((item) => item.url === "/webhook/codeme-capabilities"));
+      assert.ok(seen.some((item) => item.url === "/webhook/codeme-gateway-v1" && item.capability === "research.problem"));
+      assert.ok(!seen.some((item) => item.url === ROUTES["research.problem"]));
+    } finally {
+      server.close();
+    }
+  });
+
   await test("published workflows contain the capability handlers", async () => {
     const research = JSON.parse(fs.readFileSync(path.join(__dirname, "../workflows/research-problem.json"), "utf8"));
     const knowledge = JSON.parse(fs.readFileSync(path.join(__dirname, "../workflows/knowledge-lookup.json"), "utf8"));
