@@ -483,20 +483,6 @@ function renderComposer(nonce) {
       });
     });
 
-    function browserDropFiles(transfer) {
-      if (!transfer) return [];
-      const fromItems = [];
-      if (transfer.items && transfer.items.length) {
-        for (const item of transfer.items) {
-          if (!item || item.kind !== "file" || typeof item.getAsFile !== "function") continue;
-          const file = item.getAsFile();
-          if (file) fromItems.push(file);
-        }
-      }
-      if (fromItems.length) return fromItems;
-      return transfer.files ? Array.from(transfer.files) : [];
-    }
-
     function dropBasename(value) {
       const raw = String(value || "").replace(/\\/g, "/");
       const last = raw.split("/").pop() || raw;
