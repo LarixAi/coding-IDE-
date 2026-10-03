@@ -173,6 +173,7 @@ class ComposerSession {
     this.externalTools = options.externalTools || null;
     this.n8n = options.n8n || null;
     this.analyzeImages = typeof options.analyzeImages === "function" ? options.analyzeImages : null;
+    this.settingsProvider = typeof options.settingsProvider === "function" ? options.settingsProvider : null;
     this.root = options.root || "";
     this.attachments = [];
     this.models = [];
@@ -796,6 +797,7 @@ class ComposerSession {
 
     const requestId = crypto.randomBytes(8).toString("hex");
     if (Number.isFinite(Number(epoch))) this.epoch = Number(epoch);
+    const runtimeSettings = this.settingsProvider ? (this.settingsProvider() || {}) : {};
     const provider = this.createProvider(this.selected);
     const registry = this.createRegistry(this.mode);
     this.requestId = requestId;
@@ -851,6 +853,9 @@ class ComposerSession {
         })),
         inferRequirements: true,
         workspaceRoot: this.root,
+        projectBrainEnabled: !runtimeSettings.memory || runtimeSettings.memory.projectKnowledgeEnabled !== false,
+        memoryWriteEnabled: !runtimeSettings.memory || runtimeSettings.memory.reusableMemoryEnabled !== false,
+        skillsEnabled: !runtimeSettings.skills || runtimeSettings.skills.enabled !== false,
         timeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
         retryTimeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
         maxIterations: this.composerMode === "code" ? 20 : 12,
@@ -913,6 +918,7 @@ class ComposerSession {
     const registry = this.createRegistry(stored.mode || "controlled");
     const requestId = crypto.randomBytes(8).toString("hex");
     const publishing = new PublishingStore(this.store, (run) => this.publish(requestId, run));
+    const runtimeSettings = this.settingsProvider ? (this.settingsProvider() || {}) : {};
     let handle;
     try {
       handle = resumePipelineRun(stored.id, {
@@ -922,6 +928,9 @@ class ComposerSession {
         capabilities: this.capabilities,
         externalTools: this.externalTools,
         workspaceRoot: this.root,
+        projectBrainEnabled: !runtimeSettings.memory || runtimeSettings.memory.projectKnowledgeEnabled !== false,
+        memoryWriteEnabled: !runtimeSettings.memory || runtimeSettings.memory.reusableMemoryEnabled !== false,
+        skillsEnabled: !runtimeSettings.skills || runtimeSettings.skills.enabled !== false,
         timeoutMs: stored.timeoutMs || (stored.composerMode === "code" ? 300000 : 180000),
         retryTimeoutMs: stored.timeoutMs || (stored.composerMode === "code" ? 300000 : 180000),
         maxIterations: stored.maxIterations || 20,
