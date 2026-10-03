@@ -484,7 +484,7 @@ function renderComposer(nonce) {
     });
 
     function dropBasename(value) {
-      const raw = String(value || "").replace(/\\/g, "/");
+      const raw = String(value || "").replace(/\\\\/g, "/");
       const last = raw.split("/").pop() || raw;
       try { return decodeURIComponent(last); } catch { return last; }
     }
@@ -514,7 +514,7 @@ function renderComposer(nonce) {
       for (const item of listed) {
         const rawPath = String(item && item.path || "").trim();
         if (!rawPath) continue;
-        const key = rawPath.replace(/\\/g, "/");
+        const key = rawPath.replace(/\\\\/g, "/");
         if (pathKeys.has(key)) continue;
         pathKeys.add(key);
         files.push({ path: rawPath });
@@ -525,8 +525,8 @@ function renderComposer(nonce) {
       for (const file of browserDropFiles(transfer)) {
         if (!file) continue;
         if (file.path) {
-          const key = String(file.path).replace(/\\/g, "/");
-          const existing = files.find((item) => String(item.path || "").replace(/\\/g, "/") === key);
+          const key = String(file.path).replace(/\\\\/g, "/");
+          const existing = files.find((item) => String(item.path || "").replace(/\\\\/g, "/") === key);
           if (existing) {
             existing.name = existing.name || file.name;
             existing.type = existing.type || file.type;
