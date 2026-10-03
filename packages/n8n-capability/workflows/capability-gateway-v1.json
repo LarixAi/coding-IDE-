@@ -1,0 +1,329 @@
+{
+  "name": "CodeMe Capability Gateway",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "codeme-gateway-v1",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "194accc1-a4f1-4b66-b2b6-d629294f8f2a",
+      "name": "Gateway Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        14480,
+        1248
+      ],
+      "webhookId": "codeme-gateway-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst body = (item && item.body && typeof item.body === 'object') ? item.body : (item || {});\n\nconst requestId = String(body.requestId || `req_${Date.now()}`);\nconst runId = String(body.runId || `run_${Date.now()}`);\nconst capability = String(body.capability || 'research.problem').trim();\nconst input = (body.input && typeof body.input === 'object') ? body.input : {};\nconst clientToken = String(body.token || item.headers?.['x-codeme-token'] || '');\n\n// Permissions mapping\n// Level 0: Safe read/research\n// Level 1: Plan generation & local memory recall/store\n// Level 2: Execution / external side effects\nconst PERMISSION_LEVELS = {\n  'research.problem': 0,\n  'research.web': 0,\n  'research.docs': 0,\n  'knowledge.recall': 0,\n  'knowledge.remember': 1,\n  'planning.decompose': 1,\n  'planning.architecture': 1,\n  'capabilities.list': 0\n};\n\nconst requiredLevel = PERMISSION_LEVELS[capability] ?? 2;\nconst isAuthorized = true;\n\nreturn [{\n  json: {\n    requestId,\n    runId,\n    capability,\n    input,\n    targetModel: String(body.model || 'qwen3.5:9b'),\n    targetEndpoint: String(body.endpoint || 'http://host.docker.internal:11434').replace(/\\/$/, ''),\n    authorized: isAuthorized,\n    permissionLevel: requiredLevel,\n    startedAt: Date.now()\n  }\n}];"
+      },
+      "id": "6dc23535-e374-4759-95f2-cd6accb646c5",
+      "name": "Validate & Check Permissions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        14688,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.capability }}",
+                    "rightValue": "research.",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.capability }}",
+                    "rightValue": "knowledge.",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.capability }}",
+                    "rightValue": "planning.",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c9d95971-7082-4c30-9adc-584894372d7c",
+      "name": "Capability Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        14912,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Validate & Check Permissions').first().json;\nconst search = $input.first().json || {};\nconst problem = String(data.input.problem || data.input.query || '').trim();\nconst rows = (Array.isArray(search.results) ? search.results : []).slice(0, 6).map((r) => ({\n  title: String(r && r.title || '').trim(),\n  url: String(r && r.url || '').trim(),\n  excerpt: String(r && (r.content || r.snippet) || '').trim().slice(0, 1200),\n  source: 'searxng'\n})).filter((r) => r.title && /^https?:\\/\\//i.test(r.url));\n\nreturn [{\n  json: {\n    ...data,\n    branch: 'research',\n    payload: {\n      answer: rows.length\n        ? rows.map((r, i) => `[${i + 1}] ${r.title}: ${r.excerpt}`).join('\\n\\n')\n        : `No sources found for ${problem}`,\n      sources: rows,\n      query: problem\n    }\n  }\n}];"
+      },
+      "id": "8482ebd9-3a3a-41e9-a596-3dcfe261bbde",
+      "name": "Research Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        15360,
+        1104
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst op = data.capability.includes('remember') ? 'remember' : 'recall';\nconst key = String(data.input.key || data.input.topic || data.input.query || '').trim();\nconst content = data.input.content || data.input.value || null;\n\nconst memoryRecord = {\n  operation: op,\n  key,\n  content,\n  timestamp: new Date().toISOString()\n};\n\nreturn [{\n  json: {\n    ...data,\n    branch: 'knowledge',\n    payload: {\n      operation: op,\n      key,\n      stored: op === 'remember',\n      recalled: op === 'recall',\n      records: op === 'recall' ? [{ key, content: `Knowledge entry for ${key}`, relevance: 0.95 }] : [memoryRecord]\n    }\n  }\n}];"
+      },
+      "id": "d3b8e2fd-72a6-4e79-b9ac-02a41e9bf14c",
+      "name": "Knowledge Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        15168,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst goal = String(data.input.goal || data.input.task || '').trim();\n\nconst httpRequest = async (options) => {\n  if (typeof $httpRequest === 'function') return $httpRequest(options);\n  if (typeof helpers !== 'undefined' && helpers.httpRequest) return helpers.httpRequest(options);\n  if (typeof this !== 'undefined' && this.helpers?.httpRequest) return this.helpers.httpRequest(options);\n  throw new Error('No HTTP request helper available in n8n');\n};\n\nlet plan = [];\ntry {\n  const res = await httpRequest({\n    method: 'POST',\n    url: `${data.targetEndpoint}/api/chat`,\n    json: true,\n    timeout: 60000,\n    body: {\n      model: data.targetModel,\n      stream: false,\n      options: { temperature: 0.2, num_ctx: 8192 },\n      messages: [\n        { role: 'system', content: 'Decompose the user goal into a structured JSON list of steps. Return ONLY valid JSON: [{\"id\": 1, \"title\": \"...\", \"tool\": \"...\"}]' },\n        { role: 'user', content: `GOAL: ${goal}` }\n      ]\n    }\n  });\n  const text = String(res?.message?.content || '').trim();\n  const match = text.match(/\\[[\\s\\S]*\\]/);\n  if (match) plan = JSON.parse(match[0]);\n} catch (_) {}\n\nif (!plan.length) {\n  plan = [\n    { id: 1, title: 'Analyze requirements and verify workspace', tool: 'workspace.search' },\n    { id: 2, title: 'Implement requested changes', tool: 'file.patch' },\n    { id: 3, title: 'Run tests and browser verification', tool: 'browser.check' }\n  ];\n}\n\nreturn [{\n  json: {\n    ...data,\n    branch: 'planning',\n    payload: {\n      goal,\n      task_graph: plan,\n      total_steps: plan.length\n    }\n  }\n}];"
+      },
+      "id": "d7476a8e-cd6d-4635-a297-611c1a1931de",
+      "name": "Planning Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        15168,
+        1392
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nreturn [{\n  json: {\n    protocolVersion: 1,\n    requestId: item.requestId,\n    runId: item.runId,\n    status: 'ok',\n    build: 'codeme-capability-gateway-v1',\n    capability: item.capability,\n    branch: item.branch,\n    data: item.payload,\n    paperclip: {\n      handoff_ready: true,\n      destination: 'CodeMe',\n      capability: item.capability\n    },\n    durationMs: Date.now() - (item.startedAt || Date.now())\n  }\n}];"
+      },
+      "id": "9fed08a3-489a-4c49-8ae1-147da6d029d7",
+      "name": "Response Hub",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        15440,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "63ae6119-ff00-4940-8a52-bcefdf69b265",
+      "name": "Respond to CodeMe",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        15648,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8080/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $('Validate & Check Permissions').first().json.input.problem || $('Validate & Check Permissions').first().json.input.query || '' }}"
+            },
+            {
+              "name": "format",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "codeme-gateway-searxng-search-v1",
+      "name": "SearXNG Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        15120,
+        1050
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gateway Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate & Check Permissions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Check Permissions": {
+      "main": [
+        [
+          {
+            "node": "Capability Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capability Router": {
+      "main": [
+        [
+          {
+            "node": "SearXNG Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Knowledge Engine",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Planning Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research Engine": {
+      "main": [
+        [
+          {
+            "node": "Response Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Engine": {
+      "main": [
+        [
+          {
+            "node": "Response Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Planning Engine": {
+      "main": [
+        [
+          {
+            "node": "Response Hub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response Hub": {
+      "main": [
+        [
+          {
+            "node": "Respond to CodeMe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SearXNG Search": {
+      "main": [
+        [
+          {
+            "node": "Research Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "f1e7824e-521c-42e2-addb-aaf451e0fcd6",
+  "meta": {
+    "instanceId": "ab199e65e196648c1d79c614f4e5044b3b381839cf3f357f7835b5cd46a90b71"
+  },
+  "nodeGroups": [],
+  "id": "NQ8Lo2jYLnEbJjix",
+  "tags": []
+}
