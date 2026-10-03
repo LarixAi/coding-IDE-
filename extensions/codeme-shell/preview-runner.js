@@ -313,6 +313,32 @@ async function fetchPage(url) {
   };
 }
 
+function alternateLoopbackUrl(url) {
+  try {
+    const parsed = new URL(String(url || ""));
+    if (parsed.hostname === "127.0.0.1") parsed.hostname = "localhost";
+    else if (parsed.hostname === "localhost") parsed.hostname = "127.0.0.1";
+    else return "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+async function fetchPageWithLoopbackFallback(url) {
+  try {
+    return await fetchPage(url);
+  } catch (firstError) {
+    const alternate = alternateLoopbackUrl(url);
+    if (!alternate || alternate === url) throw firstError;
+    try {
+      return await fetchPage(alternate);
+    } catch {
+      throw firstError;
+    }
+  }
+}
+
 function fetchResource(url) {
   return new Promise((resolve, reject) => {
     const req = http.get(url, { timeout: 2500 }, (res) => {
@@ -517,7 +543,7 @@ function createPreviewRunner(vscode) {
 
       let page;
       try {
-        page = await fetchPage(plan.url);
+        page = await fetchPageWithLoopbackFallback(plan.url);
       } catch (error) {
         return {
           available: false,
@@ -533,15 +559,16 @@ function createPreviewRunner(vscode) {
       // proves a server answered and must never trigger a hidden start/restart here.
       if (!page.available) return page;
 
-      await openPreview(vscode, plan.url);
-      return page;
+      const resolvedUrl = String(page.url || plan.url);
+      await openPreview(vscode, resolvedUrl);
+      return { ...page, url: resolvedUrl };
     },
   };
 }
 
 async function probe(url) {
   try {
-    return await fetchPage(url);
+    return await fetchPageWithLoopbackFallback(url);
   } catch (error) {
     return {
       available: false,
@@ -597,6 +624,8 @@ module.exports = {
   recoverFlagSocket,
   ensureStaticPreview,
   fetchPage,
+  fetchPageWithLoopbackFallback,
+  alternateLoopbackUrl,
   probe,
   isAssetFailure,
   createPreviewRunner,
