@@ -147,7 +147,7 @@ function hasEditIntent(goal) {
 
 function readOnlyNeedsExternalEvidence(goal) {
   const text = String(goal || "");
-  return /\b(?:research|external|online|internet|web\s+search|search\s+(?:the\s+)?(?:web|internet)|look\s*up|latest|up[- ]to[- ]date|github|npm|mdn|n8n|paperclip)\b/i.test(text)
+  return /\b(?:research|external|online|internet|web\s+search|search\s+(?:the\s+)?(?:web|internet)|look\s*up|latest|up[- ]to[- ]date|github|npm|mdn)\b/i.test(text)
     || /\bcurrent\s+(?:recommended|recommendation|docs?|documentation|version|release)\b/i.test(text);
 }
 
