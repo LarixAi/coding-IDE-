@@ -161,6 +161,60 @@ function renderOverview(state, values) {
   ].join("");
 }
 
+function renderProjectBrain(state, values) {
+  const brain = state.projectBrain || {};
+  const counts = brain.counts || {};
+  const rows = [
+    ["Requirements", counts.requirements || 0],
+    ["Decisions", counts.decisions || 0],
+    ["Verified lessons", counts.lessons || 0],
+    ["Known files", counts.files || 0],
+  ];
+  const decisions = Array.isArray(brain.decisions) ? brain.decisions : [];
+  const lessons = Array.isArray(brain.lessons) ? brain.lessons : [];
+  return [
+    '<div class="page-title"><div><h2>Memory &amp; Knowledge</h2><p>Durable project context stored inside the workspace. Source code remains the authority.</p></div></div>',
+    '<div class="card">',
+    toggle("memory.projectKnowledgeEnabled", "Project Brain retrieval", values.memory.projectKnowledgeEnabled, "Inject relevant project identity, requirements, decisions, verified lessons and current file knowledge into new runs."),
+    toggle("memory.reusableMemoryEnabled", "Allow durable memory writes", values.memory.reusableMemoryEnabled, "Allow the agent to save verified fixes and project decisions for future sessions."),
+    '</div>',
+    '<div class="card"><h3>Project Brain</h3>',
+    '<div class="info-row"><span>Storage</span><code>' + escapeHtml(brain.path || ".codeme/project-brain.json") + '</code></div>',
+    '<div class="info-row"><span>Status</span><span class="badge ' + (brain.exists ? "ok" : "") + '">' + escapeHtml(brain.exists ? "Active" : "Not created yet") + '</span></div>',
+    brain.identity && brain.identity.purpose ? '<div class="info-row"><span>Project identity</span><span>' + escapeHtml(brain.identity.purpose) + '</span></div>' : '',
+    rows.map((row) => '<div class="info-row"><span>' + escapeHtml(row[0]) + '</span><span>' + escapeHtml(String(row[1])) + '</span></div>').join(""),
+    '<div class="actions"><button class="secondary" data-action="clear-project-brain">Clear Project Brain</button></div>',
+    '</div>',
+    decisions.length ? '<div class="card"><h3>Recent decisions</h3>' + decisions.slice(-8).reverse().map((item) => '<div class="list-row"><span><strong>' + escapeHtml(item.title || item.text || "Decision") + '</strong><small>' + escapeHtml(item.rationale || item.status || "") + '</small></span></div>').join("") + '</div>' : '',
+    lessons.length ? '<div class="card"><h3>Verified lessons</h3>' + lessons.slice(-8).reverse().map((item) => '<div class="list-row"><span><strong>' + escapeHtml(item.text || item.summary || "Lesson") + '</strong><small>Verified</small></span></div>').join("") + '</div>' : '',
+    '<div class="notice">Project Brain is guidance, not source truth. CodeMe must reread current source before editing when stored file knowledge is stale or conflicting.</div>',
+  ].join("");
+}
+
+function renderSkills(state, values) {
+  const items = state.skills && Array.isArray(state.skills.items) ? state.skills.items : [];
+  return [
+    '<div class="page-title"><div><h2>Skills</h2><p>Reusable workflows that teach the agent how to handle repeatable jobs.</p></div></div>',
+    '<div class="card">',
+    toggle("skills.enabled", "Enable skills", values.skills ? values.skills.enabled !== false : true, "Expose built-in and workspace skills to CodeMe agent runs."),
+    '</div>',
+    '<div class="card"><h3>Available skills</h3>',
+    items.length ? items.map((item) => [
+      '<div class="list-row"><span><strong>/' + escapeHtml(item.name) + '</strong><small>' + escapeHtml(item.description || item.path || item.source || "") + '</small></span>',
+      '<span style="display:flex;gap:6px;align-items:center"><span class="badge ' + (item.source === "workspace" ? "ok" : "") + '">' + escapeHtml(item.source || "builtin") + '</span>',
+      item.source === "workspace" ? '<button class="secondary delete-skill" data-skill="' + escapeHtml(item.name) + '">Delete</button>' : '',
+      '</span></div>',
+    ].join("")).join("") : '<p class="muted">No skills are available.</p>',
+    '</div>',
+    '<div class="card"><h3>Create workspace skill</h3>',
+    '<label class="field"><span>Name</span><input id="skill-name" placeholder="debug-api" /></label>',
+    '<label class="field"><span>Description</span><input id="skill-description" placeholder="Diagnose an API failure and verify the repair" /></label>',
+    '<label class="field"><span>Instructions</span><textarea id="skill-instructions" class="json-editor" placeholder="1. Read the failing request..."></textarea></label>',
+    '<div class="actions"><button data-action="save-skill">Save to .codeme/skills</button></div>',
+    '</div>',
+  ].join("");
+}
+
 function renderPanel(id, state, values) {
   if (id === "overview") return renderOverview(state, values);
   if (id === "general") return [
@@ -217,12 +271,8 @@ function renderPanel(id, state, values) {
     toggle("research.preferN8nResearch", "Prefer n8n research capability", values.research.preferN8nResearch, "Use the shared hub when research is required and available."),
     "</div>",
   ].join("");
-  if (id === "memory") return [
-    '<div class="page-title"><div><h2>Memory & Knowledge</h2><p>Project knowledge and reusable context preferences.</p></div></div><div class="card">',
-    toggle("memory.projectKnowledgeEnabled", "Project knowledge", values.memory.projectKnowledgeEnabled, "Allow CodeMe to use project-scoped knowledge when the knowledge capability is connected."),
-    toggle("memory.reusableMemoryEnabled", "Reusable memory", values.memory.reusableMemoryEnabled, "Prepare for durable reusable knowledge across related work."),
-    "</div>",
-  ].join("");
+  if (id === "memory") return renderProjectBrain(state, values);
+  if (id === "skills") return renderSkills(state, values);
   if (id === "workspace") return '<div class="page-title"><div><h2>Workspace</h2><p>Workspace boundaries, indexing and external-path policy.</p></div></div>' + planned("Workspace policy", "Configure allowed roots, ignore patterns, indexing rules and explicit outside-workspace approvals.");
   if (id === "terminal") return '<div class="page-title"><div><h2>Terminal</h2><p>Shell execution and command approval policy.</p></div></div>' + planned("Terminal permissions", "Separate safe commands, app startup, dependency installs, destructive commands and sudo into Allow / Ask / Block policies.");
   if (id === "browser") return '<div class="page-title"><div><h2>Browser & Preview</h2><p>Preview lifecycle and browser verification defaults.</p></div></div>' + planned("Preview policy", "Manage preview ports, process reuse, browser verification and automatic startup checks.");
@@ -274,6 +324,7 @@ function renderSettings(state, nonce) {
     ["mcp", "MCP & Tools", "SERVICES"],
     ["research", "Research & Web", "KNOWLEDGE"],
     ["memory", "Memory & Knowledge", "KNOWLEDGE"],
+    ["skills", "Skills", "KNOWLEDGE"],
     ["workspace", "Workspace", "RUNTIME"],
     ["terminal", "Terminal", "RUNTIME"],
     ["browser", "Browser & Preview", "RUNTIME"],
@@ -314,7 +365,8 @@ function renderSettings(state, nonce) {
     + 'document.getElementById("search").addEventListener("input",e=>{const q=String(e.target.value||"").toLowerCase().trim();nav.forEach(b=>b.style.display=!q||b.dataset.search.includes(q)?"":"none");});'
     + 'document.getElementById("scope").addEventListener("change",e=>{scope=e.target.value;saved.textContent="Refreshing…";vscode.postMessage({type:"settings-scope",scope});});'
     + 'document.querySelectorAll("[data-setting]").forEach(el=>el.addEventListener("change",()=>{const value=el.type==="checkbox"?el.checked:el.value;saved.textContent="Saving…";vscode.postMessage({type:"settings-save",scope,path:el.dataset.setting,value});}));'
-    + 'document.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",()=>{const action=el.dataset.action;if(action==="refresh-health"){saved.textContent="Refreshing…";vscode.postMessage({type:"settings-refresh",scope});}if(action==="save-n8n"){const token=document.getElementById("n8n-token");saved.textContent="Saving…";vscode.postMessage({type:"settings-n8n-update",scope,patch:{mcpEnabled:document.getElementById("n8n-enabled").checked,mcpUrl:document.getElementById("n8n-mcp-url").value,autoEnhance:document.getElementById("n8n-auto-enhance").checked,enhanceWebhookUrl:document.getElementById("n8n-enhance-url").value,mcpToken:token&&token.value?token.value:undefined,allowImageUpload:document.getElementById("n8n-image-upload").checked}});}if(action==="save-mcp"){const field=document.getElementById("mcp-servers-json");try{const servers=JSON.parse(field&&field.value||"[]");if(!Array.isArray(servers))throw new Error("Registry must be a JSON array");saved.textContent="Saving…";vscode.postMessage({type:"settings-mcp-update",scope,servers});}catch(error){saved.textContent="! "+String(error&&error.message||error);}}}));'
+    + 'document.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",()=>{const action=el.dataset.action;if(action==="refresh-health"){saved.textContent="Refreshing…";vscode.postMessage({type:"settings-refresh",scope});}if(action==="save-n8n"){const token=document.getElementById("n8n-token");saved.textContent="Saving…";vscode.postMessage({type:"settings-n8n-update",scope,patch:{mcpEnabled:document.getElementById("n8n-enabled").checked,mcpUrl:document.getElementById("n8n-mcp-url").value,autoEnhance:document.getElementById("n8n-auto-enhance").checked,enhanceWebhookUrl:document.getElementById("n8n-enhance-url").value,mcpToken:token&&token.value?token.value:undefined,allowImageUpload:document.getElementById("n8n-image-upload").checked}});}if(action==="save-mcp"){const field=document.getElementById("mcp-servers-json");try{const servers=JSON.parse(field&&field.value||"[]");if(!Array.isArray(servers))throw new Error("Registry must be a JSON array");saved.textContent="Saving…";vscode.postMessage({type:"settings-mcp-update",scope,servers});}catch(error){saved.textContent="! "+String(error&&error.message||error);}}if(action==="clear-project-brain"){saved.textContent="Clearing…";vscode.postMessage({type:"settings-memory-clear",scope});}if(action==="save-skill"){const name=document.getElementById("skill-name"),description=document.getElementById("skill-description"),instructions=document.getElementById("skill-instructions");saved.textContent="Saving…";vscode.postMessage({type:"settings-skill-save",scope,skill:{name:name&&name.value||"",description:description&&description.value||"",instructions:instructions&&instructions.value||""}});}}));'
+    + 'document.querySelectorAll(".delete-skill").forEach(el=>el.addEventListener("click",()=>{saved.textContent="Deleting…";vscode.postMessage({type:"settings-skill-delete",scope,name:el.dataset.skill||""});}));'
     + 'window.addEventListener("message",event=>{const m=event.data||{};if(m.type==="settings-saved"){saved.textContent="● Saved";}if(m.type==="settings-error"){saved.textContent="! "+String(m.message||"Could not save");}if(m.type==="settings-reload"){location.reload();}});'
     + '</script></body></html>';
 }
