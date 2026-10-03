@@ -873,8 +873,69 @@ function startPipelineRun(options) {
   };
 }
 
+
+function resumePipelineRun(id, options) {
+  const existing = options.store.load(id);
+  if (!existing) {
+    throw Object.assign(new Error("No run " + id), { code: "not_found" });
+  }
+  if (!existing.pipelineCheckpoint) {
+    throw Object.assign(new Error("Run " + id + " has no resumable checkpoint"), { code: "no_checkpoint" });
+  }
+  if (!["awaiting_user", "failed"].includes(existing.lifecycle)) {
+    throw Object.assign(new Error("Run " + id + " is not waiting to resume"), { code: "not_resumable" });
+  }
+
+  const controller = new AbortController();
+  const followUpQueue = [];
+  existing.lifecycle = "running";
+  existing.error = null;
+  existing.outcome = null;
+  existing.reconnect = { status: "resuming" };
+  existing.updatedAt = new Date().toISOString();
+  options.store.save(existing);
+
+  const done = executePipelineRun(existing, {
+    ...options,
+    signal: controller.signal,
+    resumeFrom: existing.pipelineCheckpoint,
+  }, followUpQueue).catch((error) => {
+    existing.lifecycle = controller.signal.aborted ? "cancelled" : "failed";
+    existing.inFlight = null;
+    existing.error = controller.signal.aborted ? null : {
+      code: error && error.code ? String(error.code) : "pipeline_failed",
+      message: error instanceof Error ? error.message : String(error),
+    };
+    existing.outcome = {
+      status: existing.lifecycle,
+      summary: controller.signal.aborted ? "Stopped." : existing.error.message,
+    };
+    existing.updatedAt = new Date().toISOString();
+    options.store.save(existing);
+    return existing;
+  });
+
+  return {
+    id: existing.id,
+    run: existing,
+    cancel() {
+      existing.cancelRequested = true;
+      controller.abort();
+    },
+    followUp(text) {
+      const value = String(text || "").trim();
+      if (!value) return;
+      followUpQueue.push(value);
+      applyFollowUp(existing, value);
+      options.store.save(existing);
+    },
+    done,
+  };
+}
+
 module.exports = {
   startPipelineRun,
+  resumePipelineRun,
   executePipelineRun,
   createVerifier,
 };
