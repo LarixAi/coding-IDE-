@@ -22,6 +22,7 @@ const { MultitaskController } = require("./multitask-controller");
 const { SettingsPanel } = require("./settings-panel");
 const { UniversalMcpRegistry } = require("./universal-mcp");
 const { TerminalObserver } = require("./terminal-observer");
+const { analyzeImages } = require("./vision-integration");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -960,6 +961,7 @@ class ComposerViewProvider {
       capabilities: this.capabilities,
       externalTools: this.externalTools,
       n8n: this.n8n,
+      analyzeImages,
       root: workspaceRoot(),
       onChange: (snapshot) => this.post(snapshot),
     });
