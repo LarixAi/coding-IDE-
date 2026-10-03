@@ -474,7 +474,7 @@ async function executePipelineRun(run, options, followUpQueue) {
     }
     projectRules = await loadProjectRules(registry);
     attachmentContext = await loadAttachmentContext(registry, run.attachments);
-    if (projectRoot) {
+    if (projectRoot && options.projectBrainEnabled !== false) {
       projectBrain = loadOrCreateProjectBrain(projectRoot, {
         originalPrompt: run.originalGoal || run.goal,
         projectId: projectRoot,
@@ -495,7 +495,7 @@ async function executePipelineRun(run, options, followUpQueue) {
       }
       saveProjectBrain(projectRoot, projectBrain);
     }
-    if (projectRoot) {
+    if (projectRoot && options.skillsEnabled !== false) {
       skills = loadSkills(projectRoot);
       const catalog = skillCatalogText(skills);
       const explicit = matchSlashSkill(run.originalGoal || run.goal, skills);
@@ -535,8 +535,10 @@ async function executePipelineRun(run, options, followUpQueue) {
   const baseDefinitions = run.mode === "chat_only"
     ? []
     : registry.definitions().filter((tool) => run.mode !== "read_only" || !READ_ONLY_BLOCKED.has(tool.name));
-  const memoryDefinitions = run.mode === "chat_only" || !projectRoot ? [] : MEMORY_TOOL_DEFINITIONS;
-  const skillDefinitions = run.mode === "chat_only" || !projectRoot ? [] : [skillToolDefinition()];
+  const memoryDefinitions = run.mode === "chat_only" || !projectRoot || options.projectBrainEnabled === false
+    ? []
+    : MEMORY_TOOL_DEFINITIONS.filter((tool) => options.memoryWriteEnabled !== false || tool.name !== "memory.save");
+  const skillDefinitions = run.mode === "chat_only" || !projectRoot || options.skillsEnabled === false ? [] : [skillToolDefinition()];
   const definitions = [...baseDefinitions, ...memoryDefinitions, ...skillDefinitions, ...capabilityDefinitions, ...externalDefinitions];
   run.pipeline.toolPolicy = allowExternalEvidence ? "all-legal-tools" : "local-read-only-tools";
   const context = buildModelContext({
@@ -764,7 +766,7 @@ async function executePipelineRun(run, options, followUpQueue) {
     summary: result.finalText,
   };
   const success = result.reason === "verified" || result.reason === "answered";
-  if (success && projectRoot) {
+  if (success && projectRoot && options.projectBrainEnabled !== false) {
     try {
       projectBrain = loadOrCreateProjectBrain(projectRoot, { originalPrompt: run.originalGoal || run.goal, projectId: projectRoot });
       const verified = Boolean(run.verification && run.verification.status === "passed");
