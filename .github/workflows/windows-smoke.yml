@@ -1,0 +1,68 @@
+name: Windows Smoke
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows launcher and runtime smoke
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24.18.0"
+
+      - name: Parse PowerShell launchers
+        shell: pwsh
+        run: |
+          $files = @(
+            "scripts/launch-codeme.ps1",
+            "scripts/setup-codeme-windows.ps1"
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file: $($_.Message)" }
+              exit 1
+            }
+            Write-Host "ok PowerShell syntax: $file"
+          }
+
+      - name: Check Windows launcher contract
+        shell: pwsh
+        run: |
+          $launcher = Get-Content scripts/launch-codeme.ps1 -Raw
+          if ($launcher -notmatch '24\.18\.0') { throw "launcher must enforce Code OSS Node pin" }
+          if ($launcher -notmatch 'extensionDevelopmentPath') { throw "launcher must load CodeMe development extension" }
+          if ($launcher -notmatch 'codeme-user-data') { throw "launcher must keep an isolated CodeMe profile" }
+          if ($launcher -match 'Code - OSS\.app|/Contents/MacOS/') { throw "Windows launcher contains a macOS app path" }
+          Write-Host "ok Windows launcher contract"
+
+      - name: Run cross-platform CodeMe tests
+        shell: pwsh
+        env:
+          CI: "true"
+          CODEME_SKIP_LIVE: "1"
+        run: |
+          node extensions/codeme-shell/test/runtime-config.test.js
+          node extensions/codeme-shell/test/workspace-inspector.test.js
+          node extensions/codeme-shell/test/preview-runner.test.js
+          node extensions/codeme-shell/test/browser-interaction-runner.test.js
+          node extensions/codeme-shell/test/sandbox-runner.test.js
+          node extensions/codeme-shell/test/composer.test.js
+          node packages/agent-runtime/test/model-provider.test.js
+          node packages/agent-runtime/test/pipeline-v2.test.js
