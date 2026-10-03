@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { websiteQualityContract } = require("./website-quality");
 
 const BUILTIN_SKILLS = Object.freeze([
   {
@@ -39,14 +40,36 @@ const BUILTIN_SKILLS = Object.freeze([
     source: "builtin",
   },
   {
-    name: "verify-website",
-    description: "Run a web project and verify the requested behavior in CodeMe's owned browser preview.",
+    name: "website-build",
+    description: "Build or redesign a website using product, architecture, CSS, conversion, responsive, accessibility, and browser-QA checks.",
     instructions: [
-      "1. Inspect the project and identify the existing start command.",
+      websiteQualityContract(),
+      "",
+      "Execution sequence:",
+      "1. Inspect the active runtime, entrypoint, routes/components, and existing CSS/styling files before editing.",
+      "2. Turn the user request into explicit product requirements including audience, primary CTA, conversion path, content/trust, responsive expectations, and states.",
+      "3. Define the smallest suitable component/route structure and CSS architecture.",
+      "4. Implement markup, behavior, CSS, responsive states, and real content together; do not stop after HTML/JS.",
+      "5. Start/reuse the owned preview and verify the active page after the last edit.",
+      "6. Test the primary CTA and important interactions with browser.interact when available.",
+      "7. Review the website against the full WEBSITE QUALITY CONTRACT before finishing.",
+    ].join("\n"),
+    source: "builtin",
+  },
+  {
+    name: "verify-website",
+    description: "Verify a web project across runtime, CSS, CTA/conversion, responsive, accessibility, content, and browser behavior.",
+    instructions: [
+      websiteQualityContract(),
+      "",
+      "Verification sequence:",
+      "1. Inspect the project and identify the actual served entrypoint and CSS path.",
       "2. Start or reuse the CodeMe-owned preview process.",
-      "3. Read process logs if startup fails.",
+      "3. Read process/browser errors and confirm CSS/assets load without failures.",
       "4. Use browser.check or browser.interact against the owned preview.",
-      "5. Repair failures and re-verify after the last edit.",
+      "5. Verify navigation, primary CTA, forms/controls, responsive behavior, focus/labels, content/trust, and important states.",
+      "6. Report a WEB QUALITY MATRIX across every required category.",
+      "7. Repair only when the current role is allowed to edit; otherwise report the exact failure.",
     ].join("\n"),
     source: "builtin",
   },
