@@ -1,7 +1,6 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { fileURLToPath } = require("url");
 const { startAgentRun, startPipelineRun, resumePipelineRun } = require("../../packages/agent-runtime");
 const { stripNegatedEditing } = require("../../packages/agent-runtime/intent");
 const { composerStage, composerActivity, compactTools, compactRunStream, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
@@ -113,7 +112,7 @@ function localPath(value) {
   let next = String(value || "").trim();
   if (next.startsWith("file:")) {
     try {
-      next = fileURLToPath(next);
+      next = decodeURIComponent(new URL(next).pathname);
     } catch {
       return "";
     }
