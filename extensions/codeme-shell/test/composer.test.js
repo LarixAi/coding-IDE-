@@ -3,7 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider, ControlledToolProvider } = require("../../../packages/agent-runtime");
-const { composerKeyAction, composerStage, composerActivity, compactTools, compactRunStream, linePreview, diffsByFile, formatGoal, droppedPaths, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
+const { composerKeyAction, composerStage, composerActivity, compactTools, compactRunStream, linePreview, diffsByFile, formatGoal, droppedPaths, droppedPathValue, browserDropFiles, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
 const { describeFileRead } = require("../image-meta");
 const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels, finalAssistantText } = require("../composer-session");
 const { OllamaModelProvider } = require("../../../packages/agent-runtime/model-provider");
@@ -285,6 +285,9 @@ async function main() {
   assert.ok(html.includes(">Multitask<"));
   assert.ok(!html.includes("Read-only"));
   assert.ok(html.includes("ResourceURLs"));
+  assert.ok(html.includes("browserDropFiles"));
+  assert.ok(html.includes("getAsFile"));
+  assert.ok(html.includes("Adding dropped files"));
   assert.ok(html.includes("dataset.source"));
   assert.ok(html.includes("code-preview"));
   assert.ok(html.includes("tool-stats"));
@@ -320,6 +323,44 @@ async function main() {
   });
   assert.strictEqual(explorerDrop.length, 2);
   assert.strictEqual(explorerDrop[0].path, "file:///tmp/ws/README.md");
+
+  const objectPayloadDrop = droppedPaths({
+    getData(name) {
+      if (name === "ResourceURLs") {
+        return JSON.stringify([
+          { resourceUri: "file:///tmp/ws/one.png" },
+          { uri: "file:///tmp/ws/two.png" },
+          { path: "/tmp/ws/three.png" },
+        ]);
+      }
+      return "";
+    },
+  });
+  assert.deepStrictEqual(objectPayloadDrop.map((item) => item.path), [
+    "file:///tmp/ws/one.png",
+    "file:///tmp/ws/two.png",
+    "/tmp/ws/three.png",
+  ]);
+  assert.strictEqual(droppedPathValue({ fsPath: "/tmp/ws/four.png" }), "/tmp/ws/four.png");
+
+  const itemFiles = [
+    { name: "one.png", size: 1, type: "image/png" },
+    { name: "two.png", size: 2, type: "image/png" },
+    { name: "three.png", size: 3, type: "image/png" },
+  ];
+  const browserFiles = browserDropFiles({
+    items: itemFiles.map((file) => ({ kind: "file", getAsFile: () => file })),
+    files: [{ name: "fallback-only.png" }],
+  });
+  assert.strictEqual(browserFiles.length, 3);
+  assert.deepStrictEqual(browserFiles.map((file) => file.name), ["one.png", "two.png", "three.png"]);
+
+  const fileListFallback = browserDropFiles({
+    items: [{ kind: "string", getAsFile: () => null }],
+    files: [{ name: "a.txt" }, { name: "b.txt" }],
+  });
+  assert.deepStrictEqual(fileListFallback.map((file) => file.name), ["a.txt", "b.txt"]);
+
   assert.ok(!droppedPaths({
     getData(name) { return name === "text/plain" ? "/tmp/outside.txt" : ""; },
   }).some((item) => item.path === "file:///tmp/ws/README.md"));
