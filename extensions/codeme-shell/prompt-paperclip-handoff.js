@@ -11,6 +11,53 @@ function reject(code, message) {
   return { ok: false, code, message };
 }
 
+function visionEvidenceFromGoal(goal) {
+  const marker = "LOCAL VISION ANALYSIS (evidence from attached image(s); the user's request remains authoritative):";
+  const text = String(goal || "");
+  const index = text.indexOf(marker);
+  return index >= 0 ? text.slice(index).trim() : "";
+}
+
+async function prepareVisionForHandoff(session, originalGoal, visibleText) {
+  if (
+    !session
+    || typeof session.analyzeImages !== "function"
+    || !Array.isArray(session.attachments)
+    || !session.attachments.some((item) => item && item.kind === "image")
+  ) {
+    return { goal: originalGoal, evidence: "" };
+  }
+
+  try {
+    const images = session.attachments.filter((item) => item && item.kind === "image");
+    session.notice = "Analyzing attached image" + (images.length === 1 ? "…" : "s…");
+    if (typeof session.emit === "function") session.emit();
+
+    const vision = await session.analyzeImages(session.root, session.attachments, visibleText);
+    if (vision && vision.ok && vision.spec) {
+      const evidence = [
+        "LOCAL VISION ANALYSIS (evidence from attached image(s); the user's request remains authoritative):",
+        JSON.stringify(vision.spec, null, 2),
+      ].join("\n");
+      session.notice = "Image context ready · "
+        + String(vision.sourceLabel || vision.source || "vision")
+        + (vision.model ? " · " + String(vision.model) : "");
+      if (typeof session.emit === "function") session.emit();
+      return { goal: String(originalGoal || "") + "\n\n" + evidence, evidence };
+    }
+
+    if (vision && vision.notice) {
+      session.notice = String(vision.notice);
+      if (typeof session.emit === "function") session.emit();
+    }
+  } catch (error) {
+    session.notice = "Image analysis unavailable: " + (error instanceof Error ? error.message : String(error));
+    if (typeof session.emit === "function") session.emit();
+  }
+
+  return { goal: originalGoal, evidence: "" };
+}
+
 function shouldRouteToPaperclip(composerMode, originalGoal, decision) {
   if (String(composerMode || "").toLowerCase() !== "code") return false;
   if (!decision || String(decision.status || "").toUpperCase() !== "READY") return false;
@@ -122,10 +169,21 @@ function installPromptPaperclipHandoff(options = {}) {
       });
     }
 
-    const originalGoal = formatGoal(text, this.attachments);
+    let originalGoal = formatGoal(text, this.attachments);
     if (!originalGoal.trim()) return reject("empty", "Enter a message first.");
 
     const visibleText = String(text || "").trim() || originalGoal;
+
+    // prompt.enrich runs before ComposerSession.submit(), so image analysis must
+    // happen here or READY/Paperclip routes will only see attachment metadata.
+    if (
+      !optionsForRun.skipEnhancement
+      && this.n8n
+      && typeof this.n8n.enhanceForSubmit === "function"
+    ) {
+      const prepared = await prepareVisionForHandoff(this, originalGoal, visibleText);
+      originalGoal = prepared.goal;
+    }
 
     // Preserve the existing follow-up and clarification behavior. The
     // clarification wrapper captures the READY decision before the original
@@ -160,8 +218,14 @@ function installPromptPaperclipHandoff(options = {}) {
           );
         }
 
+        const enhancedGoal = String(optionsForRun.goalOverride || originalGoal).trim();
+        const visionEvidence = visionEvidenceFromGoal(routeGoal);
+        const orchestrationGoal = visionEvidence && !enhancedGoal.includes("LOCAL VISION ANALYSIS")
+          ? enhancedGoal + "\n\n" + visionEvidence
+          : enhancedGoal;
+
         const result = controller.start(
-          String(optionsForRun.goalOverride || originalGoal).trim(),
+          orchestrationGoal,
           epoch,
           {
             visibleText,
@@ -254,9 +318,14 @@ function installPromptPaperclipHandoff(options = {}) {
     }
 
     if (decision && decision.status === "DISABLED") {
+      let disabledGoal = originalGoal;
+      if (String(this.composerMode || "").toLowerCase() === "code" && isWebsiteBuildGoal(originalGoal)) {
+        disabledGoal = [disabledGoal, websiteQualityContract()].join("\n\n");
+      }
       return originalSubmit.call(this, text, epoch, {
         ...optionsForRun,
         skipEnhancement: true,
+        goalOverride: disabledGoal,
       });
     }
 
@@ -272,4 +341,6 @@ function installPromptPaperclipHandoff(options = {}) {
 module.exports = {
   installPromptPaperclipHandoff,
   shouldRouteToPaperclip,
+  prepareVisionForHandoff,
+  visionEvidenceFromGoal,
 };
