@@ -7,7 +7,10 @@ CodeMe product chrome on the unmodified Code - OSS pin. Explorer, editor, termin
 | Path | Role |
 |---|---|
 | `extensions/codeme-shell/` | CodeMe Dark theme, Composer view, and connection status |
-| `scripts/launch-codeme.sh` | Starts the pinned build with that extension |
+| `scripts/launch-codeme.sh` | Starts the pinned macOS build with that extension |
+| `scripts/launch-codeme.ps1` | Starts the pinned Windows build with the CodeMe development extension |
+| `scripts/launch-codeme.cmd` | CMD wrapper for the Windows PowerShell launcher |
+| `scripts/setup-codeme-windows.ps1` | One-time Windows submodule/dependency/build preparation |
 
 The theme colors are the donor dark tokens from `src/styles.css` at `ee3f2c27`, converted from oklch to hex. The Composer view is a new workbench webview. It does not copy `AgentPanel.tsx`.
 
@@ -17,11 +20,32 @@ Composer shows the idle sequence `Understanding → Planning → Editing → Tes
 
 From the repository root, after the Gate 1 build:
 
+macOS:
+
 ```sh
 ./scripts/launch-codeme.sh
 ```
 
-This uses Node `24.18.0` from `.tools/`, skips a second compile, and stores this profile in `.tools/codeme-user-data` so it does not share the plain Code - OSS profile.
+Windows PowerShell:
+
+```powershell
+.\scripts\launch-codeme.ps1
+```
+
+Windows CMD:
+
+```cmd
+scripts\launch-codeme.cmd
+```
+
+For a fresh Windows checkout, run the one-time preparation first:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup-codeme-windows.ps1
+```
+
+Both platforms use the exact Code - OSS Node pin `24.18.0` and store the CodeMe profile in `.tools/codeme-user-data` so it does not share the plain Code - OSS profile. The Windows launcher uses `--extensionDevelopmentPath` rather than filesystem symlinks, so Windows Developer Mode is not required just to load the CodeMe shell.
 
 ## Evidence
 

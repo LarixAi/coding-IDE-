@@ -33,6 +33,43 @@ Donor, pin, and what is allowed in this tree are recorded in `docs/SOURCE_TARGET
 
 Current gate: **Gate 11 autonomous hardening is recorded** in `docs/GATE_11_AUTONOMOUS_HARDENING.md`. AgentRun locks the effective model, selects a versioned strategy, diagnoses failures, accepts mid-run follow-ups, and completes only with evidence. Run `sh scripts/qualify-hardening.sh`. The Code - OSS pin remains `1.139.1`. `research.web`, `code.lookup`, `code.debug`, `code.review`, `browser.inspect`, `image.generate`, and `deploy.verify` are reserved and not implemented. Progress follows the gates in `MASTER_BLUEPRINT.md`. Each phase must be verified before the next begins.
 
+## Run CodeMe on Windows
+
+CodeMe now has a first-class Windows source launcher. The Windows build uses the same Code - OSS pin, CodeMe extension, Pipeline v2, Composer, browser verification, n8n/Paperclip integrations, Project Brain, skills, and model providers as macOS.
+
+On a fresh Windows PC, install the native build prerequisites first:
+
+- Git for Windows
+- Node.js **24.18.0** (the exact version required by the pinned Code - OSS source)
+- Python 3
+- Visual Studio 2022 Build Tools with **Desktop development with C++**
+- Windows 10/11 SDK
+
+Then, from PowerShell in the repository root:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+
+.\scripts\setup-codeme-windows.ps1
+.\scripts\launch-codeme.ps1
+```
+
+After the one-time setup, normal launches can use:
+
+```powershell
+.\scripts\launch-codeme.ps1
+```
+
+or:
+
+```cmd
+scripts\launch-codeme.cmd
+```
+
+The launcher keeps CodeMe's isolated profile under `.tools\codeme-user-data`, loads the repository `.env`, and loads `extensions\codeme-shell` directly as the development extension. It does **not** require Windows symlink/developer mode.
+
+If the repository was cloned without submodules, the setup script initializes the pinned `code-oss` submodule automatically.
+
 ## Local and remote AI models over Tailscale
 
 The launcher automatically loads machine-specific endpoint settings from a repository-root `.env` file. Create it once with:
