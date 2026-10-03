@@ -9,6 +9,18 @@ const {
 const { buildModelContext } = require("./pipeline-context");
 const { instructionsForMode } = require("./pipeline-instructions");
 const { runPipeline } = require("./pipeline-loop");
+const {
+  addRequirement: brainAddRequirement,
+  addDecision: brainAddDecision,
+  addVerifiedLesson,
+  rememberFile,
+  retrieveProjectContext,
+  projectBrainText,
+} = require("./project-brain");
+const {
+  loadOrCreateProjectBrain,
+  saveProjectBrain,
+} = require("./project-brain-store");
 
 const MUTATION_TOOLS = new Set(["file.write", "file.patch", "dir.create"]);
 const READ_ONLY_BLOCKED = new Set([
@@ -23,6 +35,31 @@ const READ_ONLY_BLOCKED = new Set([
 ]);
 const CODE_FILE = /\.(?:js|mjs|cjs|jsx|ts|tsx|py|go|rs|java|cs|rb|php|swift|dart|c|cc|cpp|h|hpp)$/i;
 const WEB_FILE = /\.(?:html?|css|js|jsx|ts|tsx)$/i;
+
+const MEMORY_TOOL_DEFINITIONS = [
+  {
+    name: "memory.recall",
+    description: "Recall relevant durable Project Brain knowledge for the current workspace. Source code remains the authority.",
+    parameters: {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "memory.save",
+    description: "Save a durable project decision, preference, note, or verified fix to Project Brain.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: { type: "string" },
+        kind: { type: "string", enum: ["decision", "preference", "note", "fix"] },
+        verified: { type: "boolean" },
+      },
+      required: ["text"],
+    },
+  },
+];
 
 function touch(run, lifecycle, inFlight) {
   run.lifecycle = lifecycle;
@@ -412,10 +449,13 @@ async function executePipelineRun(run, options, followUpQueue) {
   let workspace = null;
   let projectRules = "";
   let attachmentContext = [];
+  let projectBrain = null;
+  let projectRoot = String(options.workspaceRoot || "").trim();
   if (run.mode !== "chat_only") {
     const inspected = await safeContextCall(registry, "workspace.inspect", {});
     if (inspected && inspected.ok) {
       workspace = inspected.data || {};
+      projectRoot = projectRoot || String(workspace.root || "").trim();
       run.workspace = workspace;
       run.workspaceInspected = true;
       recordTool(run, { name: "workspace.inspect", args: {} }, inspected, "context");
@@ -426,6 +466,27 @@ async function executePipelineRun(run, options, followUpQueue) {
     }
     projectRules = await loadProjectRules(registry);
     attachmentContext = await loadAttachmentContext(registry, run.attachments);
+    if (projectRoot) {
+      projectBrain = loadOrCreateProjectBrain(projectRoot, {
+        originalPrompt: run.originalGoal || run.goal,
+        projectId: projectRoot,
+      });
+      for (const requirement of run.requirements || []) {
+        brainAddRequirement(projectBrain, {
+          text: requirement.text || requirement.title || String(requirement),
+          status: requirement.status || "confirmed",
+          source: requirement.source || "user",
+        });
+      }
+      const recalled = retrieveProjectContext(projectBrain, run.goal, { limitPerType: 8 });
+      const memoryText = projectBrainText(recalled);
+      if (memoryText) {
+        projectRules = [projectRules, "PROJECT BRAIN (durable project memory; current source code wins on conflict):\n" + memoryText]
+          .filter(Boolean)
+          .join("\n\n");
+      }
+      saveProjectBrain(projectRoot, projectBrain);
+    }
   }
 
   const allowExternalEvidence = run.mode !== "read_only" || readOnlyNeedsExternalEvidence(run.goal);
@@ -457,7 +518,8 @@ async function executePipelineRun(run, options, followUpQueue) {
   const baseDefinitions = run.mode === "chat_only"
     ? []
     : registry.definitions().filter((tool) => run.mode !== "read_only" || !READ_ONLY_BLOCKED.has(tool.name));
-  const definitions = [...baseDefinitions, ...capabilityDefinitions, ...externalDefinitions];
+  const memoryDefinitions = run.mode === "chat_only" || !projectRoot ? [] : MEMORY_TOOL_DEFINITIONS;
+  const definitions = [...baseDefinitions, ...memoryDefinitions, ...capabilityDefinitions, ...externalDefinitions];
   run.pipeline.toolPolicy = allowExternalEvidence ? "all-legal-tools" : "local-read-only-tools";
   const context = buildModelContext({
     goal: run.goal,
@@ -501,6 +563,28 @@ async function executePipelineRun(run, options, followUpQueue) {
           tool: name,
           error: { code: "mutation_blocked", message: name + " is not available in read-only mode." },
         };
+      } else if (name === "memory.recall" && projectRoot) {
+        projectBrain = loadOrCreateProjectBrain(projectRoot, { originalPrompt: run.originalGoal || run.goal, projectId: projectRoot });
+        const recalled = retrieveProjectContext(projectBrain, String(call.args.query || run.goal), { limitPerType: 8 });
+        result = {
+          ok: true,
+          tool: name,
+          data: { text: projectBrainText(recalled), context: recalled },
+        };
+      } else if (name === "memory.save" && projectRoot) {
+        projectBrain = loadOrCreateProjectBrain(projectRoot, { originalPrompt: run.originalGoal || run.goal, projectId: projectRoot });
+        const text = String(call.args.text || "").trim().slice(0, 2000);
+        const kind = String(call.args.kind || "decision");
+        if (!text) {
+          result = { ok: false, tool: name, error: { code: "invalid_args", message: "text is required" } };
+        } else if (kind === "fix" && call.args.verified !== true) {
+          result = { ok: false, tool: name, error: { code: "verification_required", message: "A durable fix must be verified before it is saved." } };
+        } else {
+          if (kind === "fix") addVerifiedLesson(projectBrain, { text, verified: true, evidence: ["memory.save"] });
+          else brainAddDecision(projectBrain, { title: text, source: "model", tags: [kind] });
+          saveProjectBrain(projectRoot, projectBrain);
+          result = { ok: true, tool: name, data: { saved: true, kind, text } };
+        }
       } else if (name === "capability.list" || name === "capability.invoke") {
         result = await dispatchCapability(options.capabilities, run, call, signal, capabilityRegistry);
       } else if (externalToolNames.has(name) && options.externalTools && typeof options.externalTools.call === "function") {
@@ -660,6 +744,35 @@ async function executePipelineRun(run, options, followUpQueue) {
     summary: result.finalText,
   };
   const success = result.reason === "verified" || result.reason === "answered";
+  if (success && projectRoot) {
+    try {
+      projectBrain = loadOrCreateProjectBrain(projectRoot, { originalPrompt: run.originalGoal || run.goal, projectId: projectRoot });
+      const verified = Boolean(run.verification && run.verification.status === "passed");
+      if (verified && result.finalText) {
+        addVerifiedLesson(projectBrain, {
+          text: String(result.finalText).slice(0, 1200),
+          verified: true,
+          evidence: (run.verification && run.verification.evidence) || [],
+          tags: ["run:" + run.id],
+        });
+      }
+      for (const filePath of run.filesChanged.slice(0, 30)) {
+        const read = await safeContextCall(registry, "file.read", { path: filePath });
+        const contents = read && read.ok && read.data && typeof read.data.contents === "string" ? read.data.contents : "";
+        if (!contents) continue;
+        rememberFile(projectBrain, {
+          path: filePath,
+          hash: crypto.createHash("sha256").update(contents).digest("hex"),
+          summary: contents.replace(/\s+/g, " ").slice(0, 360),
+          status: "current",
+          tags: ["verified-run"],
+        });
+      }
+      saveProjectBrain(projectRoot, projectBrain);
+    } catch {
+      // Project Brain is best-effort and must never fail a completed coding run.
+    }
+  }
   const resumable = result.reason === "model_offline" || result.reason === "timeout";
   run.lifecycle = result.reason === "cancelled"
     ? "cancelled"
