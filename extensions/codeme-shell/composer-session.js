@@ -172,6 +172,7 @@ class ComposerSession {
     this.capabilities = options.capabilities || null;
     this.externalTools = options.externalTools || null;
     this.n8n = options.n8n || null;
+    this.analyzeImages = typeof options.analyzeImages === "function" ? options.analyzeImages : null;
     this.root = options.root || "";
     this.attachments = [];
     this.models = [];
@@ -675,10 +676,32 @@ class ComposerSession {
   }
 
   async submit(text, epoch, options = {}) {
-    const originalGoal = formatGoal(text, this.attachments);
+    let originalGoal = formatGoal(text, this.attachments);
     if (!originalGoal.trim()) return reject("empty", "Enter a message first.");
 
     const visibleText = String(text || "").trim() || originalGoal;
+    if (
+      !options.skipEnhancement
+      && this.analyzeImages
+      && this.attachments.some((item) => item && item.kind === "image")
+    ) {
+      try {
+        this.notice = "Analyzing attached image" + (this.attachments.filter((item) => item && item.kind === "image").length === 1 ? "…" : "s…");
+        this.emit();
+        const vision = await this.analyzeImages(this.root, this.attachments, visibleText);
+        if (vision && vision.ok && vision.spec) {
+          originalGoal += "\n\nLOCAL VISION ANALYSIS (evidence from attached image(s); the user's request remains authoritative):\n"
+            + JSON.stringify(vision.spec, null, 2);
+          this.notice = "Image context ready · " + String(vision.sourceLabel || vision.source || "vision") + " · " + String(vision.model || "");
+        } else if (vision && vision.notice) {
+          this.notice = String(vision.notice);
+        }
+        this.emit();
+      } catch (error) {
+        this.notice = "Image analysis unavailable: " + (error instanceof Error ? error.message : String(error));
+        this.emit();
+      }
+    }
 
     if (this.clarification && !options.resumeFromClarification) {
       return this.submitClarification([{ id: "freeform", answer: visibleText }], visibleText, epoch);
