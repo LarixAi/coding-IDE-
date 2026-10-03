@@ -21,6 +21,7 @@ const { VerificationToolProvider } = require("./verification-tool-provider");
 const { MultitaskController } = require("./multitask-controller");
 const { SettingsPanel } = require("./settings-panel");
 const { UniversalMcpRegistry } = require("./universal-mcp");
+const { TerminalObserver } = require("./terminal-observer");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -47,11 +48,14 @@ function activate(context) {
     hub: { connected: false, capabilities: [], detail: "Checking the intelligence hub." },
   };
   const composer = new ComposerViewProvider(context, state);
-  context.subscriptions.push({
-    dispose: () => {
-      if (composer.externalTools && typeof composer.externalTools.close === "function") composer.externalTools.close();
+  context.subscriptions.push(
+    composer.terminalObserver,
+    {
+      dispose: () => {
+        if (composer.externalTools && typeof composer.externalTools.close === "function") composer.externalTools.close();
+      },
     },
-  });
+  );
   const paperclip = new PaperclipBridge({ session: composer.session });
   composer.setPaperclip(paperclip);
   paperclip.start().then((status) => {
@@ -911,7 +915,8 @@ class ComposerViewProvider {
     this.multitask = null;
     this.capabilities = N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null;
     this.n8n = new N8nIntegration(context);
-    this.externalTools = new UniversalMcpRegistry(context, this.n8n);
+    this.terminalObserver = new TerminalObserver(vscode).start();
+    this.externalTools = new UniversalMcpRegistry(context, this.n8n, [this.terminalObserver]);
     this.syncExternalPermissions();
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
