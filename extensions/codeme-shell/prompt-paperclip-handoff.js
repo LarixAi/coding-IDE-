@@ -2,6 +2,10 @@
 
 const crypto = require("crypto");
 const { formatGoal } = require("./composer-client");
+const {
+  isWebsiteBuildGoal,
+  websiteQualityContract,
+} = require("../../packages/agent-runtime/website-quality");
 
 function reject(code, message) {
   return { ok: false, code, message };
@@ -144,10 +148,10 @@ function installPromptPaperclipHandoff(options = {}) {
         || originalGoal,
       ).trim();
 
-      if (
-        !optionsForRun.skipPaperclip
-        && shouldRouteToPaperclip(this.composerMode, routeGoal, decision)
-      ) {
+      const routeToPaperclip = !optionsForRun.skipPaperclip
+        && shouldRouteToPaperclip(this.composerMode, routeGoal, decision);
+
+      if (routeToPaperclip) {
         const controller = this.__codemeMultitaskController;
         if (!controller || typeof controller.start !== "function") {
           return reject(
@@ -173,10 +177,24 @@ function installPromptPaperclipHandoff(options = {}) {
         return result;
       }
 
+      if (String(this.composerMode || "").toLowerCase() === "code" && isWebsiteBuildGoal(routeGoal)) {
+        const baseGoal = String(optionsForRun.goalOverride || originalGoal).trim();
+        return originalSubmit.call(this, text, epoch, {
+          ...optionsForRun,
+          goalOverride: [baseGoal, websiteQualityContract()].join("\n\n"),
+        });
+      }
+
       return originalSubmit.call(this, text, epoch, optionsForRun);
     }
 
     if (!this.n8n || typeof this.n8n.enhanceForSubmit !== "function") {
+      if (String(this.composerMode || "").toLowerCase() === "code" && isWebsiteBuildGoal(originalGoal)) {
+        return originalSubmit.call(this, text, epoch, {
+          ...optionsForRun,
+          goalOverride: [originalGoal, websiteQualityContract()].join("\n\n"),
+        });
+      }
       return originalSubmit.call(this, text, epoch, optionsForRun);
     }
 

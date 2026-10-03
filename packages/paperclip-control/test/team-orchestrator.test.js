@@ -17,6 +17,7 @@ function fakeTeamApi(options = {}) {
     priority: "medium",
     status: "todo",
     blockedByIssueIds: [],
+    ...(options.parent || {}),
   };
 
   const state = {
@@ -277,6 +278,85 @@ async function main() {
   assert.ok(phases.some((title) => title.includes(":test:1]")));
   assert.ok(phases.some((title) => title.includes(":reviewer:1]")));
 
+  const websiteApi = fakeTeamApi({
+    parent: {
+      identifier: "WEB-1",
+      title: "Build a professional dealership website",
+      description: "Create a responsive dealership website with inventory, strong book-a-viewing CTA, trust content, and polished CSS.",
+    },
+  });
+  const websiteOrchestrator = new PaperclipTeamOrchestrator({
+    api: websiteApi,
+    agentRegistry: registry,
+    maxRepairCycles: 1,
+    dispositionRetryDelays: [0, 0, 0],
+  });
+  const websiteHeartbeat = (runId) => websiteOrchestrator.handleHeartbeat({
+    runId,
+    agentId: "controller-id",
+    companyId: "company-1",
+    context: { taskId: "parent-1" },
+  });
+
+  await websiteHeartbeat("website-1");
+  const webProduct = websiteApi.state.creates.find((item) => item.issue.title.includes(":product:0]"));
+  assert.match(webProduct.issue.description, /WEBSITE QUALITY CONTRACT/);
+  assert.match(webProduct.issue.description, /CTA \/ CONVERSION/);
+  assert.match(webProduct.issue.description, /CONTENT & TRUST/);
+  websiteApi.complete(":product:0]", "AUDIENCE: buyers\nCTA / CONVERSION: book viewing\nPRODUCT: READY");
+
+  await websiteHeartbeat("website-2");
+  const webArchitect = websiteApi.state.creates.find((item) => item.issue.title.includes(":cto:0]"));
+  assert.match(webArchitect.issue.description, /CSS ARCHITECTURE/);
+  assert.match(webArchitect.issue.description, /RESPONSIVE STRATEGY/);
+  assert.match(webArchitect.issue.description, /SEO \/ PERFORMANCE/);
+  websiteApi.complete(":cto:0]", "CSS ARCHITECTURE: design tokens and component styles\nPLAN: READY");
+
+  await websiteHeartbeat("website-3");
+  const webDeveloper = websiteApi.state.creates.find((item) => item.issue.title.includes(":developer:0]"));
+  assert.match(webDeveloper.issue.description, /Inspect the existing CSS/i);
+  assert.match(webDeveloper.issue.description, /primary CTA/i);
+  assert.match(webDeveloper.issue.description, /visual hierarchy/i);
+  websiteApi.complete(":developer:0]", "DEV: COMPLETE");
+
+  await websiteHeartbeat("website-4");
+  const webTest = websiteApi.state.creates.find((item) => item.issue.title.includes(":test:0]"));
+  assert.match(webTest.issue.description, /WEB QUALITY MATRIX/);
+  assert.match(webTest.issue.description, /CSS path/i);
+  assert.match(webTest.issue.description, /WEB QUALITY: PASS/);
+  websiteApi.complete(":test:0]", [
+    "WEB QUALITY MATRIX",
+    "product PASS",
+    "architecture PASS",
+    "visual PASS",
+    "responsive PASS",
+    "interaction PASS",
+    "accessibility PASS",
+    "content PASS",
+    "seo PASS",
+    "performance PASS",
+    "verification PASS",
+    "WEB QUALITY: PASS",
+    "TEST: PASS",
+  ].join("\n"));
+
+  await websiteHeartbeat("website-5");
+  const webReviewer = websiteApi.state.creates.find((item) => item.issue.title.includes(":reviewer:0]"));
+  assert.match(webReviewer.issue.description, /CSS quality/i);
+  assert.match(webReviewer.issue.description, /CTA prominence/i);
+  assert.match(webReviewer.issue.description, /WEB REVIEW: APPROVED/);
+  websiteApi.complete(":reviewer:0]", "WEB REVIEW: APPROVED\nREVIEW: APPROVED");
+
+  const websiteDone = await websiteHeartbeat("website-6");
+  assert.strictEqual(websiteDone.status, "done");
+  assert.ok(websiteApi.state.updates.some((item) => (
+    item.issueId === "parent-1"
+    && item.status === "done"
+    && /WEB QUALITY: PASS/.test(item.comment)
+    && /WEB REVIEW: APPROVED/.test(item.comment)
+  )));
+  websiteOrchestrator.dispose();
+
   const testFailureApi = fakeTeamApi();
   const testFailureOrchestrator = new PaperclipTeamOrchestrator({
     api: testFailureApi,
@@ -329,7 +409,7 @@ async function main() {
   orchestrator.dispose();
   testFailureOrchestrator.dispose();
   failingOrchestrator.dispose();
-  console.log("ok Paperclip team enforces runtime-aware minimal diffs, repairs reviewer/test failures, and fails closed on disposition sync");
+  console.log("ok Paperclip team enforces runtime-aware diffs plus multi-angle website product, architecture, CSS, CTA, QA, and review");
 }
 
 main().catch((error) => {
