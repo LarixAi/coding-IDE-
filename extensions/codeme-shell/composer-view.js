@@ -860,7 +860,7 @@ function renderComposer(nonce) {
         copy.type = "button";
         copy.textContent = "Copy diagnostics";
         copy.addEventListener("click", () => {
-          const text = rows.map((row) => row[0] + ": " + row[1]).join("\n");
+          const text = rows.map((row) => row[0] + ": " + row[1]).join("\\n");
           navigator.clipboard && navigator.clipboard.writeText(text);
         });
         actions.appendChild(resume);
