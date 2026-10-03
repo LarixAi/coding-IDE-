@@ -249,7 +249,7 @@ async function main() {
   assert.ok(html.includes('id="clarification"'));
   assert.ok(html.includes("clarification-submit"));
   assert.ok(html.includes('id="work-panel"'));
-  assert.ok(html.includes("Work details"));
+  assert.ok(html.includes("View technical activity"), "Composer must keep raw tool activity behind the approved collapsible technical activity label");
   assert.ok(html.includes('activity.classList.toggle("on", running && Boolean(line))'));
   assert.ok(html.includes("Understanding your request…"));
   assert.ok(!html.includes("Send did not receive a response. Try again."));
