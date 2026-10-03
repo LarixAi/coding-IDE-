@@ -192,6 +192,8 @@ class ComposerSession {
     this.stream = [];
     this.thread = [];
     this.verification = null;
+    this.timeoutDiagnostics = null;
+    this.reconnect = null;
     this.projectDecision = null;
     this.clarification = null;
     this.researchRequest = null;
@@ -221,6 +223,8 @@ class ComposerSession {
       stream: this.stream.map((item) => ({ ...item })),
       thread: this.thread.map((item) => ({ ...item })),
       verification: this.verification,
+      timeoutDiagnostics: this.timeoutDiagnostics ? { ...this.timeoutDiagnostics } : null,
+      reconnect: this.reconnect ? { ...this.reconnect } : null,
       projectDecision: this.projectDecision ? { ...this.projectDecision } : null,
       clarification: this.clarification ? {
         ...this.clarification,
@@ -313,6 +317,8 @@ class ComposerSession {
     this.tools = [];
     this.stream = [];
     this.verification = null;
+    this.timeoutDiagnostics = null;
+    this.reconnect = null;
     this.projectDecision = null;
     this.clarification = null;
     this.researchRequest = null;
@@ -821,7 +827,9 @@ class ComposerSession {
           size: item.size,
         })),
         inferRequirements: true,
+        workspaceRoot: this.root,
         timeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
+        retryTimeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
         maxIterations: this.composerMode === "code" ? 20 : 12,
         maxRepairRounds: 2,
         maxToolCallsPerTurn: 8,
@@ -878,6 +886,8 @@ class ComposerSession {
     this.thread = (this.active.baseThread || []).concat(assistantItems);
 
     this.verification = run.verification || null;
+    this.timeoutDiagnostics = run.timeoutDiagnostics ? { ...run.timeoutDiagnostics } : null;
+    this.reconnect = run.reconnect ? { ...run.reconnect } : null;
     this.projectDecision = run.projectDecision ? { ...run.projectDecision } : null;
     this.outcome = run.outcome || null;
     this.error = run.lifecycle === "failed" && run.error ? run.error.message : "";
