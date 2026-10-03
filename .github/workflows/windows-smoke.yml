@@ -64,5 +64,7 @@ jobs:
           node extensions/codeme-shell/test/browser-interaction-runner.test.js
           node extensions/codeme-shell/test/sandbox-runner.test.js
           node extensions/codeme-shell/test/composer.test.js
+          node extensions/codeme-shell/test/n8n-health.test.js
+          node packages/n8n-capability/test/mcp.test.js
           node packages/agent-runtime/test/model-provider.test.js
           node packages/agent-runtime/test/pipeline-v2.test.js
