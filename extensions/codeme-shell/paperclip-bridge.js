@@ -125,7 +125,8 @@ class PaperclipBridge {
       throw error;
     }
 
-    const rootRunId = "codeme-multitask-" + crypto.randomUUID();
+    const traceId = String(options.traceId || "").trim();
+    const rootRunId = traceId || ("codeme-multitask-" + crypto.randomUUID());
     const title = text.replace(/\s+/g, " ").slice(0, 120);
     const parent = await this.api.createIssue({
       companyId: this.companyId,

@@ -16,11 +16,16 @@ function publicDefaults() {
   const autoEnhance = autoEnhanceEnv
     ? !["0", "false", "off", "no"].includes(autoEnhanceEnv)
     : true;
+  const requestedTimeout = Number(process.env.CODEME_N8N_ENHANCE_TIMEOUT_MS || 200000);
+  const enhanceTimeoutMs = Number.isFinite(requestedTimeout)
+    ? Math.min(600000, Math.max(15000, requestedTimeout))
+    : 200000;
   return {
     mcpEnabled: true,
     mcpUrl: process.env.CODEME_N8N_MCP_URL || defaultMcpUrl(),
     autoEnhance,
     enhanceWebhookUrl: configuredEnhanceUrl,
+    enhanceTimeoutMs,
   };
 }
 
@@ -48,14 +53,14 @@ function enhancementError(code, message) {
   return Object.assign(new Error(message), { code });
 }
 
-function timedSignal(parentSignal, timeoutMs = 75000) {
+function timedSignal(parentSignal, timeoutMs = 200000) {
   const controller = new AbortController();
   let parentAbort = null;
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, Math.max(1000, Number(timeoutMs) || 75000));
+  }, Math.max(1000, Number(timeoutMs) || 200000));
 
   if (parentSignal) {
     parentAbort = () => controller.abort(parentSignal.reason);
@@ -138,6 +143,8 @@ function parseEnhancementResponse(value) {
     conversationId: parsed.conversationId == null ? null : String(parsed.conversationId),
     projectId: parsed.projectId == null ? null : String(parsed.projectId),
     promptEnhancementVersion: clip(parsed.promptEnhancementVersion, 80),
+    requestId: parsed.requestId == null ? null : String(parsed.requestId),
+    runId: parsed.runId == null ? null : String(parsed.runId),
   };
 
   // A clarification response is not authorization to build. Keep unresolved
@@ -260,6 +267,9 @@ class N8nIntegration {
       ...(typeof patch.mcpUrl==="string"?{mcpUrl:patch.mcpUrl.trim()||defaultMcpUrl()}:{}),
       ...(typeof patch.autoEnhance==="boolean"?{autoEnhance:patch.autoEnhance}:{}),
       ...(typeof patch.enhanceWebhookUrl==="string"?{enhanceWebhookUrl:patch.enhanceWebhookUrl.trim()}:{}),
+      ...(Number.isFinite(Number(patch.enhanceTimeoutMs))
+        ? {enhanceTimeoutMs:Math.min(600000,Math.max(15000,Number(patch.enhanceTimeoutMs)))}
+        : {}),
     };
     await this.context.globalState.update(SETTINGS_KEY,next);
     if (typeof patch.mcpToken==="string"&&this.context.secrets) {
@@ -372,7 +382,8 @@ class N8nIntegration {
       : [];
 
     let response;
-    const request = timedSignal(options.signal, options.timeoutMs || 75000);
+    const timeoutMs = Number(options.timeoutMs || settings.enhanceTimeoutMs || 200000);
+    const request = timedSignal(options.signal, timeoutMs);
     try {
       response = await fetch(url, {
         method: "POST",
@@ -382,6 +393,8 @@ class N8nIntegration {
           ...(token ? { authorization: "Bearer " + token } : {}),
         },
         body: JSON.stringify({
+          requestId: context.requestId || context.taskId || null,
+          runId: context.runId || context.requestId || context.taskId || null,
           prompt: original,
           mode: context.mode || "code",
           projectId: context.projectId || (context.workspace && context.workspace.rootName) || null,
@@ -398,7 +411,7 @@ class N8nIntegration {
       });
     } catch (error) {
       const message = request.didTimeout()
-        ? "Prompt enhancement timed out after 75 seconds."
+        ? "Prompt enhancement timed out after " + Math.ceil(timeoutMs / 1000) + " seconds."
         : "Prompt enhancement could not reach n8n: " + (error instanceof Error ? error.message : String(error));
       this.lastError = message;
       throw enhancementError(
