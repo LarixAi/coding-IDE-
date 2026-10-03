@@ -163,6 +163,10 @@ function activate(context) {
     vscode.commands.registerCommand("codeme.ask", () => vscode.commands.executeCommand("codeme.agent.focus")),
     vscode.commands.registerCommand("codeme.attach", () => composer.pickFiles()),
     vscode.commands.registerCommand("codeme.openSettings", () => settingsPanel.open()),
+    vscode.commands.registerCommand("codeme.openExplorer", () => vscode.commands.executeCommand("workbench.view.explorer")),
+    vscode.commands.registerCommand("codeme.openTerminal", () => openTerminalPanel()),
+    vscode.commands.registerCommand("codeme.openPreview", () => openIntegratedPreview()),
+    vscode.commands.registerCommand("codeme.openFile", (filePath) => openWorkspaceFile(filePath)),
     vscode.commands.registerCommand("codeme.hideStart", () => emptyEditor.suppress(1500)),
   );
 }
@@ -297,6 +301,12 @@ async function applyPreferredSettings() {
     ["chat.titleBar.signIn.enabled", false],
     ["chat.titleBar.openInAgentsWindow.enabled", false],
     ["workbench.secondarySideBar.defaultVisibility", "visible"],
+    ["workbench.panel.defaultLocation", "bottom"],
+    ["explorer.compactFolders", false],
+    ["explorer.decorations.badges", true],
+    ["explorer.decorations.colors", true],
+    ["workbench.tree.indent", 12],
+    ["workbench.tree.renderIndentGuides", "always"],
     ["workbench.tips.enabled", false],
     ["workbench.editor.empty.hint", "hidden"],
   ];
@@ -321,6 +331,66 @@ async function runCommand(command) {
   }
 }
 
+async function openWorkspaceFile(filePath) {
+  const root = workspaceRoot();
+  const requested = String(filePath || "").trim();
+  if (!root || !requested) return false;
+  const candidate = path.isAbsolute(requested)
+    ? path.resolve(requested)
+    : path.resolve(root, requested);
+  const resolvedRoot = path.resolve(root);
+  if (candidate !== resolvedRoot && !candidate.startsWith(resolvedRoot + path.sep)) {
+    await vscode.window.showWarningMessage("CodeMe can only open files inside the current workspace.");
+    return false;
+  }
+  try {
+    await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(candidate), { preview: false });
+    return true;
+  } catch (error) {
+    await vscode.window.showWarningMessage(
+      "Could not open " + requested + ": " + (error && error.message ? error.message : String(error)),
+    );
+    return false;
+  }
+}
+
+async function openTerminalPanel() {
+  await runCommand("workbench.action.positionPanelBottom");
+  await runCommand("workbench.action.terminal.focus");
+  return true;
+}
+
+async function openIntegratedPreview() {
+  let status;
+  try {
+    status = await host.processStatus();
+  } catch (error) {
+    await vscode.window.showWarningMessage(
+      "CodeMe could not read the preview session: " + (error && error.message ? error.message : String(error)),
+    );
+    return false;
+  }
+  const url = status && status.status === "running"
+    ? String(status.url || status.origin || "")
+    : "";
+  if (!url) {
+    await vscode.window.showInformationMessage(
+      "No CodeMe preview is running yet. Start the app from Code mode, then open Preview.",
+    );
+    return false;
+  }
+  try {
+    await vscode.commands.executeCommand("simpleBrowser.show", url);
+    return true;
+  } catch (error) {
+    await vscode.window.showWarningMessage(
+      "The integrated Simple Browser could not open " + url + ". " +
+      (error && error.message ? error.message : String(error)),
+    );
+    return false;
+  }
+}
+
 async function arrangeShell(welcome, emptyEditor) {
   if (!folderOpen()) {
     if (emptyEditor) emptyEditor.dispose();
@@ -332,6 +402,8 @@ async function arrangeShell(welcome, emptyEditor) {
   }
   if (welcome.panel) welcome.panel.dispose();
   await runCommand("workbench.view.explorer");
+  await runCommand("workbench.action.positionPanelBottom");
+  await runCommand("workbench.action.terminal.focus");
   await runCommand("workbench.action.closeChat");
   await runCommand("codeme.agent.focus");
   if (emptyEditor) {
@@ -1061,6 +1133,22 @@ class ComposerViewProvider {
     }
     if (message.type === "detach") {
       this.session.detach(message.id);
+      return;
+    }
+    if (message.type === "open-file") {
+      await openWorkspaceFile(message.path);
+      return;
+    }
+    if (message.type === "open-terminal") {
+      await openTerminalPanel();
+      return;
+    }
+    if (message.type === "open-preview") {
+      await openIntegratedPreview();
+      return;
+    }
+    if (message.type === "open-explorer") {
+      await vscode.commands.executeCommand("workbench.view.explorer");
       return;
     }
     if (message.type === "attach") {
