@@ -1098,6 +1098,15 @@ class ComposerViewProvider {
       }
       return;
     }
+    if (message.type === "resume-run") {
+      const result = this.session.resume();
+      if (!result.ok) {
+        this.view.webview.postMessage({ type: "rejected", code: result.code, message: result.message });
+      } else {
+        this.view.webview.postMessage({ type: "accepted", epoch: this.session.epoch, requestId: result.requestId, runId: result.runId, text: "" });
+      }
+      return;
+    }
     if (message.type === "cancel") {
       const multitask = this.multitask ? this.multitask.snapshot() : null;
       if (multitask && multitask.active) {
