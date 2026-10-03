@@ -68,7 +68,7 @@ function Ensure-PinnedNode {
 
 function Assert-WindowsBuildTools {
   $vswhere = Join-Path $env:ProgramFiles "Microsoft Visual Studio\Installer\vswhere.exe"
-  $vswhereX86 = Join-Path $env:ProgramFiles(x86) "Microsoft Visual Studio\Installer\vswhere.exe"
+  $vswhereX86 = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
   if (-not (Test-Path $vswhere) -and (Test-Path $vswhereX86)) { $vswhere = $vswhereX86 }
   if (-not (Test-Path $vswhere)) {
     Fail "Visual Studio Build Tools were not found. Install Visual Studio 2022 Build Tools with 'Desktop development with C++' and a Windows 10/11 SDK."
