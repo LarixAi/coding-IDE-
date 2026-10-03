@@ -45,7 +45,7 @@ function taskClassFor(composerMode) {
 
 function looksLikeWorkspaceEdit(goal) {
   const text = String(goal || "").toLowerCase();
-  return /\b(edit|change|update|rewrite|restyle|redesign|layout|better website|improve the (site|page|layout)|apply (the )?(change|edit|fix)|repair|implement)\b/.test(text);
+  return /\b(fix|edit|change|update|rewrite|restyle|redesign|repair|implement|build|create|add|remove|delete|replace|refactor|style|layout|better website|improve the (site|page|layout)|apply (the )?(change|edit|fix))\b/.test(text);
 }
 
 function composerModeLabel(composerMode) {

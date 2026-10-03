@@ -6,6 +6,8 @@ function createPreviewSessionManager(vscode, options = {}) {
   const sessions = new Map();
   let sequence = 0;
   const waitForShell = options.waitForShellIntegration || ((terminal) => waitForShellIntegration(vscode, terminal));
+  const probePreview = options.probe || probe;
+  const healthGraceMs = Math.max(0, Number(options.healthGraceMs ?? 2500));
 
   function key(root) {
     return String(root || "");
@@ -31,6 +33,8 @@ function createPreviewSessionManager(vscode, options = {}) {
         exitCode: null,
         startedAt: null,
         endedAt: null,
+        healthCode: "",
+        healthMessage: "",
         output: includeOutput ? "" : undefined,
       };
     }
@@ -48,8 +52,61 @@ function createPreviewSessionManager(vscode, options = {}) {
       startedAt: record.startedAt,
       endedAt: record.endedAt,
       restartCount: Number(record.restartCount || 0),
+      healthCode: String(record.healthCode || ""),
+      healthMessage: String(record.healthMessage || ""),
       output: includeOutput ? record.output : undefined,
     };
+  }
+
+  function adoptUrl(root, reachableUrl) {
+    const record = current(root);
+    if (!record || !reachableUrl) return snapshot(root, false);
+    try {
+      const reachable = new URL(String(reachableUrl));
+      if (!["127.0.0.1", "localhost"].includes(reachable.hostname)) return snapshot(root, false);
+      const existing = new URL(String(record.url || record.origin || reachableUrl));
+      existing.protocol = reachable.protocol;
+      existing.hostname = reachable.hostname;
+      existing.port = reachable.port;
+      record.origin = reachable.origin;
+      record.url = existing.toString();
+      record.healthCode = "reachable";
+      record.healthMessage = "Preview answered on " + reachable.hostname + ".";
+      record.updatedAt = new Date().toISOString();
+    } catch {}
+    return snapshot(root, false);
+  }
+
+  async function refresh(root) {
+    const record = current(root);
+    if (!record || record.status !== "running" || !record.origin) return snapshot(root, false);
+
+    const target = String(record.url || record.origin);
+    const health = await probePreview(target);
+    if (health && health.url && health.code !== "preview_not_running") adoptUrl(root, health.url);
+
+    if (health && (health.available || health.code !== "preview_not_running")) {
+      record.healthCode = health.available ? "reachable" : String(health.code || "http_response");
+      record.healthMessage = health.available
+        ? "Preview is reachable."
+        : String(health.message || "Preview process answered.");
+      record.updatedAt = new Date().toISOString();
+      return snapshot(root, false);
+    }
+
+    const startedAt = Date.parse(String(record.startedAt || ""));
+    const ageMs = Number.isFinite(startedAt) ? Date.now() - startedAt : healthGraceMs;
+    if (ageMs < healthGraceMs) {
+      record.healthCode = "starting";
+      record.healthMessage = "Preview has not answered yet; still inside startup grace period.";
+      return snapshot(root, false);
+    }
+
+    record.status = "stale";
+    record.healthCode = String(health && (health.cause || health.code) || "preview_not_running");
+    record.healthMessage = String(health && health.message || "The recorded preview process is no longer reachable.");
+    record.updatedAt = new Date().toISOString();
+    return snapshot(root, false);
   }
 
   async function stop(root) {
@@ -81,7 +138,7 @@ function createPreviewSessionManager(vscode, options = {}) {
     if (!workspace) throw Object.assign(new Error("Preview session requires a workspace root"), { code: "no_workspace" });
 
     const old = current(workspace);
-    if (old && old.status === "running") await stop(workspace);
+    if (old && ["running", "stale"].includes(old.status)) await stop(workspace);
 
     recoverFlagSocket(workspace);
 
@@ -110,6 +167,8 @@ function createPreviewSessionManager(vscode, options = {}) {
         updatedAt: now,
         endedAt: null,
         restartCount: old ? Number(old.restartCount || 0) + 1 : 0,
+        healthCode: "starting",
+        healthMessage: "Static preview started.",
       };
       record.url = new URL(plan.staticPath || "/", record.origin).toString();
       sessions.set(workspace, record);
@@ -166,6 +225,8 @@ function createPreviewSessionManager(vscode, options = {}) {
       endedAt: null,
       ended,
       restartCount: old ? Number(old.restartCount || 0) + 1 : 0,
+      healthCode: "starting",
+      healthMessage: "Preview process started; waiting for HTTP readiness.",
     };
     sessions.set(workspace, record);
 
@@ -204,6 +265,8 @@ function createPreviewSessionManager(vscode, options = {}) {
   return {
     start,
     stop,
+    refresh,
+    adoptUrl,
     status(root) { return snapshot(root, false); },
     logs(root) { return snapshot(root, true); },
     current,

@@ -15,6 +15,7 @@ const {
   portFromSourceText,
   extractLocalAssets,
   isAssetFailure,
+  alternateLoopbackUrl,
 } = require("../preview-runner");
 
 function mockVscode(commands) {
@@ -55,6 +56,8 @@ async function main() {
   assert.strictEqual(portFromSourceText("const PORT = process.env.PORT || 3000;\nserver.listen(PORT);"), 3000);
   assert.strictEqual(isAssetFailure({ code: "asset_status" }), true);
   assert.strictEqual(isAssetFailure({ code: "page_status" }), false);
+  assert.strictEqual(alternateLoopbackUrl("http://127.0.0.1:3000/contact.html"), "http://localhost:3000/contact.html");
+  assert.strictEqual(alternateLoopbackUrl("http://localhost:3000/contact.html"), "http://127.0.0.1:3000/contact.html");
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codeme-preview-pure-"));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: "node server.js" } }));
