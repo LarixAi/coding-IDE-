@@ -562,7 +562,14 @@ async function executePipelineRun(run, options, followUpQueue) {
     maxTurns: options.maxIterations || 20,
     maxRepairRounds: options.maxRepairRounds ?? 2,
     maxToolCallsPerTurn: options.maxToolCallsPerTurn ?? 8,
-    turnDeadlineMs: options.timeoutMs || 240000,
+    turnDeadlineMs: options.timeoutMs || 180000,
+    retryDeadlineMs: options.retryTimeoutMs || options.timeoutMs || 180000,
+    reconnectDelaysMs: options.reconnectDelaysMs,
+    resumeFrom: options.resumeFrom || run.pipelineCheckpoint || null,
+    onCheckpoint(checkpoint) {
+      run.pipelineCheckpoint = checkpoint;
+      store.save(run);
+    },
     wallClockMs: options.wallClockMs || 45 * 60 * 1000,
     mode: run.mode,
     composerMode: run.composerMode,
@@ -586,6 +593,29 @@ async function executePipelineRun(run, options, followUpQueue) {
           summary: event.reason,
           at: new Date().toISOString(),
         });
+      } else if (event.type === "model_timeout") {
+        run.timeoutDiagnostics = { ...event.diagnostics };
+        run.modelTimeoutRetriesUsed = Number(run.modelTimeoutRetriesUsed || 0) + 1;
+        run.timeoutRetryPending = true;
+      } else if (event.type === "model_timeout_recovered") {
+        if (run.timeoutDiagnostics) run.timeoutDiagnostics = { ...run.timeoutDiagnostics, outcome: "recovered" };
+        run.timeoutRetryPending = false;
+      } else if (event.type === "model_timeout_failed") {
+        if (run.timeoutDiagnostics) run.timeoutDiagnostics = { ...run.timeoutDiagnostics, outcome: "failed" };
+        run.timeoutRetryPending = false;
+      } else if (event.type === "model_reconnect") {
+        run.reconnect = {
+          status: "retrying",
+          turn: event.turn,
+          attempt: event.attempt,
+          max: event.max,
+          delayMs: event.delayMs,
+          reason: event.reason,
+        };
+      } else if (event.type === "model_reconnected") {
+        run.reconnect = { status: "recovered", turn: event.turn, attempt: event.attempt };
+      } else if (event.type === "model_offline") {
+        run.reconnect = { status: "offline", turn: event.turn, reason: event.reason };
       } else if (event.type === "model_end") {
         run.decisions.push({
           iteration: event.turn,
@@ -624,17 +654,21 @@ async function executePipelineRun(run, options, followUpQueue) {
 
   run.messages = result.messages;
   run.inFlight = null;
+  if (result.checkpoint) run.pipelineCheckpoint = result.checkpoint;
   run.outcome = {
     status: result.reason,
     summary: result.finalText,
   };
   const success = result.reason === "verified" || result.reason === "answered";
+  const resumable = result.reason === "model_offline" || result.reason === "timeout";
   run.lifecycle = result.reason === "cancelled"
     ? "cancelled"
     : success
       ? "completed"
-      : "failed";
-  if (!success && result.reason !== "cancelled") {
+      : resumable
+        ? "awaiting_user"
+        : "failed";
+  if (!success && result.reason !== "cancelled" && !resumable) {
     run.error = {
       code: result.reason,
       message: result.finalText,
