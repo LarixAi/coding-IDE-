@@ -402,8 +402,25 @@ class N8nIntegration {
   }
 
   async connectionStatus() {
+    const settings=this.settings();
+    const service=await probeN8nService(settings);
     const provider=await this.getProvider();
-    if (!provider) return {connected:false,endpoint:this.settings().mcpUrl,toolCount:0,tools:[],toolRecords:[],categories:{},imageUploadAllowed:this.runtime.allowImageUpload,actionsAllowed:false,error:{code:"disabled",message:"n8n MCP is disabled"}};
+    if (!provider) {
+      return {
+        connected:false,
+        serviceConnected:Boolean(service.connected),
+        serviceEndpoint:service.endpoint||"",
+        endpoint:settings.mcpUrl,
+        toolCount:0,
+        tools:[],
+        toolRecords:[],
+        categories:{},
+        imageUploadAllowed:this.runtime.allowImageUpload,
+        actionsAllowed:false,
+        error:{code:"disabled",message:"n8n MCP is disabled"},
+        serviceError:service.error||null,
+      };
+    }
     try {
       const status=await provider.connectionStatus();
       this.toolCount=status.toolCount||0;
@@ -411,13 +428,34 @@ class N8nIntegration {
       this.toolNames=Array.isArray(status.tools)?status.tools.slice():[];
       this.categories=status.categories&&typeof status.categories==="object"?{...status.categories}:{};
       this.safeToolCount=this.toolRecords.filter((item)=>!item.sideEffect).length;
-      this.lastError="";
-      return {...status,actionsAllowed:false,actionToolsLocked:true};
+      this.lastError=status.connected?"":(status.error&&status.error.message||"");
+      return {
+        ...status,
+        serviceConnected:Boolean(service.connected),
+        serviceEndpoint:service.endpoint||"",
+        serviceError:service.error||null,
+        actionsAllowed:false,
+        actionToolsLocked:true,
+      };
     } catch (error) {
-      return {connected:false,endpoint:this.settings().mcpUrl,toolCount:0,tools:[],toolRecords:[],categories:{},imageUploadAllowed:this.runtime.allowImageUpload,actionsAllowed:false,error:{code:error&&error.code?String(error.code):"unavailable",message:error instanceof Error?error.message:String(error)}};
+      const message=error instanceof Error?error.message:String(error);
+      this.lastError=message;
+      return {
+        connected:false,
+        serviceConnected:Boolean(service.connected),
+        serviceEndpoint:service.endpoint||"",
+        endpoint:settings.mcpUrl,
+        toolCount:0,
+        tools:[],
+        toolRecords:[],
+        categories:{},
+        imageUploadAllowed:this.runtime.allowImageUpload,
+        actionsAllowed:false,
+        serviceError:service.error||null,
+        error:{code:error&&error.code?String(error.code):"unavailable",message},
+      };
     }
   }
-
   async test() {
     const status=await this.connectionStatus();
     if (!status.connected) throw Object.assign(new Error(status.error&&status.error.message||"n8n MCP unavailable"),{code:status.error&&status.error.code||"unavailable"});
