@@ -1,29 +1,29 @@
 {
   "version": 1,
   "name": "CodeMe Pipeline v2 Canonical Lock",
-  "baselineCommit": "f9bceb249134c7aea71291fb5b32be5408b17f94",
+  "baselineCommit": "8056f2b49aa601dd133c25afb4afeaecfcaa605e",
   "baselineBranch": "pipeline-v2-locked-baseline",
-  "lockedAt": "2026-10-01",
+  "lockedAt": "2026-10-03",
   "policy": {
     "owner": "LarixAi",
     "rule": "Do not modify protected pipeline files or update this manifest unless the repository owner has explicitly approved a pipeline change.",
     "addons": "New features should integrate through external tools, capabilities, providers, UI modules, or other extension points without changing the protected pipeline core."
   },
   "protectedFiles": {
-    "packages/agent-runtime/pipeline-run.js": "aae43eaa39e0506164b9319946c3a14716414105",
-    "packages/agent-runtime/pipeline-loop.js": "b7857f2853876509799f4d3dd0e5a755330b1a2d",
+    "packages/agent-runtime/pipeline-run.js": "84fb365658be2f25dc5b9f2b7d399d5a0cca0212",
+    "packages/agent-runtime/pipeline-loop.js": "88efeb812c5f02e53d64cca3c36f8093a2d03eeb",
     "packages/agent-runtime/pipeline-context.js": "79c906348f6f50b1e416ca3cad0223803ff021ab",
-    "packages/agent-runtime/pipeline-instructions.js": "d6e1ff3551aebb447c808cc3cd8e33b524fed860",
-    "packages/agent-runtime/agent-run.js": "8cb75de94031afae1fdbfe15f3eef92d6059c83f",
-    "packages/agent-runtime/model-provider.js": "3ac8db13b139713361774da6496ce47cc267efa4",
+    "packages/agent-runtime/pipeline-instructions.js": "bec7ad113d7432e1ca12a4638cd0f4e14860bd01",
+    "packages/agent-runtime/agent-run.js": "94f0015ce6e2e7ebdce39ced56815d6efa36b123",
+    "packages/agent-runtime/model-provider.js": "f3c0709b66bce0f0df49dcdc78d302f70c1e57b7",
     "packages/agent-runtime/tool-registry.js": "9d65de1e22be732322b17a2a2f2108a76a15a6ac",
-    "packages/agent-runtime/capability.js": "b7bd3dd424423da8177749a580ee98ff261fa514",
+    "packages/agent-runtime/capability.js": "3fd1f96f6b0a8e26e8a49fbdc7241dfea50e269c",
     "packages/agent-runtime/requirements.js": "9b0f98709b9e4c3f35baf85ffffd881a5c4e4339",
     "packages/agent-runtime/strategy.js": "cc9eaa7a197d43c8dc9d0f88f9923fc43ebda4c9",
     "packages/agent-runtime/intent.js": "e78006ef754dc3a3e80eeb48a0975eadc4eae74f",
     "packages/agent-runtime/project-decision.js": "85a493becad2e193f19c09fd42420c28f945a9e6",
     "extensions/codeme-shell/composer-session.js": "e10c566c72866bd3c0ca398028fcad711aa8d3ed",
-    "packages/agent-runtime/test/pipeline-v2.test.js": "855a1f4f2c465a8945f09ccb408427cb48600718",
+    "packages/agent-runtime/test/pipeline-v2.test.js": "48f9a48ff98d236803c9729a380583e294f8f06d",
     "extensions/codeme-shell/test/composer-pipeline-v2.test.js": "71f6062c045cb84fc5d1af7c2e3fbe36422c8ab1"
   },
   "extensionPoints": [
