@@ -20,6 +20,7 @@ const { DebugToolProvider } = require("./debug-tool-provider");
 const { VerificationToolProvider } = require("./verification-tool-provider");
 const { MultitaskController } = require("./multitask-controller");
 const { SettingsPanel } = require("./settings-panel");
+const { UniversalMcpRegistry } = require("./universal-mcp");
 
 let N8nCapabilityProvider;
 let OllamaModelProvider;
@@ -46,6 +47,11 @@ function activate(context) {
     hub: { connected: false, capabilities: [], detail: "Checking the intelligence hub." },
   };
   const composer = new ComposerViewProvider(context, state);
+  context.subscriptions.push({
+    dispose: () => {
+      if (composer.externalTools && typeof composer.externalTools.close === "function") composer.externalTools.close();
+    },
+  });
   const paperclip = new PaperclipBridge({ session: composer.session });
   composer.setPaperclip(paperclip);
   paperclip.start().then((status) => {
@@ -128,6 +134,14 @@ function activate(context) {
       paperclip,
       state,
     }),
+    updateMcp: async (servers) => {
+      if (!composer.externalTools || typeof composer.externalTools.updateServers !== "function") {
+        throw new Error("Universal MCP registry is not connected");
+      }
+      const next = await composer.externalTools.updateServers(servers);
+      await refreshHub();
+      return next;
+    },
     updateN8n: async (patch) => {
       const next = patch && typeof patch === "object" ? { ...patch } : {};
       if (typeof next.allowImageUpload === "boolean") {
@@ -283,6 +297,9 @@ async function buildSettingsState({ scope, composer, paperclip, state }) {
       available: Array.isArray(snapshot.models) ? snapshot.models : [],
     },
     n8n,
+    mcp: composer.externalTools && typeof composer.externalTools.snapshot === "function"
+      ? composer.externalTools.snapshot()
+      : { servers: [], status: [] },
     paperclip: {
       ...paperclipStatus,
       apiUrl: paperclip.api && paperclip.api.baseUrl || "",
@@ -894,7 +911,7 @@ class ComposerViewProvider {
     this.multitask = null;
     this.capabilities = N8nCapabilityProvider ? new N8nCapabilityProvider({ retries: 0, retryDelayMs: 1 }) : null;
     this.n8n = new N8nIntegration(context);
-    this.externalTools = this.n8n;
+    this.externalTools = new UniversalMcpRegistry(context, this.n8n);
     this.syncExternalPermissions();
     this.session = new ComposerSession({
       store: new RunStore(path.join(context.globalStorageUri.fsPath, "composer-runs")),
