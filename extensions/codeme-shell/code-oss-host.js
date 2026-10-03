@@ -161,7 +161,7 @@ async function startProcess(command) {
 }
 
 async function processStatus() {
-  return previewSessions.status(workspaceFolder().uri.fsPath);
+  return previewSessions.refresh(workspaceFolder().uri.fsPath);
 }
 
 async function processLogs() {
@@ -220,7 +220,8 @@ async function diagnostics() {
 async function browserCheck(url, input = {}) {
   const root = workspaceFolder().uri.fsPath;
   const requestedUrl = String(url || "");
-  const effectiveUrl = resolveOwnedPreviewUrl(previewSessions.status(root), requestedUrl);
+  const refreshed = await previewSessions.refresh(root);
+  const effectiveUrl = resolveOwnedPreviewUrl(refreshed, requestedUrl);
   const args = input && typeof input === "object" ? input : {};
   if (!effectiveUrl) {
     return {
@@ -233,6 +234,7 @@ async function browserCheck(url, input = {}) {
   }
   try {
     const checked = await preview.check(root, effectiveUrl);
+    if (checked && checked.url) previewSessions.adoptUrl(root, checked.url);
     const session = previewSessions.status(root);
     if (!checked || checked.available === false) {
       return {
@@ -299,7 +301,8 @@ async function browserInteract(input) {
   const args = input && typeof input === "object" ? input : {};
   const requestedUrl = String(args.url || "");
   const root = workspaceFolder().uri.fsPath;
-  const effectiveUrl = resolveOwnedPreviewUrl(previewSessions.status(root), requestedUrl);
+  const refreshed = await previewSessions.refresh(root);
+  const effectiveUrl = resolveOwnedPreviewUrl(refreshed, requestedUrl);
   if (!effectiveUrl) {
     return {
       available: false,
@@ -311,6 +314,7 @@ async function browserInteract(input) {
   }
   try {
     const checked = await preview.check(root, effectiveUrl);
+    if (checked && checked.url) previewSessions.adoptUrl(root, checked.url);
     if (!checked || checked.available === false) {
       return {
         ...checked,
