@@ -329,6 +329,7 @@ async function main() {
   assert.ok(html.includes("changed-body"));
   assert.ok(html.includes("rest = rest.slice(next);"));
   assert.strictEqual(modelTurnBudget("code", "Create this folder and file layout for my website project structure"), 48);
+  assert.strictEqual(modelTurnBudget("code", "Create this folder and file layout. Do not run it yet."), 48);
   assert.strictEqual(modelTurnBudget("code", "Fix the button and verify it"), 20);
   assert.strictEqual(modelTurnBudget("ask", "Create this folder and file layout"), 12);
 
