@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CodeMe Chat V7 Modes</title>
+<style>
+*{box-sizing:border-box}:root{--bg:#191919;--panel:#1e1e1e;--line:#343434;--text:#e8e8e8;--muted:#929292;--green:#7ac994;--amber:#d2ad6c;--blue:#91b9e8}
+body{margin:0;background:#111;color:var(--text);font:14px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.shell{height:100vh;display:grid;grid-template-columns:48px 205px minmax(380px,1fr) 440px}
+.rail,.files,.editor{border-right:1px solid var(--line);min-width:0}.rail{background:#181818;text-align:center;padding-top:12px;color:#888}.rail div{padding:10px;font-size:17px}
+.files{background:#1b1b1b;padding:13px;color:#aaa}.cap{font-size:10px;margin-bottom:12px}.tree{padding:5px}
+.editor{background:#171717}.tabs{height:38px;border-bottom:1px solid var(--line)}.tab{display:inline-block;background:#202020;padding:9px 14px;border-right:1px solid var(--line)}
+.code{font:12px/1.8 ui-monospace,monospace;color:#888;padding:22px}
+.chat{background:var(--panel);display:flex;flex-direction:column;position:relative;overflow:hidden;min-width:0}.head{height:46px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 14px;font-weight:650}
+.headActions{display:flex;gap:4px}.headBtn{background:none;border:0;color:#999;font-size:17px;padding:5px 8px;border-radius:5px}.headBtn:hover{background:#292929}
+.chatTabs{height:36px;display:flex;align-items:end;gap:2px;padding:4px 7px 0;border-bottom:1px solid var(--line);overflow-x:auto;background:#1b1b1b}.chatTab{display:flex;align-items:center;gap:6px;min-width:90px;max-width:165px;padding:6px 8px;background:#202020;border:1px solid #303030;border-bottom:0;border-radius:6px 6px 0 0;color:#929292;font-size:10px;cursor:pointer}.chatTab.active{background:#252525;color:#ddd}.chatTabName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.tabClose{border:0;background:none;color:#777;padding:0;font-size:12px}
+.historyPanel{display:none;position:absolute;z-index:30;right:8px;top:43px;width:285px;max-height:420px;overflow:auto;background:#242424;border:1px solid #414141;border-radius:8px;box-shadow:0 12px 32px #000a;padding:6px}.historyPanel.show{display:block}.historyTitle{padding:7px 8px;color:#aaa;font-size:10px;font-weight:600}.historyItem{padding:8px;border-radius:5px;cursor:pointer}.historyItem:hover{background:#303030}.historyItem b{display:block;font-size:11px;font-weight:500}.historyItem span{font-size:9px;color:#777}
+.feed{flex:1;min-height:0;overflow:auto;padding:16px 16px 200px;scroll-padding-bottom:200px}.intro{text-align:center;color:#888;margin:36px 0}.intro b{color:#ddd;font-size:17px}
+.user{max-width:92%;margin:0 0 18px auto;padding:10px 12px;background:#292929;border:1px solid #373737;border-radius:9px;white-space:pre-wrap}
+.live{margin:5px 0 18px}.livehead{display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:9px}.spin{width:11px;height:11px;border:1px solid #666;border-top-color:#ddd;border-radius:50%;animation:s .7s linear infinite}@keyframes s{to{transform:rotate(360deg)}}
+.narr{border-left:2px solid #444;padding:3px 0 3px 12px;color:#cfcfcf;min-height:48px}.narr p{margin:0}.next{color:#888;margin-top:5px!important;font-size:12px}
+.techBtn{background:none;border:0;color:#858585;padding:8px 0 0 13px;font-size:11px}.tech{display:none;margin:8px 0 0 13px;background:#191919;border:1px solid #303030;border-radius:6px;padding:8px 10px;color:#858585;font:11px/1.7 ui-monospace,monospace}.tech.show{display:block}
+.final{margin:6px 0 18px}.done{color:var(--green);font-weight:650;margin-bottom:10px}.final h2{font-size:16px;margin:0 0 7px}.final p{margin:0 0 9px;color:#d0d0d0}.section{border-top:1px solid #303030;padding-top:10px;margin-top:10px}.line{margin:4px 0;color:#bbb}.ok{color:var(--green)}.muted{color:#888}.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:11px}.btn{background:#272727;border:1px solid #3b3b3b;color:#c8c8c8;border-radius:5px;padding:6px 9px;font-size:11px}.primary{background:#ddd;color:#111;border-color:#ddd}
+.composeWrap{position:absolute;bottom:0;width:100%;padding:28px 13px 13px;background:linear-gradient(transparent,#1e1e1e 24%)}.status{height:25px;font-size:10px;display:flex;align-items:center}
+.statePill{display:inline-flex;align-items:center;gap:6px;border:1px solid #383838;background:#222;border-radius:10px;padding:2px 7px;color:#999;transition:.2s}
+.stateDot{width:6px;height:6px;border-radius:50%;background:#777}
+.state-ready .stateDot{background:#858585}.state-reading .stateDot{background:#86afe0}.state-reading{color:#a9c5e6;border-color:#34465a}
+.state-editing .stateDot{background:#b89ae5}.state-editing{color:#cbb7e9;border-color:#493d5b}
+.state-running .stateDot{background:#d2aa66}.state-running{color:#ddbd86;border-color:#57492f}
+.state-verified .stateDot{background:#72c58b}.state-verified{color:#91d2a4;border-color:#34513d}
+.state-error .stateDot{background:#dc7e7e}.state-error{color:#e1a0a0;border-color:#593737}
+.state-waiting .stateDot{background:#e0bc67}.state-waiting{color:#e1c889;border-color:#5a4c30}
+.stateDot.pulse{animation:pulse 1.1s ease-in-out infinite}@keyframes pulse{50%{opacity:.3;transform:scale(.75)}}
+.box{background:#242424;border:1px solid #3b3b3b;border-radius:9px;box-shadow:0 8px 22px #0007}textarea{width:100%;height:72px;border:0;outline:0;resize:none;background:none;color:#eee;padding:11px;font:inherit}
+.attachments{display:none;gap:6px;flex-wrap:wrap;padding:0 9px 8px}.attachments.show{display:flex}.chip{display:flex;align-items:center;gap:6px;max-width:170px;background:#2b2b2b;border:1px solid #3b3b3b;border-radius:5px;padding:5px 7px;font-size:10px;color:#bbb}.chipName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chip button{background:none;border:0;color:#888;padding:0;cursor:pointer}
+.dropActive{outline:2px solid #777;outline-offset:-2px;background:#282828!important}.listen{color:#d7b36d!important}.bar{border-top:1px solid #323232;padding:7px;display:flex;align-items:center;gap:6px}.attach,.mic{width:28px;height:28px;background:#292929;border:1px solid #3a3a3a;color:#bbb;border-radius:5px;padding:0;font-size:15px}.mic.listening{background:#383126;border-color:#66563d;color:#e2bd78}.modeBtn,.modelBtn,.send{background:#292929;border:1px solid #3a3a3a;color:#ccc;border-radius:5px;padding:5px 8px}.modelBtn{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;font-size:10px;color:#aaa}.send{background:#e5e5e5;color:#111;width:29px;font-weight:bold}.model{flex:1;color:#777;font-size:10px}
+.modeMenu{display:none;position:absolute;bottom:128px;left:20px;width:235px;background:#242424;border:1px solid #414141;border-radius:8px;box-shadow:0 10px 30px #000a;padding:5px;z-index:20}.modeMenu.show{display:block}.modelMenu{display:none;position:absolute;bottom:128px;left:125px;width:265px;max-height:280px;overflow:auto;background:#242424;border:1px solid #414141;border-radius:8px;box-shadow:0 10px 30px #000a;padding:5px;z-index:21}.modelMenu.show{display:block}.modelGroup{padding:6px 8px 3px;color:#777;font-size:9px;text-transform:uppercase}.modelItem{padding:7px 8px;border-radius:5px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}.modelItem:hover{background:#303030}.modelItem b{font-size:11px;font-weight:500}.modelItem span{font-size:9px;color:#777}.selectedModel{color:#8fc59f!important}.modeItem{padding:8px;border-radius:5px;cursor:pointer}.modeItem:hover{background:#303030}.modeItem b{display:block;font-size:12px}.modeItem span{font-size:10px;color:#8e8e8e}
+.modeTag{font-size:10px;border:1px solid #3b3b3b;border-radius:9px;padding:1px 6px;color:#aaa;margin-left:4px}
+.permission{margin-top:12px;border:1px solid #3b3b3b;background:#222;border-radius:8px;overflow:hidden}.permHead{font-weight:650;padding:10px;border-bottom:1px solid #343434}.permBody{padding:10px}.cmd{background:#191919;border:1px solid #343434;border-radius:5px;padding:7px;font:11px ui-monospace,monospace}.permActions{padding:9px 10px;border-top:1px solid #343434;display:flex;gap:6px}.permission button{padding:6px 9px;border-radius:5px;border:1px solid #414141;background:#292929;color:#ccc}.permission .yes{background:#ddd;color:#111;border-color:#ddd}
+.changesBox{margin-top:12px;border:1px solid #343434;border-radius:7px;overflow:hidden;background:#1d1d1d}
+.changesHead{display:flex;align-items:center;padding:8px 9px;border-bottom:1px solid #303030;font-size:11px}.changesHead b{flex:1}.changesTools{display:flex;gap:8px}.linkBtn{background:none;border:0;color:#8f8f8f;font-size:10px;padding:0;cursor:pointer}
+.fileChange{border-bottom:1px solid #2e2e2e}.fileChange:last-child{border-bottom:0}.fileRow{display:flex;align-items:center;gap:7px;padding:8px 9px;cursor:pointer}.fileRow:hover{background:#242424}.chev{width:10px;color:#777;font-size:9px}.filePath{flex:1;font:11px ui-monospace,monospace;color:#c8c8c8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.plus{color:#79bd8d;font-size:10px}.minus{color:#d58181;font-size:10px}
+.diff{display:none;border-top:1px solid #2e2e2e;background:#181818;overflow-x:auto;padding:5px 0}.diff.open{display:block}.diffLine{display:flex;min-width:350px;font:10px/1.55 ui-monospace,monospace;white-space:pre}.ln{width:28px;text-align:right;padding-right:7px;color:#555;user-select:none}.codeLine{padding:0 8px;flex:1}.addLine{background:rgba(80,150,95,.12);color:#a9d5b4}.delLine{background:rgba(170,75,75,.12);color:#d6a4a4}.ctxLine{color:#8b8b8b}.fileActions{display:flex;gap:5px;padding:6px 9px;border-top:1px solid #292929}.miniBtn{border:1px solid #363636;background:#222;color:#999;border-radius:4px;padding:3px 6px;font-size:9px}
+@media(max-width:850px){.shell{display:block}.rail,.files,.editor{display:none}.chat{height:100dvh;min-height:100vh}.feed{padding-bottom:205px}}
+
+/* V12 IDE shell + Explorer */
+html,body{width:100%;height:100%;margin:0;overflow:hidden}
+body{background:#151515}
+.ideShell{height:100vh;width:100vw;display:grid;grid-template-columns:42px 235px minmax(280px,1fr) minmax(350px,430px);background:#171717;color:#ccc}
+.activityRail{background:#181818;border-right:1px solid #292929;display:flex;flex-direction:column;align-items:center;padding:6px 0}
+.railBtn{width:34px;height:34px;border:0;background:none;color:#777;border-radius:5px;font-size:18px;cursor:pointer}.railBtn:hover,.railBtn.active{color:#ddd;background:#252525}.railBtn.active{border-left:2px solid #b6b6b6}.railSpacer{flex:1}
+.explorerPanel{position:relative;background:#1b1b1b;border-right:1px solid #292929;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.explorerTop{height:35px;display:flex;align-items:center;padding:0 8px 0 12px;font-size:10px;letter-spacing:.6px;color:#aaa}.explorerTop>span{flex:1}.explorerActions{display:flex}.explorerActions button{border:0;background:none;color:#888;font-size:12px;padding:4px 5px;border-radius:4px}.explorerActions button:hover{background:#292929;color:#ddd}
+.workspaceRow{height:29px;display:flex;align-items:center;gap:4px;padding:0 7px;font-size:10px;color:#c7c7c7}.cursorRoot{border-top:1px solid #292929;border-bottom:1px solid #252525;background:#1d1d1d}.cursorRoot b{letter-spacing:.2px}.workspaceRow b{font-size:10px;flex:1}.twisty{font-size:8px;color:#888;width:10px}.workspaceMeta{color:#d39a70;font-size:9px}
+.explorerSearch{margin:2px 7px 6px;height:25px;border:1px solid #343434;background:#202020;border-radius:4px;display:flex;align-items:center;padding:0 7px;gap:5px}.explorerSearch span{color:#777}.explorerSearch input{width:100%;border:0;outline:0;background:none;color:#ccc;font-size:10px}
+.fileTree{overflow:auto;padding-bottom:6px}.treeRow{height:25px;display:flex;align-items:center;gap:5px;padding:0 8px;font-size:11px;cursor:pointer;user-select:none}.treeRow:hover{background:#242424}.treeRow.selected{background:#303030}.treeRow.folder{padding-left:9px}.folderChildren .treeRow{padding-left:19px}.folderChildren.collapsed{display:none}.rootFile{padding-left:19px}.folderIcon{font-size:10px;color:#b6a276}.treeName{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}.fileIcon{width:16px;font:bold 8px ui-monospace,monospace;text-align:center}.fileIcon.js{color:#d4bf62}.fileIcon.css{color:#7ba9dc}.fileIcon.html{color:#d98266}.fileIcon.json{color:#c7b85f}.fileIcon.env{color:#86ad77}.fileIcon.md{color:#75a9d5}.gitMark{font-size:9px;font-weight:bold}.gitMark.modified{color:#d7aa62}.changeBadge{font-size:7px;padding:1px 3px;border-radius:3px}.changeBadge.ai{color:#b9a5dc;background:#332c40}.lockMark{color:#777;font-size:9px}
+.explorerSection{border-top:1px solid #292929}.sectionHead{height:26px;display:flex;align-items:center;gap:5px;padding:0 8px;font-size:9px;cursor:pointer}.sectionHead b{flex:1}.sectionHead .count{background:#333;padding:1px 5px;border-radius:8px;color:#aaa}.openRow,.changeRow{height:25px;display:flex;align-items:center;gap:6px;padding:0 9px 0 18px;font-size:10px}.openRow:hover,.changeRow:hover{background:#242424}.openRow small,.changeRow small{color:#777;margin-left:auto}.openRow button{border:0;background:none;color:#666}.dot{width:5px;height:5px;border-radius:50%;background:#555}.modifiedDot{background:#d5a65c}.changeRow>span{color:#d5a65c;font-size:9px}.changeRow b{font-weight:400}
+.sourceSection{margin-top:auto}.explorerFooter{height:27px;border-top:1px solid #292929;display:flex;align-items:center;padding:0 8px;font-size:8px;color:#777}.branch{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.sync{font-size:12px}
+.centerStage{background:#191919;display:flex;flex-direction:column;min-width:0;overflow:hidden}.editorTabs{height:35px;display:flex;border-bottom:1px solid #292929;background:#181818}.editorTab{height:35px;display:flex;align-items:center;gap:5px;padding:0 9px;border-right:1px solid #292929;color:#888;font-size:10px}.editorTab.active{background:#1e1e1e;color:#ccc;border-top:1px solid #888}.editorTab button{border:0;background:none;color:#666}.tabMod{font-size:7px;color:#d3a15c}.editorCrumb{height:28px;padding:0 12px;display:flex;align-items:center;font-size:9px;color:#777}.editorPlaceholder{position:relative;display:flex;flex:1;overflow:auto;padding-top:8px;font:11px/1.65 ui-monospace,monospace}.lineNums{width:38px;text-align:right;padding-right:12px;color:#454545;user-select:none}.editorPlaceholder pre{margin:0;color:#aaa;font:inherit;white-space:pre}.kw{color:#b59bd4}.str{color:#a7c48c}.fn{color:#d4c58e}.tag{color:#76b3b0}.aiEditFlag{position:absolute;right:12px;top:10px;border:1px solid #3f3650;background:#26212d;color:#b9a6d3;border-radius:5px;padding:5px 7px;font-size:8px}.bottomBar{height:22px;border-top:1px solid #292929;display:flex;gap:14px;align-items:center;padding:0 8px;font-size:8px;color:#777}.bottomBar span:first-child{margin-right:auto}
+.chatColumn{position:relative;min-width:0;border-left:1px solid #292929;overflow:hidden}.chatColumn>.app,.chatColumn>.shell,.chatColumn>main{height:100%}
+.explorerToast{display:none;position:fixed;left:55px;bottom:34px;background:#292929;border:1px solid #444;border-radius:5px;padding:7px 10px;font-size:10px;color:#ccc;z-index:99}.explorerToast.show{display:block}
+@media(max-width:900px){
+ .ideShell{grid-template-columns:38px 210px minmax(0,1fr)}
+ .centerStage{display:none}.chatColumn{min-width:0}
+}
+@media(max-width:620px){
+ .ideShell{grid-template-columns:36px minmax(0,1fr)}
+ .explorerPanel{display:flex}.chatColumn{display:none}
+ .explorerPanel.mobileHidden{display:none}.explorerPanel.mobileHidden~.chatColumn{display:block;grid-column:2}
+}
+
+
+/* V14 Explorer rebuild */
+.explorerPanel{width:auto;min-width:170px}
+.explorerViewBar{height:37px;border-bottom:1px solid #292929;display:flex;align-items:center;padding:0 6px;gap:2px}
+.viewIcon{width:31px;height:29px;border:0;background:none;color:#858585;border-radius:4px;font-size:16px;cursor:pointer}.viewIcon:hover,.viewIcon.active{background:#2a2a2a;color:#e0e0e0}.viewIcon.more{margin-left:auto}
+.cursorRoot{height:31px!important;border-top:0!important;background:#1b1b1b!important}.cursorRoot b{font-size:11px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rootActions{display:flex;margin-left:auto}.rootActions button{border:0;background:none;color:#999;padding:3px 4px;font-size:11px;border-radius:3px}.rootActions button:hover{background:#2c2c2c;color:#eee}
+.compactSearch{height:23px;margin:2px 6px 4px}
+.cursorTree{flex:1;min-height:120px}.cursorTree .treeRow{height:25px;padding-left:9px;font-size:11px}.cursorTree .treeRow.file{padding-left:25px}.cursorTree .rootFile{padding-left:19px!important}.cursorTree .folderChildren{position:relative}.cursorTree .folderChildren.guide:before{content:"";position:absolute;left:16px;top:0;bottom:0;border-left:1px solid #343434}.cursorTree .folderChildren .treeRow{padding-left:29px}.cursorTree .treeRow.selected{background:#343434}.cursorTree .treeRow:hover{background:#292929}.cursorTree .treeRow.selected:hover{background:#383838}
+.fileIcon.rule{color:#62c8dd}.fileIcon.git{color:#79aeb2}.fileIcon.info{color:#72bad1}.fileIcon.txt{color:#bbb}.gitMark.staged{color:#8ab6d9}.aiDot{width:5px;height:5px;border-radius:50%;background:#ad91d4;margin-right:2px}
+.lowerPanels{border-top:1px solid #292929}.lowerPanels .explorerSection{border-bottom:1px solid #292929}.sectionHead small{margin-left:auto;color:#666;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.outlineContent,.timelineContent{padding:3px 0 7px}.outlineRow{height:23px;display:flex;align-items:center;gap:7px;padding-left:21px;font-size:10px;color:#aaa}.outlineRow:hover{background:#252525}.symbol{width:12px;text-align:center}.fnSymbol{color:#b69bd5}.varSymbol{color:#d0b96f}
+.timelineRow{display:flex;gap:8px;padding:6px 10px 6px 20px;font-size:9px;color:#999}.timelineRow>div{display:flex;flex-direction:column}.timelineRow b{font-weight:500;color:#aaa}.timelineRow small{font-size:8px;color:#666;margin-top:2px}.historyDot{width:6px;height:6px;margin-top:3px;border-radius:50%;background:#777;box-shadow:0 0 0 2px #292929}
+.resizeHandle{position:absolute;right:-3px;top:0;width:6px;height:100%;cursor:col-resize;z-index:10}.resizeHandle:hover{background:rgba(120,160,210,.35)}
+
+
+/* V15 integrated terminal */
+.editorPlaceholder{min-height:160px}
+.terminalPanel{height:265px;min-height:120px;max-height:70vh;background:#181818;border-top:1px solid #303030;display:flex;flex-direction:column;position:relative}
+.terminalPanel.closed{display:none}.terminalResize{position:absolute;left:0;right:0;top:-3px;height:6px;cursor:row-resize;z-index:5}.terminalResize:hover{background:rgba(120,160,210,.35)}
+.terminalHeader{height:34px;display:flex;align-items:center;border-bottom:1px solid #292929;padding:0 7px}.terminalViews{display:flex;height:100%;align-items:center;gap:2px}.termView{height:100%;border:0;background:none;color:#777;font-size:9px;padding:0 8px;position:relative}.termView.active{color:#ddd}.termView.active:after{content:"";position:absolute;bottom:0;left:7px;right:7px;height:1px;background:#aaa}.problemCount{background:#7e4141;color:#ddd;border-radius:8px;padding:0 4px;margin-left:2px}
+.terminalActions{margin-left:auto;display:flex;align-items:center;gap:2px}.terminalActions button{width:25px;height:25px;border:0;background:none;color:#777;border-radius:4px;font-size:12px}.terminalActions button:hover{background:#292929;color:#ddd}.termStatus{display:flex;align-items:center;gap:5px;font-size:9px;color:#888;margin-right:5px}.termStatus i{width:5px;height:5px;border-radius:50%;background:#6dbd82}.termStatus.dead i{background:#cf6f6f}
+.terminalBody{display:flex;flex:1;min-height:0}.terminalSidebar{width:105px;border-right:1px solid #292929;padding-top:4px;overflow:auto}.terminalTab{height:25px;display:flex;align-items:center;gap:5px;padding:0 7px;font-size:9px;color:#888;cursor:pointer}.terminalTab:hover{background:#242424}.terminalTab.active{background:#2b2b2b;color:#ccc}.terminalTab small{margin-left:auto;color:#666}.termIcon{color:#aaa}
+.terminalConsole{flex:1;overflow:auto;padding:8px 10px 20px;font:10px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#bdbdbd;cursor:text}.termLine{min-height:16px;white-space:pre-wrap}.promptUser{color:#83b29a}.promptPath{color:#78a8ce}.dim{color:#666}.pass{color:#83b991}.fail{color:#dc8585;font-weight:600}.failText{color:#c9a0a0}.fileLink{color:#7faed2;text-decoration:underline;cursor:pointer}
+.termErrorBlock{margin:4px 0 6px;padding:5px 7px;border-left:2px solid #a55454;background:#211b1b;border-radius:0 4px 4px 0}.errorActions{display:flex;gap:5px;margin-top:5px}.errorActions button{border:1px solid #3b3b3b;background:#242424;color:#aaa;border-radius:4px;padding:3px 6px;font-size:8px}.errorActions button:hover{background:#303030;color:#ddd}
+#termInput{border:0;outline:0;background:transparent;color:#ddd;font:inherit;width:55%;padding:0}.terminalToggle{cursor:pointer}.terminalToggle:hover{color:#bbb}
+@media(max-width:900px){.terminalSidebar{width:80px}.terminalPanel{height:230px}}
+
+
+/* V16 unified workspace controls */
+.workspaceSwitcher{display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:10px;z-index:120;background:#202020;border:1px solid #3a3a3a;border-radius:9px;padding:3px;box-shadow:0 8px 28px #0009}
+.workspaceSwitcher button{border:0;background:none;color:#888;border-radius:6px;padding:7px 10px;font-size:10px}.workspaceSwitcher button.active{background:#343434;color:#eee}
+@media(max-width:900px){
+ .workspaceSwitcher{display:flex}
+ .ideShell{grid-template-columns:38px minmax(0,1fr)}
+ .explorerPanel,.centerStage,.chatColumn{grid-column:2;grid-row:1;min-width:0}
+ .centerStage,.chatColumn{display:none}
+ .ideShell.view-explorer .explorerPanel{display:flex}
+ .ideShell.view-explorer .centerStage,.ideShell.view-explorer .chatColumn{display:none}
+ .ideShell.view-terminal .explorerPanel,.ideShell.view-terminal .chatColumn{display:none}
+ .ideShell.view-terminal .centerStage{display:flex}
+ .ideShell.view-terminal .editorPlaceholder{display:none}
+ .ideShell.view-terminal .editorTabs,.ideShell.view-terminal .editorCrumb{display:none}
+ .ideShell.view-terminal .terminalPanel{display:flex!important;height:calc(100vh - 22px)!important;max-height:none}
+ .ideShell.view-chat .explorerPanel,.ideShell.view-chat .centerStage{display:none}
+ .ideShell.view-chat .chatColumn{display:block}
+}
+
+
+/* V17 code editor */
+.centerStage{min-height:0}.editorTabs{flex:0 0 35px}.editorTab{cursor:pointer;min-width:115px}.editorTab.active{box-shadow:inset 0 1px #aaa}.editorTab span:nth-child(2){white-space:nowrap}.editorToolbar{height:30px;display:flex;align-items:center;border-bottom:1px solid #292929;background:#1b1b1b}.editorCrumb{flex:1;height:30px!important}.editorTools{display:flex;padding-right:6px}.editorTools button{border:0;background:none;color:#777;width:27px;height:25px;border-radius:4px}.editorTools button:hover{background:#292929;color:#ddd}
+.codeEditor{position:relative;display:flex;flex:1;min-height:120px;overflow:auto;background:#191919;font:11px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace}.gutter{flex:0 0 44px;text-align:right;padding:10px 10px 20px 0;color:#4d4d4d;user-select:none}.gutter div{height:18.15px;position:relative}.gutter .changedLine:before{content:"";position:absolute;left:0;top:1px;bottom:1px;width:2px;background:#8e73b8}.codeSurface{position:relative;flex:1;min-width:480px;padding:10px 70px 30px 0}.codeText{margin:0;outline:0;color:#b9b9b9;font:inherit;white-space:pre;min-height:100%;caret-color:#eee}.codeText:focus{background:linear-gradient(transparent 108px,rgba(255,255,255,.018) 108px,rgba(255,255,255,.018) 126px,transparent 126px)}.kw{color:#bd9cdb}.str{color:#a8c58d}.fn{color:#d4c58e}.tag{color:#72b9b2}
+.editorMinimap{position:absolute;right:10px;top:8px;width:45px;height:95px;opacity:.55;display:flex;flex-direction:column;gap:4px}.editorMinimap i{height:2px;background:#666;width:70%}.editorMinimap i:nth-child(2n){width:95%}.editorMinimap i.ai{background:#9c7fc7}
+.aiChangeRail{position:absolute;right:0;top:0;bottom:0;width:4px}.aiChangeMark{position:absolute;top:42px;width:3px;height:34px;background:#9273bb}
+.diagnosticUnderline{position:absolute;left:54px;top:119px;width:67px;border-bottom:1px wavy #d06f6f}
+.inlineDiffCard{display:none;position:absolute;left:72px;right:75px;top:46px;background:#202020;border:1px solid #454545;border-radius:6px;box-shadow:0 10px 28px #0009;z-index:8;overflow:hidden}.inlineDiffCard.show{display:block}.inlineDiffHead{height:30px;display:flex;align-items:center;gap:7px;padding:0 8px;border-bottom:1px solid #343434;font-size:9px;color:#888}.inlineDiffHead b{color:#ccc}.inlineDiffHead span:nth-child(3){flex:1}.inlineDiffHead button{border:0;background:none;color:#777}.spark{color:#b99cdd}.inlineDiffLine{padding:3px 9px;font-size:10px}.inlineDiffLine span{display:inline-block;width:18px}.inlineDiffLine.removed{background:rgba(170,70,70,.15);color:#d4a0a0}.inlineDiffLine.added{background:rgba(65,145,85,.15);color:#a8d2b0}.inlineDiffActions{display:flex;gap:5px;padding:7px 8px;border-top:1px solid #303030}.inlineDiffActions button{border:1px solid #3d3d3d;background:#282828;color:#aaa;border-radius:4px;padding:4px 8px;font-size:9px}.inlineDiffActions button:first-child{color:#b6d2bd}
+.editorInfoBar{height:25px;border-top:1px solid #292929;border-bottom:1px solid #292929;display:flex;align-items:center;padding:0 8px;font-size:8px;color:#777;background:#1b1b1b}.editorInfoBar>div:first-child{display:flex;gap:8px;align-items:center}.aiEditorState{color:#b59bd2}.changeStats{color:#888}.editorInfoRight{margin-left:auto;display:flex;gap:11px}.warning{color:#d0a761}
+@media(max-width:900px){.codeSurface{min-width:360px}.inlineDiffCard{left:48px;right:20px}}
+
+
+/* V17.1 mobile Editor visibility fix */
+@media(max-width:900px){
+ .workspaceSwitcher{max-width:calc(100vw - 54px);width:auto}
+ .workspaceSwitcher button{padding:7px 8px}
+ .ideShell.view-editor .explorerPanel,.ideShell.view-editor .chatColumn{display:none}
+ .ideShell.view-editor .centerStage{display:flex}
+ .ideShell.view-editor .editorTabs{display:flex}
+ .ideShell.view-editor .editorToolbar{display:flex}
+ .ideShell.view-editor .codeEditor{display:flex}
+ .ideShell.view-editor .editorInfoBar{display:flex}
+ .ideShell.view-editor .terminalPanel{display:none!important}
+ .ideShell.view-terminal .codeEditor,
+ .ideShell.view-terminal .editorToolbar,
+ .ideShell.view-terminal .editorInfoBar{display:none}
+}
+
+
+/* V18 Browser / Preview */
+.browserPanel{display:none;min-width:0;background:#171717;border-left:1px solid #292929;flex-direction:column;overflow:hidden}
+.browserTop{height:38px;display:flex;align-items:center;gap:6px;padding:0 7px;border-bottom:1px solid #2d2d2d;background:#1b1b1b}.browserNav{display:flex}.browserNav button,.openExternal{width:27px;height:27px;border:0;background:none;color:#888;border-radius:4px;font-size:15px}.browserNav button:hover,.openExternal:hover{background:#292929;color:#ddd}
+.addressBar{height:25px;flex:1;display:flex;align-items:center;gap:6px;background:#222;border:1px solid #353535;border-radius:5px;padding:0 7px}.addressBar input{flex:1;min-width:0;border:0;outline:0;background:none;color:#aaa;font:9px ui-monospace,monospace}.secureDot{width:6px;height:6px;border-radius:50%;background:#70b884}.liveBadge{font-size:7px;color:#76b68a;background:#26352b;padding:2px 4px;border-radius:3px}
+.browserTools{height:34px;display:flex;align-items:center;padding:0 7px;border-bottom:1px solid #2b2b2b;background:#1b1b1b}.viewportTools{display:flex;align-items:center;gap:2px}.viewportBtn,.browserToolRight button{border:0;background:none;color:#777;border-radius:4px;height:25px;padding:0 7px;font-size:9px}.viewportBtn.active,.viewportBtn:hover,.browserToolRight button:hover{background:#2b2b2b;color:#ddd}.viewportTools>span{font-size:8px;color:#666;margin-left:5px}.browserToolRight{margin-left:auto;display:flex;gap:3px}.browserToolRight .verifyBtn{color:#bba5d6}.consoleCount{background:#743f3f;color:#ddd;border-radius:7px;padding:0 4px}
+.previewStage{flex:1;min-height:0;overflow:auto;background:#111;padding:14px;display:flex;justify-content:center;align-items:flex-start}.previewFrame{height:100%;min-height:330px;background:#f7f7f5;box-shadow:0 0 0 1px #333;transition:width .2s;width:100%;overflow:auto}.previewFrame.tablet{width:768px}.previewFrame.mobile{width:390px}.demoSite{position:relative;min-height:100%;font-family:Arial,sans-serif;color:#202124;background:#fbfbf9}.demoHeader{height:56px;display:flex;align-items:center;padding:0 5%;border-bottom:1px solid #e4e4e1}.demoLogo{font-weight:700;font-size:17px}.demoHeader nav{display:flex;gap:20px;margin-left:auto;margin-right:20px;font-size:10px;color:#626262}.demoHeader button,.demoActions button{border:0;background:#202124;color:white;border-radius:5px;padding:8px 12px;font-size:9px}.demoHero{text-align:center;padding:48px 18px 34px}.demoPill{display:inline-block;border:1px solid #ddd;border-radius:12px;padding:4px 8px;font-size:8px;color:#666}.demoHero h1{font-size:32px;line-height:1.08;margin:14px 0 10px;font-weight:500}.demoHero h1 strong{font-weight:750}.demoHero p{max-width:470px;margin:0 auto;color:#666;font-size:10px;line-height:1.6}.demoActions{margin-top:18px;display:flex;justify-content:center;gap:7px}.demoActions .secondary{background:#eee;color:#333}.demoCards{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 6% 35px}.demoCards article{border:1px solid #e1e1de;border-radius:7px;padding:13px;background:#fff}.demoCards b{font-size:10px}.demoCards p{font-size:8px;color:#777;line-height:1.5}
+.previewFrame.mobile .demoHeader nav{display:none}.previewFrame.mobile .demoHero h1{font-size:26px}.previewFrame.mobile .demoCards{grid-template-columns:1fr}.inspectOutline{display:none;position:absolute;left:4%;right:4%;top:78px;height:260px;border:2px solid #7d70d1;pointer-events:none}.inspectOutline.show{display:block}.inspectOutline span{position:absolute;left:-2px;top:-18px;background:#6659bd;color:white;font:8px Arial;padding:3px 5px}
+.browserConsole{display:none;max-height:145px;overflow:auto;border-top:1px solid #333;background:#191919}.browserConsole.show{display:block}.browserConsoleHead{height:28px;display:flex;align-items:center;padding:0 8px;font-size:8px;color:#888;border-bottom:1px solid #2b2b2b}.browserConsoleHead b{color:#bbb;margin-right:8px}.browserConsoleHead button{margin-left:auto;border:0;background:none;color:#777}.consoleLine{display:flex;align-items:flex-start;gap:7px;padding:6px 9px;font-size:9px;border-bottom:1px solid #252525}.consoleLine>div{display:flex;flex-direction:column;flex:1}.consoleLine b{font-weight:500}.consoleLine small{font-size:8px;color:#666;margin-top:2px}.consoleLine.error{color:#d99191;background:#211a1a}.consoleLine.info{color:#8ba8bd}.consoleLine button{border:1px solid #3d3d3d;background:#252525;color:#aaa;border-radius:4px;font-size:8px;padding:3px 6px}
+.verificationBar{height:27px;display:flex;align-items:center;padding:0 8px;gap:6px;border-top:1px solid #2c2c2c;font-size:8px;color:#777}.verificationDot{width:6px;height:6px;border-radius:50%;background:#6fba84}.verificationSpacer{flex:1}.verificationBar button{border:0;background:none;color:#9985b7;font-size:8px}
+@media(min-width:901px){
+ .ideShell.browser-open{grid-template-columns:42px 235px minmax(280px,1fr) minmax(380px,46vw)}
+ .ideShell.browser-open .chatColumn{display:none}.ideShell.browser-open .browserPanel{display:flex}
+}
+@media(max-width:900px){
+ .ideShell.view-browser .explorerPanel,.ideShell.view-browser .centerStage,.ideShell.view-browser .chatColumn{display:none}
+ .ideShell.view-browser .browserPanel{display:flex;grid-column:2;grid-row:1}
+ .workspaceSwitcher button{padding:7px 6px;font-size:9px}
+}
+
+
+/* V19 Full IDE desktop integration */
+@media(min-width:901px){
+  .desktopCenterSwitch{display:flex!important}
+  .browserPanel{grid-column:3;grid-row:1;min-width:0}
+  .ideShell.desktop-preview .centerStage{display:none}
+  .ideShell.desktop-preview .browserPanel{display:flex}
+  .ideShell.desktop-preview .chatColumn{display:block}
+  .ideShell.desktop-preview{grid-template-columns:42px 235px minmax(420px,1fr) minmax(310px,370px)}
+  .ideShell:not(.desktop-preview) .browserPanel{display:none}
+}
+.desktopCenterSwitch{display:none;position:absolute;z-index:80;top:5px;left:50%;transform:translateX(-50%);height:25px;padding:2px;background:#202020;border:1px solid #333;border-radius:6px}
+.desktopCenterSwitch button{border:0;background:none;color:#777;border-radius:4px;padding:0 9px;font-size:9px}
+.desktopCenterSwitch button.active{background:#303030;color:#ddd}
+.fullIdeBadge{position:fixed;left:48px;bottom:5px;z-index:90;font-size:7px;color:#666;pointer-events:none}
+
+</style></head>
+<body>
+<div class="ideShell">
+  <aside class="activityRail">
+    <button class="railBtn active" title="Explorer">▱</button>
+    <button class="railBtn" title="Search">⌕</button>
+    <button class="railBtn" title="Source Control">⑂</button>
+    <button class="railBtn" title="Run">▷</button>
+    <div class="railSpacer"></div>
+    <button class="railBtn" title="Settings">⚙</button>
+  </aside>
+
+  <aside class="explorerPanel" id="explorerPanel">
+  <div class="explorerViewBar">
+    <button class="viewIcon active" title="Files">▱</button>
+    <button class="viewIcon" title="Search">⌕</button>
+    <button class="viewIcon" title="Source Control">⑂</button>
+    <button class="viewIcon" title="Extensions">⊞</button>
+    <button class="viewIcon more" title="More">⌄</button>
+  </div>
+
+  <div class="workspaceRow cursorRoot">
+    <span class="twisty">▼</span><b id="workspaceFolderName">CODING-IDE--MAIN</b>
+    <div class="rootActions">
+      <button title="New File" onclick="newExplorerItem('file')">＋▯</button>
+      <button title="New Folder" onclick="newExplorerItem('folder')">＋⌑</button>
+      <button title="Refresh" onclick="toast('Explorer refreshed')">↻</button>
+      <button title="Collapse All" onclick="collapseFolders()">▱</button>
+    </div>
+  </div>
+
+  <div class="explorerSearch compactSearch">
+    <span>⌕</span><input id="fileSearch" placeholder="Filter files…" oninput="filterFiles(this.value)">
+  </div>
+
+  <div class="fileTree cursorTree" id="fileTree">
+    <div class="treeRow folder" data-name=".codeme" onclick="toggleFolder('codemeFolder',this)"><span class="twisty">▶</span><span class="treeName">.codeme</span></div>
+    <div class="folderChildren collapsed guide" id="codemeFolder"><div class="treeRow file"><span class="fileIcon json">{}</span><span class="treeName">config.json</span></div></div>
+
+    <div class="treeRow folder" data-name=".cursor rules" onclick="toggleFolder('cursorFolder',this)"><span class="twisty">▼</span><span class="treeName">.cursor / rules</span></div>
+    <div class="folderChildren guide" id="cursorFolder">
+      <div class="treeRow file" onclick="selectFile(this,'.cursor/rules/canonical-repo.mdc')"><span class="fileIcon rule">◆</span><span class="treeName">canonical-repo.mdc</span></div>
+      <div class="treeRow file" onclick="selectFile(this,'.cursor/rules/pipeline-lock.mdc')"><span class="fileIcon rule">◆</span><span class="treeName">pipeline-lock.mdc</span></div>
+    </div>
+
+    <div class="treeRow folder" data-name=".github"><span class="twisty">▶</span><span class="treeName">.github</span></div>
+    <div class="treeRow folder" data-name=".tools"><span class="twisty">▶</span><span class="treeName">.tools</span></div>
+    <div class="treeRow folder" data-name="branding"><span class="twisty">▶</span><span class="treeName">branding</span></div>
+    <div class="treeRow folder" data-name="code-oss"><span class="twisty">▶</span><span class="treeName">code-oss</span><span class="gitMark staged">S</span></div>
+    <div class="treeRow folder" data-name="docs"><span class="twisty">▶</span><span class="treeName">docs</span></div>
+    <div class="treeRow folder selected" data-name="extensions"><span class="twisty">▶</span><span class="treeName">extensions</span></div>
+    <div class="treeRow folder" data-name="packages" onclick="toggleFolder('packagesFolder',this)"><span class="twisty">▶</span><span class="treeName">packages</span></div>
+    <div class="folderChildren collapsed guide" id="packagesFolder">
+      <div class="treeRow folder child"><span class="twisty">▶</span><span class="treeName">agent-runtime</span></div>
+      <div class="treeRow folder child"><span class="twisty">▶</span><span class="treeName">shell</span></div>
+    </div>
+    <div class="treeRow folder" data-name="scripts"><span class="twisty">▶</span><span class="treeName">scripts</span></div>
+
+    <div class="treeRow file rootFile" data-name=".env" onclick="selectFile(this,'.env')"><span class="fileIcon env">⚙</span><span class="treeName">.env</span></div>
+    <div class="treeRow file rootFile" data-name=".env.example" onclick="selectFile(this,'.env.example')"><span class="fileIcon txt">≡</span><span class="treeName">.env.example</span></div>
+    <div class="treeRow file rootFile" data-name=".gitignore"><span class="fileIcon git">◇</span><span class="treeName">.gitignore</span></div>
+    <div class="treeRow file rootFile" data-name=".gitmodules"><span class="fileIcon git">◇</span><span class="treeName">.gitmodules</span></div>
+    <div class="treeRow file rootFile aiChanged" data-name="master_blueprint.md" onclick="selectFile(this,'MASTER_BLUEPRINT.md')"><span class="fileIcon rule">◆</span><span class="treeName">MASTER_BLUEPRINT.md</span><span class="aiDot" title="Changed by CodeMe"></span><span class="gitMark modified">M</span></div>
+    <div class="treeRow file rootFile" data-name="readme.md" onclick="selectFile(this,'README.md')"><span class="fileIcon info">ⓘ</span><span class="treeName">README.md</span></div>
+  </div>
+
+  <div class="lowerPanels">
+    <div class="explorerSection">
+      <div class="sectionHead" onclick="toggleSection('outlinePanel',this)"><span>▼</span><b>OUTLINE</b></div>
+      <div id="outlinePanel" class="outlineContent">
+        <div class="outlineRow"><span class="symbol fnSymbol">ƒ</span><span>App</span></div>
+        <div class="outlineRow"><span class="symbol varSymbol">◇</span><span>handleSubmit</span></div>
+        <div class="outlineRow"><span class="symbol varSymbol">◇</span><span>renderChat</span></div>
+      </div>
+    </div>
+    <div class="explorerSection">
+      <div class="sectionHead" onclick="toggleSection('timelinePanel',this)"><span>▼</span><b>TIMELINE</b><small>app.js</small></div>
+      <div id="timelinePanel" class="timelineContent">
+        <div class="timelineRow"><span class="historyDot"></span><div><b>CodeMe edit</b><small>Updated navigation · just now</small></div></div>
+        <div class="timelineRow"><span class="historyDot"></span><div><b>Local save</b><small>12 minutes ago</small></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="explorerFooter"><span class="branch">⑂ codeme/reference-pipeline-port</span><span class="sync">↻</span></div>
+  <div class="resizeHandle" title="Drag to resize Explorer"></div>
+</aside>
+
+  <main class="centerStage">
+  <div class="editorTabs" id="editorTabs">
+    <div class="editorTab active" data-path="src/app.js" onclick="openEditorFile('src/app.js')">
+      <span class="fileIcon js">JS</span><span>app.js</span><span class="tabMod" title="Modified">●</span><button onclick="event.stopPropagation();closeEditorTab(this)">×</button>
+    </div>
+    <div class="editorTab" data-path="src/styles.css" onclick="openEditorFile('src/styles.css')">
+      <span class="fileIcon css">#</span><span>styles.css</span><button onclick="event.stopPropagation();closeEditorTab(this)">×</button>
+    </div>
+  </div>
+
+  <div class="editorToolbar">
+    <div class="editorCrumb" id="editorCrumb">CODING-IDE--MAIN › src › <b>app.js</b></div>
+    <div class="editorTools">
+      <button title="Show Changes" onclick="toggleInlineDiff()">±</button>
+      <button title="Split Editor" onclick="toast('Split editor')">▥</button>
+      <button title="More">•••</button>
+    </div>
+  </div>
+
+  <div class="codeEditor" id="codeEditor">
+    <div class="gutter" id="editorGutter">
+      <div>1</div><div>2</div><div>3</div><div>4</div><div class="changedLine">5</div><div class="changedLine">6</div><div class="changedLine">7</div><div>8</div><div>9</div><div>10</div><div>11</div><div>12</div>
+    </div>
+    <div class="codeSurface">
+      <pre class="codeText" id="codeText" contenteditable="true" spellcheck="false" oninput="markManualEdit()"><span class="kw">import</span> React <span class="kw">from</span> <span class="str">'react'</span>
+<span class="kw">import</span> Header <span class="kw">from</span> <span class="str">'./Header'</span>
+
+<span class="kw">export default function</span> <span class="fn">App</span>() {
+  <span class="kw">return</span> (
+    &lt;<span class="tag">main</span> className=<span class="str">"app"</span>&gt;
+      &lt;<span class="tag">Header</span> title=<span class="str">"CodeMe IDE"</span> /&gt;
+      &lt;<span class="tag">Navigation</span> responsive /&gt;
+    &lt;/<span class="tag">main</span>&gt;
+  )
+}</pre>
+      <div class="diagnosticUnderline" title="Navigation is not defined"></div>
+    </div>
+
+    <div class="editorMinimap" aria-hidden="true">
+      <i></i><i></i><i class="ai"></i><i class="ai"></i><i></i><i></i><i></i>
+    </div>
+
+    <div class="aiChangeRail">
+      <div class="aiChangeMark" title="CodeMe changed lines 5–7"></div>
+    </div>
+
+    <div class="inlineDiffCard" id="inlineDiffCard">
+      <div class="inlineDiffHead">
+        <span class="spark">✦</span><b>CodeMe edit</b><span>src/app.js · lines 5–7</span>
+        <button onclick="toggleInlineDiff()">×</button>
+      </div>
+      <div class="inlineDiffLine removed"><span>−</span>&lt;Header title="CodeMe" /&gt;</div>
+      <div class="inlineDiffLine added"><span>+</span>&lt;Header title="CodeMe IDE" /&gt;</div>
+      <div class="inlineDiffLine added"><span>+</span>&lt;Navigation responsive /&gt;</div>
+      <div class="inlineDiffActions">
+        <button onclick="acceptAIEdit()">Keep</button>
+        <button onclick="undoAIEdit()">Undo</button>
+        <button onclick="sendEditorToChat()">Ask CodeMe</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="editorInfoBar">
+    <div><span class="aiEditorState" id="aiEditorState">✦ CodeMe changed this file</span><span class="changeStats">+12 −4</span></div>
+    <div class="editorInfoRight"><span id="cursorPos">Ln 7, Col 28</span><span>Spaces: 2</span><span>UTF-8</span><span>JavaScript</span><span class="warning">△ 1</span></div>
+  </div>
+<div class="terminalPanel" id="terminalPanel">
+  <div class="terminalResize" id="terminalResize"></div>
+  <div class="terminalHeader">
+    <div class="terminalViews">
+      <button class="termView active">TERMINAL</button>
+      <button class="termView">PROBLEMS <span class="problemCount">1</span></button>
+      <button class="termView">OUTPUT</button>
+      <button class="termView">DEBUG CONSOLE</button>
+    </div>
+    <div class="terminalActions">
+      <span class="termStatus ok" id="termStatus"><i></i> zsh</span>
+      <button title="New Terminal" onclick="addTerminal()">＋</button>
+      <button title="Split Terminal" onclick="toast('Split terminal')">▥</button>
+      <button title="Clear" onclick="clearTerminal()">⌫</button>
+      <button title="Kill Terminal" onclick="killTerminal()">♲</button>
+      <button title="Maximize Panel" onclick="toggleTerminalSize()">⌃</button>
+      <button title="Close Panel" onclick="toggleTerminal()">×</button>
+    </div>
+  </div>
+  <div class="terminalBody">
+    <div class="terminalSidebar" id="terminalTabs">
+      <div class="terminalTab active" onclick="selectTerminal(this)"><span class="termIcon">▣</span><span>zsh</span><small>1</small></div>
+      <div class="terminalTab" onclick="selectTerminal(this)"><span class="termIcon">▣</span><span>zsh</span><small>2</small></div>
+    </div>
+    <div class="terminalConsole" id="terminalConsole" onclick="document.getElementById('termInput').focus()">
+      <div class="termLine"><span class="promptUser">laingfamily@Laings-MacBook-Pro</span> <span class="promptPath">coding-IDE--main</span> % npm test</div>
+      <div class="termLine dim">Running CodeMe tests...</div>
+      <div class="termLine pass">✓ model provider tool-call compatibility passed</div>
+      <div class="termLine pass">✓ capability routing passed</div>
+      <div class="termErrorBlock" id="termError">
+        <div class="termLine fail">✗ composer runtime test failed</div>
+        <div class="termLine failText">AssertionError: Expected verification state to equal "passed"</div>
+        <div class="termLine fileLink" onclick="selectPath('packages/agent-runtime/test/composer.test.js')">packages/agent-runtime/test/composer.test.js:210:12</div>
+        <div class="errorActions">
+          <button onclick="event.stopPropagation();sendTerminalToChat()">＋ Add to Chat</button>
+          <button onclick="event.stopPropagation();sendTerminalToChat()">Ask CodeMe</button>
+          <button onclick="event.stopPropagation();toast('Error details copied')">Copy</button>
+        </div>
+      </div>
+      <div class="termLine"><span class="promptUser">laingfamily@Laings-MacBook-Pro</span> <span class="promptPath">coding-IDE--main</span> % <input id="termInput" autocomplete="off" spellcheck="false" onkeydown="terminalKey(event)"></div>
+    </div>
+  </div>
+</div>
+
+<div class="bottomBar"><span>⑂ codeme/reference-pipeline-port</span><span class="terminalToggle" onclick="toggleTerminal()">⌘ Terminal</span><span>✓ 0 errors</span><span>JavaScript</span><span>UTF-8</span></div>
+  </main>
+
+  
+<section class="browserPanel" id="browserPanel">
+  <div class="browserTop">
+    <div class="browserNav">
+      <button title="Back">‹</button><button title="Forward">›</button>
+      <button title="Refresh" onclick="refreshPreview()">↻</button>
+    </div>
+    <div class="addressBar"><span class="secureDot"></span><input id="previewUrl" value="http://localhost:3000" onkeydown="if(event.key==='Enter')loadPreviewUrl()"><span class="liveBadge">LOCAL</span></div>
+    <button class="openExternal" title="Open in external browser" onclick="toast('Would open preview in external browser')">↗</button>
+  </div>
+
+  <div class="browserTools">
+    <div class="viewportTools">
+      <button class="viewportBtn active" onclick="setViewport('desktop',this)" title="Desktop">▱</button>
+      <button class="viewportBtn" onclick="setViewport('tablet',this)" title="Tablet">▯</button>
+      <button class="viewportBtn" onclick="setViewport('mobile',this)" title="Mobile">▯</button>
+      <span id="viewportSize">Responsive</span>
+    </div>
+    <div class="browserToolRight">
+      <button onclick="toggleInspector()">⌖ Inspect</button>
+      <button onclick="toggleBrowserConsole()">Console <span class="consoleCount">1</span></button>
+      <button class="verifyBtn" onclick="verifyPreview()">✦ Verify with CodeMe</button>
+    </div>
+  </div>
+
+  <div class="previewStage">
+    <div class="previewFrame desktop" id="previewFrame">
+      <div class="demoSite">
+        <header class="demoHeader"><div class="demoLogo">CodeMe</div><nav><span>Home</span><span>Features</span><span>Docs</span></nav><button>Get started</button></header>
+        <main class="demoHero">
+          <div class="demoPill">Local AI development</div>
+          <h1>Build software with<br><strong>CodeMe IDE</strong></h1>
+          <p>Your local AI coding workspace with integrated tools, verification and project context.</p>
+          <div class="demoActions"><button>Start building</button><button class="secondary">View documentation</button></div>
+        </main>
+        <section class="demoCards"><article><b>AI coding</b><p>Edit and verify directly in your workspace.</p></article><article><b>Local models</b><p>Use models running on your own hardware.</p></article><article><b>Built-in verification</b><p>Test the result before the agent finishes.</p></article></section>
+        <div class="inspectOutline" id="inspectOutline"><span>main.demoHero · 1180 × 310</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="browserConsole" id="browserConsole">
+    <div class="browserConsoleHead"><b>CONSOLE</b><span>1 error</span><button onclick="toggleBrowserConsole()">×</button></div>
+    <div class="consoleLine error"><span>×</span><div><b>ReferenceError: Navigation is not defined</b><small>src/app.js:8:7</small></div><button onclick="sendBrowserErrorToChat()">Ask CodeMe</button></div>
+    <div class="consoleLine info"><span>›</span><div><b>Dev server connected</b><small>localhost:3000</small></div></div>
+  </div>
+
+  <div class="verificationBar" id="verificationBar">
+    <span class="verificationDot"></span><span id="verificationText">Preview ready · localhost:3000</span>
+    <span class="verificationSpacer"></span><button onclick="sendBrowserToChat()">Add preview context to chat</button>
+  </div>
+</section>
+
+<section class="chatColumn">
+
+<div class="shell">
+<div class="rail"><div>▱</div><div>⌕</div><div>⑂</div><div>▶</div><div>⚙</div></div>
+<aside class="files"><div class="cap">EXPLORER</div><div class="tree">⌄ CODEME PROJECT</div><div class="tree">　⌄ src</div><div class="tree">　　app.js</div><div class="tree">　　styles.css</div><div class="tree">　 package.json</div></aside>
+<main class="editor"><div class="tabs"><span class="tab">app.js</span></div><div class="code">1 export default function App() {<br>2　return (<br>3　　&lt;main&gt;<br>4　　　&lt;Header /&gt;<br>5　　&lt;/main&gt;<br>6　)<br>7 }</div></main>
+<section class="chat">
+<div class="head"><span>CodeMe</span><div class="headActions"><button class="headBtn" title="New chat" onclick="newChat()">＋</button><button class="headBtn" title="Chat history" onclick="toggleHistory()">☰</button></div></div>
+<div class="chatTabs" id="chatTabs"></div>
+<div class="historyPanel" id="historyPanel"><div class="historyTitle">CHAT HISTORY</div><div id="historyItems"></div></div>
+<div class="feed" id="feed"></div>
+<div class="modeMenu" id="modeMenu">
+ <div class="modeItem" onclick="setMode('Chat')"><b>Chat</b><span>Understand and explain · read-only</span></div>
+ <div class="modeItem" onclick="setMode('Plan')"><b>Plan</b><span>Investigate and create a plan · read-only</span></div>
+ <div class="modeItem" onclick="setMode('Code')"><b>Code</b><span>Edit, run and verify the project</span></div>
+ <div class="modeItem" onclick="setMode('Debug')"><b>Debug</b><span>Reproduce, diagnose, fix and retest</span></div>
+</div>
+<div class="modelMenu" id="modelMenu">
+ <div class="modelGroup">Local</div>
+ <div class="modelItem" onclick="setModel('qwen3.5:9b','Local')"><b>qwen3.5:9b</b><span>Local</span></div>
+ <div class="modelItem" onclick="setModel('qwen2.5-coder:14b','Local')"><b>qwen2.5-coder:14b</b><span>Local</span></div>
+ <div class="modelGroup">Home server · Ollama</div>
+ <div class="modelItem" onclick="setModel('qwen2.5-coder:14b','Server')"><b>qwen2.5-coder:14b</b><span>Server</span></div>
+ <div class="modelItem" onclick="setModel('qwen2.5-coder:32b','Server')"><b>qwen2.5-coder:32b</b><span>Server</span></div>
+ <div class="modelItem" onclick="setModel('qwen3-coder:30b','Server')"><b>qwen3-coder:30b</b><span>Server</span></div>
+ <div class="modelItem" onclick="setModel('qwen2.5vl:7b','Server')"><b>qwen2.5vl:7b</b><span>Server · vision</span></div>
+</div>
+<div class="composeWrap">
+ <div class="status" id="status"><span class="statePill state-ready"><span class="stateDot"></span><span>Ready · Code can edit</span></span></div>
+ <div class="box" id="dropZone">
+ <textarea id="prompt" placeholder="Tell CodeMe what to build or change..."></textarea>
+ <div class="attachments" id="attachments"></div>
+ <div class="bar">
+  <input type="file" id="fileInput" multiple hidden onchange="takeFiles(this.files)">
+  <button class="attach" title="Attach files" onclick="document.getElementById('fileInput').click()">＋</button>
+  <button class="mic" id="mic" title="Talk to CodeMe" onclick="toggleMic()">♩</button>
+  <button class="modeBtn" id="modeBtn" onclick="toggleModes()">Code ▾</button>
+  <button class="modelBtn" id="modelBtn" onclick="toggleModels()">qwen2.5-coder:14b ▾</button>
+  <span class="model"></span><button class="send" onclick="run()">↑</button>
+ </div></div>
+</div>
+</section></div>
+<script>
+const introHTML=()=>`<div class="intro"><b>CodeMe AI</b><br><span id="introText">${config[mode]?.intro||'Build, edit and verify your project.'}</span></div>`;
+let chats=[],activeChat=null,chatCounter=0;
+function makeChat(title='New chat'){return {id:'chat_'+(++chatCounter),title,html:'',closed:false,updated:Date.now()}}
+function saveChat(){if(!activeChat)return;let c=chats.find(x=>x.id===activeChat);if(c){c.html=document.getElementById('feed').innerHTML;c.updated=Date.now()}}
+function renderTabs(){let el=document.getElementById('chatTabs');el.innerHTML='';chats.filter(c=>!c.closed).forEach(c=>el.insertAdjacentHTML('beforeend',`<div class="chatTab ${c.id===activeChat?'active':''}" onclick="switchChat('${c.id}')"><span class="chatTabName">${esc(c.title)}</span><button class="tabClose" onclick="event.stopPropagation();closeChat('${c.id}')">×</button></div>`))}
+function renderHistory(){let el=document.getElementById('historyItems');el.innerHTML='';[...chats].sort((a,b)=>b.updated-a.updated).forEach(c=>el.insertAdjacentHTML('beforeend',`<div class="historyItem" onclick="reopenChat('${c.id}')"><b>${esc(c.title)}</b><span>${c.closed?'Closed · click to reopen':'Open conversation'}</span></div>`))}
+function newChat(){saveChat();let c=makeChat();chats.push(c);activeChat=c.id;document.getElementById('feed').innerHTML=introHTML();c.html=document.getElementById('feed').innerHTML;renderTabs();renderHistory();document.getElementById('prompt').focus()}
+function switchChat(id){if(busy)return;saveChat();activeChat=id;let c=chats.find(x=>x.id===id);document.getElementById('feed').innerHTML=c.html||introHTML();renderTabs()}
+function closeChat(id){if(busy)return;saveChat();let c=chats.find(x=>x.id===id);if(c)c.closed=true;let open=chats.filter(x=>!x.closed);if(id===activeChat){if(open.length){activeChat=open[open.length-1].id;document.getElementById('feed').innerHTML=chats.find(x=>x.id===activeChat).html||introHTML()}else{let n=makeChat();chats.push(n);activeChat=n.id;document.getElementById('feed').innerHTML=introHTML()}}renderTabs();renderHistory()}
+function reopenChat(id){saveChat();let c=chats.find(x=>x.id===id);c.closed=false;activeChat=id;document.getElementById('feed').innerHTML=c.html||introHTML();document.getElementById('historyPanel').classList.remove('show');renderTabs();renderHistory()}
+function toggleHistory(){saveChat();renderHistory();document.getElementById('historyPanel').classList.toggle('show')}
+function autoTitle(q){let c=chats.find(x=>x.id===activeChat);if(c&&c.title==='New chat'){let s=q.replace(/[.!?]+$/,'').trim();c.title=s.length>28?s.slice(0,28)+'…':s;renderTabs();renderHistory()}}
+let mode='Code',busy=false,permissionResolve=null,currentModel='qwen2.5-coder:14b',modelSource='Local',attached=[],recognition=null,listening=false;
+const config={
+ Chat:{placeholder:'Ask CodeMe about your project...',status:'Read-only · no files will be changed',intro:'Ask questions and understand your project.'},
+ Plan:{placeholder:'Describe what you want CodeMe to plan...',status:'Read-only · planning only',intro:'Investigate your project and create an implementation plan.'},
+ Code:{placeholder:'Tell CodeMe what to build or change...',status:'Can edit · verification required',intro:'Build, edit and verify your project.'},
+ Debug:{placeholder:'Describe the bug or failure...',status:'Can edit · reproduce before fixing',intro:'Reproduce, diagnose, fix and retest problems.'}
+};
+window.addEventListener('DOMContentLoaded',()=>{if(!activeChat){let c=makeChat();chats.push(c);activeChat=c.id;document.getElementById('feed').innerHTML=introHTML();renderTabs();renderHistory()}});
+
+function setState(type,text,active=false){let s=document.getElementById('status');if(!s)return;s.innerHTML=`<span class="statePill state-${type}"><span class="stateDot ${active?'pulse':''}"></span><span>${text}</span></span>`}
+function toggleModes(){document.getElementById('modelMenu').classList.remove('show');document.getElementById('modeMenu').classList.toggle('show')}
+function toggleModels(){document.getElementById('modeMenu').classList.remove('show');document.getElementById('modelMenu').classList.toggle('show')}
+function setModel(name,source){currentModel=name;modelSource=source;document.getElementById('modelBtn').textContent=name+' ▾';document.getElementById('modelMenu').classList.remove('show');setState('ready',`Ready · ${source} · ${name}`)}
+function takeFiles(files){for(const f of files) attached.push(f);renderFiles()}
+function renderFiles(){let a=document.getElementById('attachments');a.innerHTML='';attached.forEach((f,i)=>a.insertAdjacentHTML('beforeend',`<div class="chip"><span>${fileIcon(f.name)}</span><span class="chipName">${esc(f.name)}</span><button onclick="removeFile(${i})">×</button></div>`));a.classList.toggle('show',attached.length>0)}
+function removeFile(i){attached.splice(i,1);renderFiles()}
+function fileIcon(n){return /\.(png|jpg|jpeg|webp|gif)$/i.test(n)?'▧':/\.pdf$/i.test(n)?'PDF':'▤'}
+function toggleMic(){
+ const btn=document.getElementById('mic'),input=document.getElementById('prompt');
+ if(listening){if(recognition)recognition.stop();listening=false;btn.classList.remove('listening');document.getElementById('status').textContent='● '+config[mode].status;return}
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(SR){
+  recognition=new SR();recognition.lang='en-GB';recognition.interimResults=true;listening=true;btn.classList.add('listening');setState('running','Listening · speak now',true);
+  recognition.onresult=e=>{let s='';for(let i=e.resultIndex;i<e.results.length;i++)s+=e.results[i][0].transcript;input.value=s};
+  recognition.onend=()=>{listening=false;btn.classList.remove('listening');setState('ready','Voice captured · review then send')};
+  recognition.start();
+ }else{
+  listening=true;btn.classList.add('listening');setState('running','Listening · prototype simulation',true);
+  setTimeout(()=>{input.value='Update the website header and check that it works on mobile.';listening=false;btn.classList.remove('listening');setState('ready','Voice captured · review then send')},1800)
+ }
+}
+const dz=()=>document.getElementById('dropZone');
+window.addEventListener('DOMContentLoaded',()=>{
+ let d=dz();['dragenter','dragover'].forEach(ev=>d.addEventListener(ev,e=>{e.preventDefault();d.classList.add('dropActive')}));
+ ['dragleave','drop'].forEach(ev=>d.addEventListener(ev,e=>{e.preventDefault();d.classList.remove('dropActive')}));
+ d.addEventListener('drop',e=>takeFiles(e.dataTransfer.files));
+});
+function setMode(m){mode=m;document.getElementById('modeBtn').textContent=m+' ▾';document.getElementById('prompt').placeholder=config[m].placeholder;setState('ready',m==='Code'?'Ready · Code can edit':m==='Debug'?'Ready · Debug can edit':`Ready · ${m} is read-only`);let i=document.getElementById('introText');if(i)i.textContent=config[m].intro;document.getElementById('modeMenu').classList.remove('show')}
+function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+function bottom(){let f=document.getElementById('feed');f.scrollTop=f.scrollHeight}
+function tech(){document.getElementById('tech').classList.toggle('show')}
+async function say(a,b,t){
+ let low=((a||'')+' '+(t||'')).toLowerCase();
+ if(low.includes('permission')) setState('waiting','Paused · approval needed');
+ else if(low.includes('browser.check')) setState('running','Verifying · browser check',true);
+ else if(low.includes('npm test')||low.includes('test')) setState('running','Testing · project checks',true);
+ else if(low.includes('file.patch')||low.includes('file.write')||low.includes('updated')||low.includes('applying')) setState('editing','Editing · project files',true);
+ else if(low.includes('file.read')||low.includes('dir.list')||low.includes('inspect')||low.includes('locat')) setState('reading','Reading · project context',true);
+ else setState('reading','Thinking · working through task',true);
+ document.getElementById('narr').innerHTML='<p>'+a+'</p><p class="next">'+b+'</p>';if(t)document.getElementById('tech').insertAdjacentHTML('beforeend','<div>'+t+'</div>');bottom();await sleep(1050)
+}
+function finish(html){document.getElementById('live').outerHTML='<div class="final">'+html+'</div>';if(/stopped|not granted/i.test(html))setState('waiting','Stopped · waiting for your next instruction');else setState('verified','Verified · task complete');bottom();saveChat();renderHistory();busy=false}
+async function askPermission(){
+ document.getElementById('narr').insertAdjacentHTML('beforeend',`<div class="permission" id="perm"><div class="permHead">CodeMe needs your approval</div><div class="permBody">Install <b>react-router-dom</b> to continue.<div class="cmd">npm install react-router-dom</div><div class="muted" style="font-size:11px;margin-top:6px">Changes package.json and package-lock.json</div></div><div class="permActions"><button class="yes" onclick="decide(true)">Allow once</button><button onclick="decide(false)">Deny</button></div></div>`);
+ setState('waiting','Paused · approval needed');bottom();return await new Promise(r=>permissionResolve=r)
+}
+function decide(v){if(permissionResolve){let r=permissionResolve;permissionResolve=null;r(v)}}
+function toggleDiff(id){let d=document.getElementById(id),c=document.getElementById('c_'+id);d.classList.toggle('open');if(c)c.textContent=d.classList.contains('open')?'▼':'▶'}
+function setAllDiffs(open){document.querySelectorAll('.diff').forEach(d=>d.classList.toggle('open',open));document.querySelectorAll('.chev').forEach(c=>c.textContent=open?'▼':'▶')}
+function changesHTML(debug=false){
+ return `<div class="changesBox"><div class="changesHead"><b>Files changed</b><span class="muted" style="margin-right:10px">2 files · +18 −7</span><div class="changesTools"><button class="linkBtn" onclick="setAllDiffs(true)">Expand all</button><button class="linkBtn" onclick="setAllDiffs(false)">Collapse</button></div></div>
+ <div class="fileChange"><div class="fileRow" onclick="toggleDiff('diff_app')"><span class="chev" id="c_diff_app">▶</span><span class="filePath">src/app.js</span><span class="plus">+12</span><span class="minus">−4</span></div>
+ <div class="diff" id="diff_app">
+  <div class="diffLine ctxLine"><span class="ln">3</span><span class="codeLine">  return (</span></div>
+  <div class="diffLine delLine"><span class="ln">4</span><span class="codeLine">-   &lt;Header title="CodeMe" /&gt;</span></div>
+  <div class="diffLine addLine"><span class="ln">4</span><span class="codeLine">+   &lt;Header title="CodeMe IDE" /&gt;</span></div>
+  <div class="diffLine addLine"><span class="ln">5</span><span class="codeLine">+   &lt;Navigation responsive /&gt;</span></div>
+  <div class="diffLine ctxLine"><span class="ln">6</span><span class="codeLine">  )</span></div>
+  <div class="fileActions"><button class="miniBtn">Open file</button><button class="miniBtn">Undo this file</button></div>
+ </div></div>
+ <div class="fileChange"><div class="fileRow" onclick="toggleDiff('diff_css')"><span class="chev" id="c_diff_css">▶</span><span class="filePath">src/styles.css</span><span class="plus">+6</span><span class="minus">−3</span></div>
+ <div class="diff" id="diff_css">
+  <div class="diffLine delLine"><span class="ln">18</span><span class="codeLine">- gap: 8px;</span></div>
+  <div class="diffLine addLine"><span class="ln">18</span><span class="codeLine">+ gap: 16px;</span></div>
+  <div class="diffLine addLine"><span class="ln">19</span><span class="codeLine">+ align-items: center;</span></div>
+  <div class="diffLine addLine"><span class="ln">20</span><span class="codeLine">+ flex-wrap: wrap;</span></div>
+  <div class="fileActions"><button class="miniBtn">Open file</button><button class="miniBtn">Undo this file</button></div>
+ </div></div></div>`;
+}
+async function run(){
+ if(busy)return;let input=document.getElementById('prompt'),q=input.value.trim();if(!q)return;busy=true;input.value='';autoTitle(q);
+ let attachmentText=attached.length?`<div class="muted" style="font-size:10px;margin-top:6px">${attached.length} attachment${attached.length>1?'s':''}: ${attached.map(f=>esc(f.name)).join(', ')}</div>`:'';
+ document.getElementById('feed').insertAdjacentHTML('beforeend',`<div class="user">${esc(q)} <span class="modeTag">${mode}</span>${attachmentText}<div class="muted" style="font-size:9px;margin-top:5px">${esc(currentModel)} · ${modelSource}</div></div><div class="live" id="live"><div class="livehead"><span class="spin"></span><span>${mode==='Debug'?'Investigating the problem':mode==='Plan'?'Building a plan':mode==='Chat'?'Looking into your question':'Working on your request'}</span></div><div class="narr" id="narr"></div><button class="techBtn" onclick="tech()">› View technical activity</button><div class="tech" id="tech"></div></div>`);attached=[];renderFiles();bottom();
+
+ if(mode==='Chat'){
+  await say('I’m locating the parts of the project related to your question so I can answer from the actual code.','Next: understand how the relevant pieces connect.','dir.list<br>file.read src/app.js');
+  await say('I’ve found the relevant implementation. I’m tracing how it connects to the rest of the application before explaining it.','Preparing answer…','file.read src/styles.css');
+  return finish(`<div class="done">✓ Answer ready</div><h2>Here’s how this part of the project works</h2><p>The header is rendered from the main application component and its presentation is controlled by the supporting stylesheet. I only inspected the project; nothing was changed.</p><div class="section"><b>Important</b><div class="line">Chat mode is read-only. <b>No files were modified.</b></div></div><div class="actions"><button class="btn">View files referenced</button></div>`);
+ }
+ if(mode==='Plan'){
+  await say('I’m inspecting the existing structure first so the plan fits the project rather than assuming how it is built.','Next: identify the files, dependencies and verification path.','dir.list<br>file.read package.json');
+  await say('I’ve mapped the relevant components and dependencies. I’m now ordering the work so each change can be verified before moving on.','Preparing implementation plan…','file.read src/app.js<br>file.read src/styles.css');
+  return finish(`<div class="done">✓ Plan ready</div><h2>Implementation plan</h2><div class="section"><div class="line"><b>1.</b> Update the relevant component structure.</div><div class="line"><b>2.</b> Apply the supporting styles without changing unrelated UI.</div><div class="line"><b>3.</b> Run the existing tests and resolve regressions.</div><div class="line"><b>4.</b> Open the page and verify layout, behaviour and console output.</div></div><p class="muted" style="margin-top:10px">No files changed — Plan mode is read-only.</p><div class="actions"><button class="btn primary" onclick="setMode('Code')">Start coding</button><button class="btn">Refine plan</button></div>`);
+ }
+ if(mode==='Debug'){
+  await say('I’m reproducing the reported problem before changing anything. This gives me a known failing state to test the fix against.','Next: inspect the failure and relevant logs.','browser.check → FAIL<br>console.read');
+  await say('I reproduced the issue. The page loads, but the interaction fails when the component initialises. I’m tracing that path now.','Next: identify the root cause.','file.read src/app.js<br>terminal output');
+  await say('I found the cause: the handler is being registered at the wrong point in the component lifecycle. I’m applying a focused fix now.','Next: rerun the exact failing check.','file.patch src/app.js +4 -3');
+  await say('The original failure now passes. I’m running the broader tests and browser check to make sure the fix didn’t introduce another problem.','Next: final regression verification.','npm test PASS<br>browser.check PASS');
+  return finish(`<div class="done">✓ Fixed and verified</div><h2>Problem resolved</h2><div class="section"><b>Root cause</b><p>The interaction handler was registered at the wrong point in the component lifecycle.</p></div><div class="section"><b>Fix</b><p>I moved the registration to the correct lifecycle path and kept the change limited to the affected component.</p></div><div class="section"><b>Verification</b><div class="line"><span class="ok">✓</span> Original failure reproduced before the fix</div><div class="line"><span class="ok">✓</span> Original failing check now passes</div><div class="line"><span class="ok">✓</span> Browser and regression checks pass</div></div>${changesHTML(true)}<div class="actions"><button class="btn">View activity</button><button class="btn">Keep all</button><button class="btn">Undo all</button></div>`);
+ }
+ // Code
+ await say('I’m checking the existing implementation and identifying the smallest set of files needed for this change.','Next: update the relevant code.','dir.list<br>file.read src/app.js<br>file.read src/styles.css');
+ if(/install|dependency|routing/i.test(q)){
+   await say('The requested change needs a new dependency. I’m stopping before installing it because this action requires your approval.','Waiting for your decision.','permission.request');
+   let allowed=await askPermission();
+   if(!allowed)return finish(`<div class="done" style="color:var(--amber)">Task stopped</div><h2>Permission not granted</h2><p>I did not install the dependency or continue with the protected change. Your existing project was left unchanged.</p>`);
+   document.getElementById('perm').remove();await say('Permission granted. The dependency is installed and I’m continuing with the implementation.','Next: update the application and verify it.','npm install react-router-dom<br>file.patch src/app.js');
+ } else await say('I’ve made the requested code and style changes while leaving unrelated parts of the project untouched.','Next: test the change.','file.patch src/app.js +18 -6<br>file.patch src/styles.css +12 -4');
+ await say('The implementation is complete. I’m running the project tests before checking the result in the browser.','Next: browser verification.','npm test PASS');
+ await say('The tests pass and the updated page looks correct. I’m checking the console once more before finishing.','Preparing summary…','browser.check PASS<br>console: no blocking errors');
+ return finish(`<div class="done">✓ Completed and verified</div><h2>Changes completed</h2><p>I applied the requested update and verified it in the running project.</p><div class="section"><b>What changed</b><div class="line"><span class="ok">✓</span> Updated the relevant application code</div><div class="line"><span class="ok">✓</span> Updated supporting styles where needed</div></div><div class="section"><b>Verification</b><div class="line"><span class="ok">✓</span> Tests passed</div><div class="line"><span class="ok">✓</span> Browser check passed</div><div class="line"><span class="ok">✓</span> No blocking console errors</div></div>${changesHTML(false)}<div class="actions"><button class="btn">View activity</button><button class="btn">Keep all</button><button class="btn">Undo all</button></div>`);
+}
+</script>
+  </section>
+</div>
+
+
+<div class="desktopCenterSwitch" id="desktopCenterSwitch">
+  <button id="deskEditor" class="active" onclick="showDesktopCenter('editor')">Editor</button>
+  <button id="deskPreview" onclick="showDesktopCenter('preview')">Browser / Preview</button>
+</div>
+<div class="fullIdeBadge">CodeMe IDE · Full Workspace Prototype</div>
+
+<div class="workspaceSwitcher" id="workspaceSwitcher">
+ <button id="wsExplorer" class="active" onclick="showWorkspace('explorer')">Explorer</button>
+ <button id="wsEditor" onclick="showWorkspace('editor')">Editor</button>
+ <button id="wsBrowser" onclick="showWorkspace('browser')">Browser</button>
+ <button id="wsTerminal" onclick="showWorkspace('terminal')">Terminal</button>
+ <button id="wsChat" onclick="showWorkspace('chat')">AI Chat</button>
+</div>
+<div class="explorerToast" id="explorerToast"></div>
+
+<script>
+function toggleFolder(id,row){
+  const f=document.getElementById(id); f.classList.toggle('collapsed');
+  const t=row.querySelector('.twisty'); if(t)t.textContent=f.classList.contains('collapsed')?'▶':'▼';
+}
+function collapseFolders(){
+  document.querySelectorAll('.folderChildren').forEach(x=>x.classList.add('collapsed'));
+  document.querySelectorAll('.treeRow.folder .twisty').forEach(x=>x.textContent='▶');
+}
+function selectFile(el,path){
+  document.querySelectorAll('.treeRow.file').forEach(x=>x.classList.remove('selected'));
+  el.classList.add('selected'); selectPath(path);
+}
+function selectPath(path){
+  const crumb=document.getElementById('editorCrumb');
+  if(crumb){const parts=path.split('/'); crumb.innerHTML='CODING-IDE--MAIN › '+parts.map((p,i)=>i===parts.length-1?'<b>'+p+'</b>':p).join(' › ');}
+  toast('Opened '+path);
+}
+function toggleSection(id,row){
+  const x=document.getElementById(id); x.style.display=x.style.display==='none'?'block':'none';
+  row.querySelector('span').textContent=x.style.display==='none'?'▶':'▼';
+}
+function filterFiles(q){
+  q=q.toLowerCase().trim();
+  document.querySelectorAll('.treeRow').forEach(r=>{
+    const n=(r.dataset.name||'').toLowerCase();
+    r.style.display=!q||n.includes(q)?'flex':'none';
+  });
+  if(q)document.querySelectorAll('.folderChildren').forEach(x=>x.classList.remove('collapsed'));
+}
+function newExplorerItem(type){toast(type==='file'?'New file input would open here':'New folder input would open here')}
+function toast(msg){
+  const t=document.getElementById('explorerToast'); t.textContent=msg;t.classList.add('show');
+  clearTimeout(window.__toast);window.__toast=setTimeout(()=>t.classList.remove('show'),1500);
+}
+</script>
+
+
+<script>
+(function(){
+ const panel=document.getElementById('explorerPanel'), handle=panel?.querySelector('.resizeHandle');
+ if(!panel||!handle)return;
+ let dragging=false,startX=0,startW=0;
+ handle.addEventListener('pointerdown',e=>{dragging=true;startX=e.clientX;startW=panel.getBoundingClientRect().width;handle.setPointerCapture(e.pointerId);document.body.style.userSelect='none'});
+ handle.addEventListener('pointermove',e=>{if(!dragging)return;const w=Math.max(170,Math.min(420,startW+e.clientX-startX));document.querySelector('.ideShell').style.gridTemplateColumns=`42px ${w}px minmax(280px,1fr) minmax(350px,430px)`});
+ handle.addEventListener('pointerup',()=>{dragging=false;document.body.style.userSelect=''});
+})();
+</script>
+
+
+<script>
+let terminalCount=2;
+function addTerminal(){
+ terminalCount++;
+ document.getElementById('terminalTabs').insertAdjacentHTML('beforeend',`<div class="terminalTab" onclick="selectTerminal(this)"><span class="termIcon">▣</span><span>zsh</span><small>${terminalCount}</small></div>`);
+ toast('New zsh terminal created');
+}
+function selectTerminal(el){document.querySelectorAll('.terminalTab').forEach(x=>x.classList.remove('active'));el.classList.add('active');document.getElementById('termStatus').className='termStatus ok';document.getElementById('termStatus').innerHTML='<i></i> zsh'}
+function clearTerminal(){const c=document.getElementById('terminalConsole');c.innerHTML=`<div class="termLine"><span class="promptUser">laingfamily@Laings-MacBook-Pro</span> <span class="promptPath">coding-IDE--main</span> % <input id="termInput" autocomplete="off" spellcheck="false" onkeydown="terminalKey(event)"></div>`;document.getElementById('termInput').focus()}
+function killTerminal(){document.getElementById('termStatus').className='termStatus dead';document.getElementById('termStatus').innerHTML='<i></i> exited';toast('Terminal exited')}
+function toggleTerminal(){document.getElementById('terminalPanel').classList.toggle('closed')}
+function toggleTerminalSize(){const p=document.getElementById('terminalPanel');p.style.height=p.style.height==='55vh'?'265px':'55vh'}
+function terminalKey(e){
+ if(e.key!=='Enter')return;
+ const v=e.target.value.trim();if(!v)return;
+ const line=e.target.parentElement;line.innerHTML=`<span class="promptUser">laingfamily@Laings-MacBook-Pro</span> <span class="promptPath">coding-IDE--main</span> % ${esc(v)}`;
+ let output=v==='npm test'?'<div class="termLine pass">✓ Tests completed</div>':`<div class="termLine dim">Command completed: ${esc(v)}</div>`;
+ line.insertAdjacentHTML('afterend',output+`<div class="termLine"><span class="promptUser">laingfamily@Laings-MacBook-Pro</span> <span class="promptPath">coding-IDE--main</span> % <input id="termInput" autocomplete="off" spellcheck="false" onkeydown="terminalKey(event)"></div>`);
+ document.getElementById('termInput').focus();document.getElementById('terminalConsole').scrollTop=99999;
+}
+function sendTerminalToChat(){
+ const panel=document.getElementById('terminalPanel'), chat=document.querySelector('.chatColumn');
+ if(window.innerWidth<=900){showWorkspace('chat')}
+ const input=document.getElementById('prompt');
+ if(input){input.value='Please help me fix this terminal error:\\nAssertionError: Expected verification state to equal "passed"\\npackages/agent-runtime/test/composer.test.js:210:12';input.focus()}
+ toast('Terminal error added to CodeMe chat');
+}
+(function(){
+ const p=document.getElementById('terminalPanel'),h=document.getElementById('terminalResize');if(!p||!h)return;
+ let drag=false,startY=0,startH=0;
+ h.addEventListener('pointerdown',e=>{drag=true;startY=e.clientY;startH=p.getBoundingClientRect().height;h.setPointerCapture(e.pointerId);document.body.style.userSelect='none'});
+ h.addEventListener('pointermove',e=>{if(!drag)return;p.style.height=Math.max(120,Math.min(window.innerHeight*.7,startH+(startY-e.clientY)))+'px'});
+ h.addEventListener('pointerup',()=>{drag=false;document.body.style.userSelect=''});
+})();
+</script>
+
+
+<script>
+function showWorkspace(view){
+ const shell=document.querySelector('.ideShell');
+ shell.classList.remove('view-explorer','view-editor','view-browser','view-terminal','view-chat');
+ shell.classList.add('view-'+view);
+ document.querySelectorAll('.workspaceSwitcher button').forEach(b=>b.classList.remove('active'));
+ const map={explorer:'wsExplorer',editor:'wsEditor',browser:'wsBrowser',terminal:'wsTerminal',chat:'wsChat'};
+ document.getElementById(map[view])?.classList.add('active');
+ if(view==='terminal')setTimeout(()=>document.getElementById('termInput')?.focus(),50);
+ if(view==='editor')setTimeout(()=>document.getElementById('codeText')?.focus(),50);
+ if(view==='chat')setTimeout(()=>document.getElementById('prompt')?.focus(),50);
+}
+window.addEventListener('DOMContentLoaded',()=>{
+ const shell=document.querySelector('.ideShell');
+ if(window.innerWidth<=900)shell.classList.add('view-explorer');
+});
+</script>
+
+
+<script>
+const editorFiles={
+ 'src/app.js':{lang:'JavaScript',code:`import React from 'react'\nimport Header from './Header'\n\nexport default function App() {\n  return (\n    <main className="app">\n      <Header title="CodeMe IDE" />\n      <Navigation responsive />\n    </main>\n  )\n}`},
+ 'src/styles.css':{lang:'CSS',code:`.app {\n  min-height: 100vh;\n  display: flex;\n  gap: 16px;\n  align-items: center;\n  flex-wrap: wrap;\n}`},
+ 'package.json':{lang:'JSON',code:`{\n  "name": "codeme",\n  "private": true,\n  "scripts": {\n    "test": "node packages/agent-runtime/test/model-provider.test.js"\n  }\n}`},
+ 'README.md':{lang:'Markdown',code:`# CodeMe IDE\n\nLocal AI coding IDE with integrated tools, verification and chat.`},
+ '.env':{lang:'Environment',code:`CODEME_SERVER_OLLAMA_URL=http://100.x.x.x:11434\n# Secrets are protected`}
+};
+function openEditorFile(path){
+ let data=editorFiles[path]||{lang:'Text',code:`// ${path}\n// File preview in prototype`};
+ const pre=document.getElementById('codeText');pre.textContent=data.code;
+ const parts=path.split('/');document.getElementById('editorCrumb').innerHTML='CODING-IDE--MAIN › '+parts.map((p,i)=>i===parts.length-1?'<b>'+p+'</b>':p).join(' › ');
+ document.querySelectorAll('.editorTab').forEach(x=>x.classList.toggle('active',x.dataset.path===path));
+ if(!document.querySelector(`.editorTab[data-path="${CSS.escape(path)}"]`)){
+   const name=parts.at(-1), ext=name.split('.').at(-1);
+   document.getElementById('editorTabs').insertAdjacentHTML('beforeend',`<div class="editorTab active" data-path="${path}" onclick="openEditorFile('${path.replaceAll("'","\\'")}')"><span class="fileIcon">${ext.slice(0,2).toUpperCase()}</span><span>${name}</span><button onclick="event.stopPropagation();closeEditorTab(this)">×</button></div>`);
+   document.querySelectorAll('.editorTab').forEach(x=>x.classList.toggle('active',x.dataset.path===path));
+ }
+ document.querySelector('.editorInfoRight span:nth-child(4)').textContent=data.lang;
+ if(window.innerWidth<=900)showWorkspace('editor');
+ toast('Opened '+path+' in editor');
+}
+function closeEditorTab(btn){const tab=btn.closest('.editorTab');tab.remove()}
+function toggleInlineDiff(){document.getElementById('inlineDiffCard').classList.toggle('show')}
+function acceptAIEdit(){document.getElementById('inlineDiffCard').classList.remove('show');document.getElementById('aiEditorState').textContent='✓ CodeMe change kept';toast('AI edit kept')}
+function undoAIEdit(){document.getElementById('inlineDiffCard').classList.remove('show');document.getElementById('aiEditorState').textContent='↶ CodeMe edit undone';toast('AI edit undone')}
+function markManualEdit(){document.getElementById('aiEditorState').textContent='● Unsaved changes'}
+function sendEditorToChat(){if(window.innerWidth<=900)showWorkspace('chat');const p=document.getElementById('prompt');if(p){p.value='Review the current changes in src/app.js and help me with the Navigation error.';p.focus()}}
+const oldSelectPath=window.selectPath;
+window.selectPath=function(path){if(oldSelectPath)oldSelectPath(path);openEditorFile(path)}
+</script>
+
+
+<script>
+function setViewport(type,btn){
+ document.querySelectorAll('.viewportBtn').forEach(x=>x.classList.remove('active'));btn.classList.add('active');
+ const f=document.getElementById('previewFrame');f.className='previewFrame '+type;
+ document.getElementById('viewportSize').textContent=type==='desktop'?'Responsive':type==='tablet'?'768px':'390px';
+}
+function refreshPreview(){
+ const t=document.getElementById('verificationText');t.textContent='Refreshing preview…';
+ setTimeout(()=>t.textContent='Preview refreshed · localhost:3000',700);
+}
+function loadPreviewUrl(){document.getElementById('verificationText').textContent='Loaded · '+document.getElementById('previewUrl').value}
+function toggleInspector(){document.getElementById('inspectOutline').classList.toggle('show')}
+function toggleBrowserConsole(){document.getElementById('browserConsole').classList.toggle('show')}
+function verifyPreview(){
+ const t=document.getElementById('verificationText'),d=document.querySelector('.verificationDot');
+ t.textContent='CodeMe is checking the rendered page…';d.style.background='#c99f57';
+ setTimeout(()=>{t.textContent='Verification found 1 browser error · Navigation is not defined';d.style.background='#cf7070';document.getElementById('browserConsole').classList.add('show')},1300);
+}
+function sendBrowserErrorToChat(){
+ if(window.innerWidth<=900)showWorkspace('chat');
+ const p=document.getElementById('prompt');if(p){p.value='Fix this browser preview error:\\nReferenceError: Navigation is not defined\\nsrc/app.js:8:7\\nThen verify the page again.';p.focus()}
+ toast('Browser error added to CodeMe chat');
+}
+function sendBrowserToChat(){
+ if(window.innerWidth<=900)showWorkspace('chat');
+ const p=document.getElementById('prompt');if(p){p.value='Review the current browser preview at localhost:3000 and verify the rendered layout and browser console.';p.focus()}
+}
+function openBrowserPreview(){
+ const shell=document.querySelector('.ideShell');
+ if(window.innerWidth<=900)showWorkspace('browser');else shell.classList.add('browser-open');
+}
+</script>
+
+
+<script>
+function showDesktopCenter(view){
+ const shell=document.querySelector('.ideShell');
+ const e=document.getElementById('deskEditor'),p=document.getElementById('deskPreview');
+ if(view==='preview'){shell.classList.add('desktop-preview');e?.classList.remove('active');p?.classList.add('active')}
+ else{shell.classList.remove('desktop-preview');p?.classList.remove('active');e?.classList.add('active')}
+}
+</script>
+
+</body></html>
