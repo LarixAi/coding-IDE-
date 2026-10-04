@@ -37,6 +37,15 @@ assert.ok(html.includes("#model { grid-column: 1 / 7; grid-row: 2;"));
 assert.ok(html.includes("V19 composer toolbar refinement"));
 assert.ok(html.includes("Cursor-style control strip"));
 assert.ok(html.includes("Unified Composer V20"));
+assert.ok(html.includes("Unified Composer V21"));
+assert.ok(html.includes('viewBox="0 0 24 24"'));
+assert.ok(html.includes(".unified-composer .v19-compose-status.ready"));
+assert.ok(html.includes("display: none;"));
+assert.ok(html.includes("appearance: none"));
+assert.ok(html.includes("content: none"));
+assert.ok(html.includes('mic.setAttribute("aria-label", on ? "Stop voice" : "Voice to text")'));
+assert.ok(!html.includes('mic.textContent = on ? "Stop" : "Voice"'));
+
 assert.ok(html.includes('class="composer unified-composer"'));
 assert.ok(html.includes('class="bar unified-composer-bar"'));
 assert.ok(html.includes('class="composer-left"'));
