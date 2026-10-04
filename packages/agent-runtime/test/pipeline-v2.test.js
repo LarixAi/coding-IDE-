@@ -446,7 +446,7 @@ async function testScaffoldOnlyBuildDoesNotRequirePreview() {
   ]);
 
   const run = await startPipelineRun({
-    goal: "Create this folder and file layout for my website project structure: public/css/main.css and views/index.html.",
+    goal: "Create this folder and file layout for my website project structure: public/css/main.css and views/index.html. Do not run it yet.",
     model: "fixture",
     providerName: "fixture-local",
     provider,
