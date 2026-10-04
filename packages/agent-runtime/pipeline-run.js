@@ -9,6 +9,7 @@ const {
 const { buildModelContext } = require("./pipeline-context");
 const { instructionsForMode } = require("./pipeline-instructions");
 const { runPipeline } = require("./pipeline-loop");
+const { isScaffoldOnlyRequest } = require("./intent");
 const {
   addRequirement: brainAddRequirement,
   addDecision: brainAddDecision,
@@ -328,6 +329,7 @@ async function createVerifier(run, context) {
       return { ok, items, evidence, summary: ok ? "Read-only answer grounded in workspace context" : "Read-only verification failed" };
     }
 
+    const scaffoldOnly = isScaffoldOnlyRequest(run.goal);
     const mutationIndexes = [];
     for (let index = 0; index < run.toolCalls.length; index += 1) {
       const call = run.toolCalls[index];
@@ -344,7 +346,7 @@ async function createVerifier(run, context) {
       });
     }
 
-    for (const path of run.filesChanged.slice(0, 8)) {
+    for (const path of run.filesChanged.slice(0, scaffoldOnly ? 40 : 8)) {
       if (!definitions.has("file.read")) break;
       const read = await callTool("file.read", { path }, "verification");
       const ok = Boolean(read && read.ok);
@@ -358,7 +360,7 @@ async function createVerifier(run, context) {
     }
 
     const codeChanged = run.filesChanged.some((path) => CODE_FILE.test(path));
-    if (codeChanged && definitions.has("diagnostics.run")) {
+    if (!scaffoldOnly && codeChanged && definitions.has("diagnostics.run")) {
       const diagnostics = await callTool("diagnostics.run", {}, "verification");
       const errors = diagnosticsErrors(diagnostics);
       const ok = Boolean(diagnostics && diagnostics.ok) && errors.length === 0;
@@ -376,7 +378,7 @@ async function createVerifier(run, context) {
     }
 
     const scripts = workspace && workspace.scripts && typeof workspace.scripts === "object" ? workspace.scripts : {};
-    if (codeChanged && scripts.test && definitions.has("tests.run")) {
+    if (!scaffoldOnly && codeChanged && scripts.test && definitions.has("tests.run")) {
       const tests = await callTool("tests.run", { command: "npm test" }, "verification");
       const ok = Boolean(tests && tests.ok);
       items.push({
@@ -421,7 +423,7 @@ async function createVerifier(run, context) {
     }
 
     const webChanged = run.filesChanged.some((path) => WEB_FILE.test(path));
-    if (webChanged && isWebGoal(run.goal) && latestMutation >= 0) {
+    if (!scaffoldOnly && webChanged && isWebGoal(run.goal) && latestMutation >= 0) {
       const required = isInteractiveGoal(run.goal) ? "browser.interact" : "browser.check";
       let observed = successfulCallAfter(run, latestMutation, new Set([required]));
       let replayed = null;
@@ -471,7 +473,9 @@ async function createVerifier(run, context) {
       ok,
       items,
       evidence: [...new Set(evidence)],
-      summary: ok ? "Verification passed" : "Verification found work still to do",
+      summary: ok
+        ? (scaffoldOnly ? "Project scaffold verified from the saved files" : "Verification passed")
+        : "Verification found work still to do",
     };
   };
 }
@@ -860,7 +864,8 @@ async function executePipelineRun(run, options, followUpQueue) {
     try {
       projectBrain = loadOrCreateProjectBrain(projectRoot, { originalPrompt: run.originalGoal || run.goal, projectId: projectRoot });
       const verified = Boolean(run.verification && run.verification.status === "passed");
-      if (verified && result.finalText) {
+      const durableCodingOutcome = run.mode === "controlled" && run.filesChanged.length > 0;
+      if (verified && durableCodingOutcome && result.finalText) {
         addVerifiedLesson(projectBrain, {
           text: String(result.finalText).slice(0, 1200),
           verified: true,
