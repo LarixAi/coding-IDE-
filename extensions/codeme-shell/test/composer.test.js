@@ -5,7 +5,7 @@ const path = require("path");
 const { ModelProvider, RunStore, ToolRegistry, ReadOnlyToolProvider, ControlledToolProvider } = require("../../../packages/agent-runtime");
 const { composerKeyAction, composerStage, composerActivity, compactTools, compactRunStream, linePreview, diffsByFile, formatGoal, droppedPaths, droppedPathValue, browserDropFiles, composerVoiceAction, normalizeComposerMode, agentModeFor, looksLikeWorkspaceEdit, isProgressTalk } = require("../composer-client");
 const { describeFileRead } = require("../image-meta");
-const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels, finalAssistantText } = require("../composer-session");
+const { ComposerSession, checkAttachment, importAttachment, workspaceRelative, listOllamaModels, finalAssistantText, modelTurnBudget } = require("../composer-session");
 const { OllamaModelProvider } = require("../../../packages/agent-runtime/model-provider");
 const { renderComposer } = require("../composer-view");
 const { ConversationStore } = require("../conversation-store");
@@ -324,6 +324,13 @@ async function main() {
   assert.ok(html.includes("#model { grid-column: 1 / 6; grid-row: 2;"));
   assert.ok(html.includes("#send { grid-column: 6; grid-row: 1; margin: 0; }"));
   assert.ok(html.includes("#history-toggle::before { content: \"☰\";"));
+  assert.ok(html.includes('<details class="changed-files" id="changed-files"></details>'));
+  assert.ok(html.includes("changedFiles.open = files.length <= 6"));
+  assert.ok(html.includes("changed-body"));
+  assert.ok(html.includes("rest = rest.slice(next);"));
+  assert.strictEqual(modelTurnBudget("code", "Create this folder and file layout for my website project structure"), 48);
+  assert.strictEqual(modelTurnBudget("code", "Fix the button and verify it"), 20);
+  assert.strictEqual(modelTurnBudget("ask", "Create this folder and file layout"), 12);
 
   const explorerDrop = droppedPaths({
     getData(name) {
