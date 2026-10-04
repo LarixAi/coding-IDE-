@@ -941,6 +941,293 @@ function renderComposer(nonce) {
         height: 34px;
       }
     }
+
+    /* Unified Composer V21 — compact Cursor-style control layout. */
+    .unified-composer {
+      position: relative;
+      min-height: 154px;
+      display: flex;
+      flex-direction: column;
+      overflow: visible;
+      border: 1px solid #434343;
+      border-radius: 17px;
+      background: #202020;
+      box-shadow: 0 10px 30px #0007;
+    }
+
+    .unified-composer textarea {
+      flex: 1 1 auto;
+      width: 100%;
+      min-height: 92px;
+      max-height: 170px;
+      padding: 17px 18px 8px;
+      border: 0;
+      outline: 0;
+      resize: none;
+      background: transparent;
+      color: #eeeeee;
+      font-size: 13px;
+      line-height: 1.48;
+    }
+
+    .unified-composer textarea::placeholder {
+      color: #707070;
+    }
+
+    .unified-composer .chips {
+      padding: 0 14px 4px;
+    }
+
+    /* Idle status should not consume a permanent row. Show it only when
+       CodeMe has something meaningful to report. */
+    .unified-composer .v19-compose-status {
+      position: absolute;
+      left: 14px;
+      bottom: 47px;
+      z-index: 2;
+      min-height: 0;
+      margin: 0;
+      padding: 0;
+      pointer-events: none;
+    }
+
+    .unified-composer .v19-compose-status.ready {
+      display: none;
+    }
+
+    .unified-composer .v19-state-pill {
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #252525;
+      font-size: 9px;
+      opacity: .92;
+    }
+
+    .unified-composer .unified-composer-bar {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      min-width: 0;
+      gap: 8px;
+      margin-top: auto;
+      padding: 5px 10px 10px;
+      border: 0;
+    }
+
+    .composer-left,
+    .composer-right {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .composer-left {
+      flex: 1 1 auto;
+      gap: 7px;
+      overflow: hidden;
+    }
+
+    .composer-right {
+      flex: 0 0 auto;
+      gap: 3px;
+      margin-left: auto;
+    }
+
+    .unified-composer .bar button,
+    .unified-composer .bar select {
+      height: 32px;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      box-shadow: none;
+      background: transparent;
+      color: #9e9e9e;
+    }
+
+    .unified-composer .bar button:hover,
+    .unified-composer .bar select:hover {
+      background: #2b2b2b;
+      color: #dddddd;
+    }
+
+    .unified-composer .bar select:focus,
+    .unified-composer .bar button:focus {
+      outline: none;
+      box-shadow: none;
+    }
+
+    .unified-composer #mode {
+      flex: 0 0 auto;
+      width: 92px;
+      max-width: 92px;
+      padding: 0 24px 0 12px;
+      border-radius: 17px;
+      appearance: auto;
+      background-color: #343434;
+      color: #d4d4d4;
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .unified-composer #model {
+      flex: 1 1 170px;
+      width: auto;
+      min-width: 90px;
+      max-width: 245px;
+      padding: 0 20px 0 4px;
+      appearance: auto;
+      background-color: transparent;
+      color: #d0d0d0;
+      font-size: 11px;
+    }
+
+    /* Model discovery already refreshes automatically. Keep the explicit
+       refresh control in the DOM for functionality/tests but out of the
+       primary composer row. */
+    .unified-composer #model-refresh {
+      display: none;
+    }
+
+    .unified-composer #hub-tools-button {
+      width: 32px;
+      padding: 0;
+      border-radius: 8px;
+      font-size: 0;
+    }
+
+    .unified-composer #hub-tools-button::before {
+      content: "•••";
+      font-size: 12px;
+      letter-spacing: 2px;
+      line-height: 1;
+    }
+
+    .unified-composer #attach,
+    .unified-composer #mic {
+      width: 34px;
+      padding: 0;
+      border-radius: 8px;
+      font-size: 0;
+    }
+
+    .unified-composer #attach svg,
+    .unified-composer #mic svg {
+      width: 19px;
+      height: 19px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+
+    .unified-composer #mic.on {
+      color: #e6958e;
+      background: #332827;
+    }
+
+    .unified-composer #send,
+    .unified-composer #stop {
+      flex: 0 0 36px;
+      width: 36px;
+      height: 36px;
+      margin: 0 0 0 2px;
+      padding: 0;
+      border-radius: 11px;
+    }
+
+    .unified-composer #send {
+      background: #ececec;
+      color: #111111;
+      font-size: 20px;
+      font-weight: 700;
+      box-shadow: 0 1px 0 #ffffff2b;
+    }
+
+    .unified-composer #send:hover {
+      background: #ffffff;
+      color: #111111;
+    }
+
+    .unified-composer #stop {
+      border: 1px solid #444444;
+      background: #2a2a2a;
+      color: #cccccc;
+    }
+
+    .unified-composer .hub-panel {
+      bottom: 45px;
+    }
+
+    @media (max-width: 470px) {
+      .unified-composer {
+        min-height: 142px;
+        border-radius: 15px;
+      }
+
+      .unified-composer textarea {
+        min-height: 82px;
+        padding: 14px 14px 7px;
+      }
+
+      .unified-composer .unified-composer-bar {
+        gap: 5px;
+        padding: 4px 7px 8px;
+      }
+
+      .composer-left {
+        gap: 4px;
+      }
+
+      .composer-right {
+        gap: 1px;
+      }
+
+      .unified-composer #mode {
+        width: 76px;
+        max-width: 76px;
+        padding-left: 9px;
+        padding-right: 18px;
+      }
+
+      .unified-composer #model {
+        min-width: 70px;
+        max-width: none;
+        padding-left: 2px;
+        padding-right: 16px;
+      }
+
+      .unified-composer #hub-tools-button {
+        display: none;
+      }
+
+      .unified-composer #attach,
+      .unified-composer #mic {
+        width: 30px;
+      }
+
+      .unified-composer #send,
+      .unified-composer #stop {
+        width: 34px;
+        height: 34px;
+      }
+
+      .unified-composer .v19-compose-status {
+        left: 11px;
+        bottom: 43px;
+      }
+    }
+
+    @media (max-width: 340px) {
+      .unified-composer #model {
+        max-width: 115px;
+      }
+
+      .unified-composer #mic {
+        display: none;
+      }
+    }
 </style>
 </head>
 <body>
@@ -1006,8 +1293,8 @@ function renderComposer(nonce) {
           <div class="composer-right">
             <button type="button" id="hub-tools-button" title="n8n MCP tools" aria-expanded="false">n8n</button>
             <button type="button" id="model-refresh" title="Refresh models" aria-label="Refresh models">↻</button>
-            <button type="button" id="attach" title="Add context" aria-label="Add context">＋</button>
-            <button type="button" id="mic" title="Voice to text" aria-pressed="false">Mic</button>
+            <button type="button" id="attach" title="Add context" aria-label="Add context"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 12.5l6.9-6.9a3.5 3.5 0 114.9 5L11 19.9a5 5 0 11-7.1-7.1l9-9a2.5 2.5 0 113.5 3.5L7.8 15.9a1 1 0 01-1.4-1.4l8-8"/></svg></button>
+            <button type="button" id="mic" title="Voice to text" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M6 11a6 6 0 0012 0M12 17v4M9 21h6"/></svg></button>
             <button type="button" id="stop" hidden title="Stop run" aria-label="Stop run">■</button>
             <button type="button" id="send" title="Send" aria-label="Send">↑</button>
           </div>
