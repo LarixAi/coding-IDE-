@@ -87,6 +87,12 @@
         "title": "CodeMe: Open Workspace File",
         "category": "CodeMe",
         "icon": "$(go-to-file)"
+      },
+      {
+        "command": "codeme.openV19FullIde",
+        "title": "CodeMe: Open V19 Full IDE Test",
+        "category": "CodeMe",
+        "icon": "$(layout)"
       }
     ],
     "configurationDefaults": {
@@ -115,6 +121,11 @@
           "type": "boolean",
           "default": false,
           "description": "Allow CodeMe to send attached image bytes to image-capable n8n MCP tools. Images are never sent to n8n when this is off."
+        },
+        "codeme.v19FullIde.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the experimental V19 full IDE shell automatically on startup. Disable this to return to the normal Code OSS shell."
         }
       }
     },
