@@ -36,6 +36,18 @@ assert.ok(html.includes("grid-template-columns: 28px 34px 34px minmax(0, 1fr) 28
 assert.ok(html.includes("#model { grid-column: 1 / 7; grid-row: 2;"));
 assert.ok(html.includes("V19 composer toolbar refinement"));
 assert.ok(html.includes("Cursor-style control strip"));
+assert.ok(html.includes("Unified Composer V20"));
+assert.ok(html.includes('class="composer unified-composer"'));
+assert.ok(html.includes('class="bar unified-composer-bar"'));
+assert.ok(html.includes('class="composer-left"'));
+assert.ok(html.includes('class="composer-right"'));
+assert.ok(html.includes(".unified-composer textarea"));
+assert.ok(html.includes(".unified-composer #mode"));
+assert.ok(html.includes(".unified-composer #model"));
+assert.ok(html.includes(".unified-composer #attach"));
+assert.ok(html.includes(".unified-composer #mic"));
+assert.ok(html.includes(".unified-composer #send"));
+
 assert.ok(html.includes("grid-template-columns: 30px 34px 38px 72px minmax(112px, 1fr) 28px 34px"));
 assert.ok(html.includes("@media (max-width: 470px)"));
 assert.ok(html.includes("#model {"));
