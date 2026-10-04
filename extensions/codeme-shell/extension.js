@@ -20,6 +20,7 @@ const { DebugToolProvider } = require("./debug-tool-provider");
 const { VerificationToolProvider } = require("./verification-tool-provider");
 const { MultitaskController } = require("./multitask-controller");
 const { SettingsPanel } = require("./settings-panel");
+const { V19NativeWorkbench } = require("./v19-native-workbench");
 const { CodeMeSettingsStore } = require("./settings-store");
 const { UniversalMcpRegistry } = require("./universal-mcp");
 const { loadProjectBrain, brainPath } = require("../../packages/agent-runtime/project-brain-store");
@@ -53,6 +54,12 @@ function activate(context) {
   };
   const settingsStore = new CodeMeSettingsStore(context);
   const composer = new ComposerViewProvider(context, state, settingsStore);
+  const v19NativeWorkbench = new V19NativeWorkbench(context);
+  const originalComposerPost = composer.post.bind(composer);
+  composer.post = (snapshot) => {
+    originalComposerPost(snapshot);
+    v19NativeWorkbench.update(snapshot);
+  };
   context.subscriptions.push(
     composer.terminalObserver,
     {
@@ -98,6 +105,9 @@ function activate(context) {
   );
   applyPreferredSettings();
   arrangeShell(welcome, emptyEditor);
+  setTimeout(() => {
+    v19NativeWorkbench.applyLayout().catch(() => {});
+  }, 300);
 
   const connection = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   connection.name = "CodeMe model connection";
