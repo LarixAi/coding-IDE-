@@ -566,100 +566,139 @@ function renderComposer(nonce) {
 
     /* V19 composer toolbar refinement */
     .composer {
-      border-radius: 11px;
-      box-shadow: 0 8px 24px #0006;
+      border-radius: 12px;
+      background: #232323;
+      box-shadow: 0 10px 28px #0007;
     }
     .composer textarea {
-      min-height: 62px;
-      padding: 12px 12px 9px;
+      min-height: 64px;
+      padding: 13px 13px 8px;
       line-height: 1.45;
     }
+
+    /* Cursor-style control strip: utility controls left, model controls center,
+       one clear primary action at the right. */
     .bar {
       display: grid;
-      grid-template-columns: 32px 44px 44px 86px minmax(118px, 1fr) 30px 36px;
+      grid-template-columns: 30px 34px 38px 72px minmax(112px, 1fr) 28px 34px;
       align-items: center;
-      gap: 5px;
-      padding: 7px 8px 8px;
-      border-top: 1px solid #333333;
+      gap: 4px;
+      padding: 6px 8px 8px;
+      border-top: 0;
     }
     .bar button,
     .bar select {
-      width: 100%;
       min-width: 0;
-      height: 30px;
-      padding: 0 8px;
-      border: 1px solid #3a3a3a;
+      height: 28px;
+      border: 0;
       border-radius: 6px;
-      background: #292929;
-      color: #bdbdbd;
+      background: transparent;
+      color: #9a9a9a;
       font-size: 10px;
+      box-shadow: none;
     }
+    .bar button:hover,
+    .bar select:hover {
+      background: #2d2d2d;
+      color: #dddddd;
+    }
+
     #attach {
-      width: 32px;
+      width: 30px;
       padding: 0;
-      font-size: 17px;
+      color: #a7a7a7;
+      font-size: 18px;
     }
+
     #mic {
-      width: 44px;
-      padding: 0 6px;
+      width: 34px;
+      padding: 0;
+      font-size: 0;
     }
+    #mic::before {
+      content: "Mic";
+      font-size: 9px;
+    }
+
     #hub-tools-button {
-      width: 44px;
-      padding: 0 6px;
+      width: 38px;
+      padding: 0;
+      color: #8f9aa4;
+      font-size: 9px;
     }
+
     #mode {
-      width: 86px;
+      width: 72px;
       max-width: none;
-      padding-left: 10px;
+      padding: 0 20px 0 7px;
+      background-color: transparent;
+      color: #c4c4c4;
+      font-weight: 500;
     }
+
     #model {
       width: 100%;
       max-width: none;
       min-width: 0;
-      padding-left: 10px;
+      padding: 0 20px 0 7px;
+      background-color: transparent;
+      color: #9d9d9d;
     }
+
     #model-refresh {
-      width: 30px;
-      height: 30px;
+      width: 28px;
       padding: 0;
-      font-size: 15px;
+      color: #858585;
+      font-size: 14px;
     }
+
     #send,
     #stop {
-      width: 36px;
-      height: 30px;
+      width: 34px;
+      height: 34px;
       padding: 0;
       margin: 0;
+      border-radius: 9px;
     }
+
     #send {
-      border-color: #e5e5e5;
-      border-radius: 7px;
-      background: #e5e5e5;
+      align-self: end;
+      border: 0;
+      background: #e7e7e7;
       color: #111111;
-      font-size: 18px;
-      line-height: 1;
+      font-size: 19px;
+      font-weight: 700;
+      box-shadow: 0 1px 0 #ffffff33;
     }
     #send:hover {
-      background: #f2f2f2;
+      background: #ffffff;
       color: #111111;
     }
+
     #stop {
-      border-color: #454545;
-      background: #2c2c2c;
+      border: 1px solid #414141;
+      background: #2a2a2a;
+      color: #bbbbbb;
+    }
+
+    /* Give the toolbar a subtle visual split without boxing every control. */
+    #mode {
+      border-left: 1px solid #343434;
+      border-radius: 0 6px 6px 0;
     }
 
     @media (max-width: 470px) {
       .composer textarea {
-        min-height: 58px;
+        min-height: 60px;
       }
       .bar {
-        grid-template-columns: 32px 42px 42px minmax(76px, 1fr) 30px 36px;
-        grid-template-rows: 30px 30px;
-        gap: 5px;
+        grid-template-columns: 30px 34px 38px minmax(68px, 1fr) 28px 34px;
+        grid-template-rows: 28px 28px;
+        gap: 4px;
       }
       #attach { grid-column: 1; grid-row: 1; }
-      #mic { grid-column: 2; grid-row: 1; width: 42px; }
-      #hub-tools-button { grid-column: 3; grid-row: 1; width: 42px; }
+      #mic { grid-column: 2; grid-row: 1; width: 34px; }
+      #hub-tools-button { grid-column: 3; grid-row: 1; width: 38px; }
       #mode { grid-column: 4; grid-row: 1; width: 100%; }
       #model-refresh { grid-column: 5; grid-row: 1; }
       #send, #stop { grid-column: 6; grid-row: 1; }
@@ -667,9 +706,12 @@ function renderComposer(nonce) {
         grid-column: 1 / 7;
         grid-row: 2;
         width: 100%;
+        padding-left: 8px;
+        border-top: 1px solid #303030;
+        border-radius: 0;
       }
       .hub-panel {
-        bottom: 72px;
+        bottom: 66px;
       }
     }
 
