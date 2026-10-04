@@ -314,6 +314,11 @@ async function main() {
   assert.ok(html.includes("Verification issue"));
   assert.ok(!html.includes("qwen3.5:9b"));
   assert.ok(!html.includes("workbench.action.chat.open"));
+  assert.ok(html.includes("@media (max-width: 380px)"));
+  assert.ok(html.includes("grid-template-columns: 26px 30px 30px minmax(0, 1fr) 24px 24px"));
+  assert.ok(html.includes("#model { grid-column: 1 / 6; grid-row: 2;"));
+  assert.ok(html.includes("#send { grid-column: 6; grid-row: 1; margin: 0; }"));
+  assert.ok(html.includes("#history-toggle::before { content: \"☰\";"));
 
   const explorerDrop = droppedPaths({
     getData(name) {
