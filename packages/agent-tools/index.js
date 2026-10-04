@@ -5,6 +5,9 @@ const TOOLS = {
   "file.read": ["path"],
   "file.write": ["path", "contents"],
   "file.patch": ["path", "oldText", "newText"],
+  "document.read": ["path"],
+  "document.create": ["path", "contents"],
+  "document.edit": ["path", "oldText", "newText"],
   "repo.search": ["query"],
   "terminal.run": ["command"],
   "sandbox.run": ["command"],
@@ -142,6 +145,12 @@ async function dispatch(host, tool, args) {
       return host.writeFile(args.path, args.contents);
     case "file.patch":
       return host.patchFile(args.path, args.oldText, args.newText);
+    case "document.read":
+      return host.readDocument(args.path);
+    case "document.create":
+      return host.createDocument(args.path, args.contents, { title: args.title, overwrite: args.overwrite === true });
+    case "document.edit":
+      return host.editDocument(args.path, args.oldText, args.newText);
     case "repo.search":
       return host.search(args.query);
     case "terminal.run":
@@ -175,8 +184,8 @@ async function dispatch(host, tool, args) {
   }
 }
 
-const READ_ONLY_TOOLS = ["workspace.inspect", "file.read", "repo.search", "process.status", "process.logs", "git.status", "git.diff", "diagnostics.run", "browser.check", "dir.list"];
-const CONTROLLED_TOOLS = ["workspace.inspect", "file.read", "file.write", "file.patch", "repo.search", "terminal.run", "sandbox.run", "process.start", "process.status", "process.logs", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "browser.interact", "dir.create", "dir.list"];
+const READ_ONLY_TOOLS = ["workspace.inspect", "file.read", "document.read", "repo.search", "process.status", "process.logs", "git.status", "git.diff", "diagnostics.run", "browser.check", "dir.list"];
+const CONTROLLED_TOOLS = ["workspace.inspect", "file.read", "file.write", "file.patch", "document.read", "document.create", "document.edit", "repo.search", "terminal.run", "sandbox.run", "process.start", "process.status", "process.logs", "diagnostics.run", "tests.run", "git.status", "git.diff", "browser.check", "browser.interact", "dir.create", "dir.list"];
 
 function validateProcessCommand(command) {
   const text = typeof command === "string" ? command.trim() : "";
