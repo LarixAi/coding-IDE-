@@ -29,10 +29,12 @@ const {
   runSkill,
 } = require("./skills");
 
-const MUTATION_TOOLS = new Set(["file.write", "file.patch", "dir.create"]);
+const MUTATION_TOOLS = new Set(["file.write", "file.patch", "document.create", "document.edit", "dir.create"]);
 const READ_ONLY_BLOCKED = new Set([
   "file.write",
   "file.patch",
+  "document.create",
+  "document.edit",
   "dir.create",
   "terminal.run",
   "sandbox.run",
@@ -96,7 +98,7 @@ function summarize(result) {
 
 function appliedMutation(call) {
   if (!call || !MUTATION_TOOLS.has(call.name) || !call.result || !call.result.ok) return false;
-  if (call.name === "file.write" || call.name === "file.patch") {
+  if (["file.write", "file.patch", "document.create", "document.edit"].includes(call.name)) {
     const data = call.result.data;
     if (data && typeof data === "object" && data.changed === false) return false;
   }
@@ -124,11 +126,11 @@ function recordTool(run, call, result, directedBy) {
     ...(directedBy ? { directedBy } : {}),
   });
 
-  if (appliedMutation(record) && (call.name === "file.write" || call.name === "file.patch")) {
+  if (appliedMutation(record) && ["file.write", "file.patch", "document.create", "document.edit"].includes(call.name)) {
     const path = String(call.args && call.args.path || "");
     if (path && !run.filesChanged.includes(path)) run.filesChanged.push(path);
   }
-  if (result && result.ok && call.name === "file.read") {
+  if (result && result.ok && (call.name === "file.read" || call.name === "document.read")) {
     const path = String(call.args && call.args.path || "");
     if (path && run.progress && !run.progress.filesRead.includes(path)) run.progress.filesRead.push(path);
   }
@@ -137,6 +139,12 @@ function recordTool(run, call, result, directedBy) {
 
 function toolNames(registry) {
   return new Set((registry && registry.definitions ? registry.definitions() : []).map((tool) => tool.name));
+}
+
+function readToolForPath(definitions, filePath) {
+  return /\\.docx$/i.test(String(filePath || "")) && definitions.has("document.read")
+    ? "document.read"
+    : "file.read";
 }
 
 async function safeContextCall(registry, name, args) {
@@ -165,7 +173,9 @@ async function loadAttachmentContext(registry, attachments) {
   const list = [];
   for (const item of (attachments || []).slice(0, 6)) {
     if (item.kind === "image" || item.kind === "pdf") continue;
-    const result = await safeContextCall(registry, "file.read", { path: item.path });
+    const definitions = toolNames(registry);
+    const readTool = readToolForPath(definitions, item.path);
+    const result = await safeContextCall(registry, readTool, { path: item.path });
     const contents = result && result.ok && result.data && result.data.contents;
     if (typeof contents === "string" && contents) {
       list.push({ path: item.path, contents: contents.slice(0, 8000) });
@@ -310,8 +320,9 @@ async function createVerifier(run, context) {
     }
 
     for (const path of run.filesChanged.slice(0, 8)) {
-      if (!definitions.has("file.read")) break;
-      const read = await callTool("file.read", { path }, "verification");
+      const readTool = readToolForPath(definitions, path);
+      if (!definitions.has(readTool)) break;
+      const read = await callTool(readTool, { path }, "verification");
       const ok = Boolean(read && read.ok);
       items.push({
         id: "readback:" + path,
@@ -319,7 +330,7 @@ async function createVerifier(run, context) {
         ok,
         detail: ok ? "Saved contents can be read back" : summarize(read),
       });
-      if (ok) evidence.push("file.read");
+      if (ok) evidence.push(readTool);
     }
 
     const codeChanged = run.filesChanged.some((path) => CODE_FILE.test(path));
@@ -778,8 +789,10 @@ async function executePipelineRun(run, options, followUpQueue) {
           tags: ["run:" + run.id],
         });
       }
+      const readDefinitions = toolNames(registry);
       for (const filePath of run.filesChanged.slice(0, 30)) {
-        const read = await safeContextCall(registry, "file.read", { path: filePath });
+        const readTool = readToolForPath(readDefinitions, filePath);
+        const read = await safeContextCall(registry, readTool, { path: filePath });
         const contents = read && read.ok && read.data && typeof read.data.contents === "string" ? read.data.contents : "";
         if (!contents) continue;
         rememberFile(projectBrain, {
