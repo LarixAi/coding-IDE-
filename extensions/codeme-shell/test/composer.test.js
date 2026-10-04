@@ -28,6 +28,9 @@ class ScriptedModel extends ModelProvider {
     }
     const step = this.steps.shift();
     if (!step) throw Object.assign(new Error("no decision"), { code: "model_disconnected" });
+    if (step.fail) {
+      throw Object.assign(new Error("scripted test failure"), { code: "scripted_failure" });
+    }
     if (step.wait) {
       await new Promise((resolve, reject) => {
         const fail = () => reject(Object.assign(new Error("model call cancelled"), { code: "cancelled" }));
@@ -306,7 +309,9 @@ async function main() {
   assert.ok(html.includes('id="history-toggle"'));
   assert.ok(html.includes('id="history-panel"'));
   assert.ok(html.includes("Chat history"));
-  assert.ok(html.includes("hasFinalAssistant"));
+  assert.ok(html.includes("deferredFinal"));
+  assert.ok(html.includes("function renderThread(items, deferLastAssistant)"));
+  assert.ok(html.includes("if (deferredFinal)"));
   assert.ok(html.includes("clearSendPending"));
   assert.ok(html.includes('message.type === "submitting"'));
   assert.ok(html.includes('message.type === "accepted" && current(message)'));
@@ -470,14 +475,21 @@ async function main() {
   await hanging.session.refreshModels();
   const live = await hanging.session.submit("wait", 2);
   assert.strictEqual(live.ok, true);
-  const busy = await hanging.session.submit("again", 3);
-  assert.strictEqual(busy.code, "busy");
-  assert.strictEqual(hanging.session.epoch, 2);
+  const followUp = await hanging.session.submit("again", 3);
+  assert.strictEqual(followUp.ok, true);
+  assert.strictEqual(followUp.followUp, true);
+  assert.strictEqual(followUp.requestId, live.requestId);
+  assert.strictEqual(followUp.runId, live.runId);
+  assert.strictEqual(hanging.session.epoch, 3);
+  assert.ok(hanging.session.thread.some((item) => item.role === "user" && item.text === "again"));
   const cancelled = hanging.session.cancel();
   assert.strictEqual(cancelled.ok, true);
   await waitFor(hanging.session, (item) => item.stage === "Cancelled" && !item.running);
 
-  const failing = sessionFor(root, [], models);
+  const failing = sessionFor(root, [
+    { fail: true },
+    { fail: true },
+  ], models);
   await failing.session.refreshModels();
   const failed = await failing.session.submit("break");
   assert.strictEqual(failed.ok, true);
@@ -719,7 +731,20 @@ async function main() {
   assert.strictEqual(finished.ok, true);
   await waitFor(reread.session, (item) => item.stage === "Complete" && !item.running);
   const rereadRun = JSON.parse(fs.readFileSync(path.join(root, "runs", `${finished.runId}.json`), "utf8"));
-  assert.ok(reread.provider.calls.some((call) => call.messages.some((message) => String(message.content).includes("Write the findings now"))));
+  assert.ok(
+    reread.provider.calls.some((call) =>
+      call.messages.some((message) =>
+        String(message.content).includes("ASK MODE FINAL ANSWER.")
+      )
+    )
+  );
+  assert.ok(
+    rereadRun.events.some((item) =>
+      item.type === "tool_repeat_suppressed"
+      && item.call
+      && item.call.name === "file.read"
+    )
+  );
   assert.strictEqual(rereadRun.lifecycle, "completed");
 
   const png = Buffer.from(
