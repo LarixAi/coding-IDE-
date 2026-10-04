@@ -14,6 +14,7 @@ const STOPPED = new Set(["completed", "cancelled", "failed", "awaiting_user"]);
 const READ_ONLY_COMPOSER_TOOLS = new Set([
   "workspace.inspect",
   "file.read",
+  "document.read",
   "repo.search",
   "dir.list",
   "git.status",
@@ -1213,7 +1214,7 @@ function wasReadAfterMutation(run, file) {
   for (let index = 0; index < calls.length; index += 1) {
     const call = calls[index];
     const path = String(call.args && call.args.path || "").replace(/\\/g, "/");
-    if ((call.name === "file.write" || call.name === "file.patch") && call.result && call.result.ok && path === file) {
+    if (["file.write", "file.patch", "document.create", "document.edit"].includes(call.name) && call.result && call.result.ok && path === file) {
       mutationIndex = index;
     }
   }
@@ -1221,7 +1222,7 @@ function wasReadAfterMutation(run, file) {
   for (let index = mutationIndex + 1; index < calls.length; index += 1) {
     const call = calls[index];
     const path = String(call.args && call.args.path || "").replace(/\\/g, "/");
-    if (call.name === "file.read" && call.result && call.result.ok && path === file) return true;
+    if ((call.name === "file.read" || call.name === "document.read") && call.result && call.result.ok && path === file) return true;
   }
   return false;
 }
@@ -1325,7 +1326,7 @@ function processIsRunningResult(call) {
 
 function successfulWrites(run) {
   return ((run && run.toolCalls) || []).filter((call) => (
-    (call.name === "file.write" || call.name === "file.patch")
+    ["file.write", "file.patch", "document.create", "document.edit"].includes(call.name)
     && call.result
     && call.result.ok
   ));
@@ -1663,8 +1664,10 @@ async function maybeReadBackRepairedFiles(run, registry, store) {
   if (!missing.length) return false;
 
   let readAny = false;
+  const names = new Set(registry.definitions ? registry.definitions().map((tool) => tool.name) : []);
   for (const file of missing) {
-    const call = { name: "file.read", args: { path: file } };
+    const readName = /\.docx$/i.test(file) && names.has("document.read") ? "document.read" : "file.read";
+    const call = { name: readName, args: { path: file } };
     touch(run, "executing_tool", call.name);
     run.inFlight = {
       kind: "tool",
@@ -3117,7 +3120,7 @@ function touch(run, lifecycle, detail) {
 }
 
 function recordChange(run, call, result) {
-  if (result.ok && (call.name === "file.write" || call.name === "file.patch") && call.args && call.args.path) {
+  if (result.ok && ["file.write", "file.patch", "document.create", "document.edit"].includes(call.name) && call.args && call.args.path) {
     if (run.progress) run.progress.writeNow = false;
     addChanged(run, call.args.path);
     setPlan(run, "edit", "in_progress");
