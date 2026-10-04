@@ -1020,7 +1020,7 @@ function renderComposer(nonce) {
 
         const row = document.createElement("details");
         row.className = "tool-card " + (item.status || "");
-        const hasPreview = Boolean((item.name === "file.write" || item.name === "file.patch") && item.preview && item.preview.lines && item.preview.lines.length);
+        const hasPreview = Boolean(["file.write", "file.patch", "document.create", "document.edit"].includes(item.name) && item.preview && item.preview.lines && item.preview.lines.length);
         row.open = item.status === "failed";
 
         const summary = document.createElement("summary");
@@ -1033,7 +1033,7 @@ function renderComposer(nonce) {
         summary.appendChild(kind);
         summary.appendChild(label);
 
-        if ((item.name === "file.write" || item.name === "file.patch") && item.preview) {
+        if (["file.write", "file.patch", "document.create", "document.edit"].includes(item.name) && item.preview) {
           const stats = document.createElement("span");
           stats.className = "tool-stats";
           const add = document.createElement("span");
@@ -1051,7 +1051,7 @@ function renderComposer(nonce) {
         action.type = "button";
         action.className = "tool-action";
         let actionMessage = null;
-        if (item.path && /^file\./.test(String(item.name || ""))) {
+        if (item.path && /^(?:file|document)\./.test(String(item.name || ""))) {
           action.textContent = "Open";
           action.title = "Open in the real editor";
           actionMessage = { type: "open-file", path: item.path };
@@ -1140,8 +1140,8 @@ function renderComposer(nonce) {
       }
     }
     function toolKind(item) {
-      if (item.name === "file.read" || item.name === "dir.list" || item.name === "workspace.inspect" || item.name === "repo.search") return "›";
-      if (item.name === "file.write" || item.name === "file.patch" || item.name === "dir.create") return "<>";
+      if (item.name === "file.read" || item.name === "document.read" || item.name === "dir.list" || item.name === "workspace.inspect" || item.name === "repo.search") return "›";
+      if (item.name === "file.write" || item.name === "file.patch" || item.name === "document.create" || item.name === "document.edit" || item.name === "dir.create") return "<>";
       if (item.name === "terminal.run" || item.name === "tests.run" || item.name === "sandbox.run") return "$";
       if (item.name === "process.start" || item.name === "process.status" || item.name === "process.logs") return "◆";
       if (item.name === "browser.check" || item.name === "browser.interact") return "◉";
@@ -1156,6 +1156,9 @@ function renderComposer(nonce) {
       if (item.name === "dir.list") return (live ? "Listing " : "Listed ") + (item.path || "workspace");
       if (item.name === "dir.create") return (live ? "Creating " : "Created ") + (item.path || "folder");
       if (item.name === "file.read") return (live ? "Reading " : "Read ") + (item.path || "file");
+      if (item.name === "document.read") return (live ? "Reading document " : "Read document ") + (item.path || "document");
+      if (item.name === "document.create") return (live ? "Creating document " : "Created document ") + (item.path || "document");
+      if (item.name === "document.edit") return (live ? "Editing document " : "Edited document ") + (item.path || "document");
       if (item.name === "file.write" || item.name === "file.patch") return (live ? "Editing " : "Edited ") + (item.path || "file");
       if (item.name === "repo.search") return (live ? "Searching " : "Searched ") + (item.path || "workspace");
       if (item.name === "tests.run") return live ? "Running tests" : "Tests";
