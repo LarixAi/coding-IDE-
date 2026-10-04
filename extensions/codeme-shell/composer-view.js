@@ -144,8 +144,14 @@ function renderComposer(nonce) {
     footer { flex-shrink: 0; padding: 0 7px 7px; background: linear-gradient(to bottom, #191c2100, #191c21 10px); }
     .changed-files { display: none; margin: 0 1px 6px; padding-top: 6px; border-top: 1px solid #272c33; }
     .changed-files.on { display: block; }
-    .changed-head { display: flex; align-items: center; justify-content: space-between; min-height: 20px; color: #909aa8; font-size: 10px; }
-    .changed-hint { color: #687382; }
+    .changed-head { display: flex; align-items: center; gap: 6px; min-height: 22px; padding: 0 2px; cursor: pointer; list-style: none; color: #909aa8; font-size: 10px; user-select: none; }
+    .changed-head::-webkit-details-marker { display: none; }
+    .changed-head:hover { color: #b8c0cb; }
+    .changed-chevron { display: inline-block; width: 12px; color: #687382; transform: rotate(0deg); transition: transform 90ms ease; }
+    .changed-files[open] .changed-chevron { transform: rotate(90deg); }
+    .changed-count { flex: 1; min-width: 0; }
+    .changed-hint { color: #687382; white-space: nowrap; }
+    .changed-body { max-height: min(42vh, 360px); overflow: auto; padding-top: 2px; }
     .changed-row { margin: 0; border-radius: 4px; }
     .changed-row summary { display: flex; align-items: center; gap: 5px; min-height: 22px; padding: 0 2px; list-style: none; cursor: pointer; color: #aeb7c3; font-size: 10px; }
     .changed-row summary::-webkit-details-marker { display: none; }
@@ -263,7 +269,7 @@ function renderComposer(nonce) {
       <div class="result" id="result"></div>
     </div>
     <footer>
-      <div class="changed-files" id="changed-files"></div>
+      <details class="changed-files" id="changed-files"></details>
       <p class="notice" id="notice"></p>
       <div class="chips" id="chips"></div>
       <div class="composer" id="drop">
@@ -1227,16 +1233,26 @@ function renderComposer(nonce) {
       changedFiles.classList.toggle("on", files.length > 0);
       if (!files.length) return;
 
-      const head = document.createElement("div");
+      const head = document.createElement("summary");
       head.className = "changed-head";
+      const chevron = document.createElement("span");
+      chevron.className = "changed-chevron";
+      chevron.textContent = "›";
       const count = document.createElement("span");
+      count.className = "changed-count";
       count.textContent = files.length + (files.length === 1 ? " file changed" : " files changed");
       const hint = document.createElement("span");
       hint.className = "changed-hint";
-      hint.textContent = "Review here · open in editor";
+      hint.textContent = files.length > 6 ? "Expand · open in editor" : "Review · open in editor";
+      head.appendChild(chevron);
       head.appendChild(count);
       head.appendChild(hint);
       changedFiles.appendChild(head);
+      changedFiles.open = files.length <= 6;
+
+      const body = document.createElement("div");
+      body.className = "changed-body";
+      changedFiles.appendChild(body);
 
       for (const file of files) {
         const row = document.createElement("details");
@@ -1280,7 +1296,7 @@ function renderComposer(nonce) {
           pre.textContent = file.diff;
           row.appendChild(pre);
         }
-        changedFiles.appendChild(row);
+        body.appendChild(row);
       }
     }
     function appendInlineMarkdown(parent, value) {
@@ -1294,7 +1310,10 @@ function renderComposer(nonce) {
         if (boldAt >= 0 && (codeAt < 0 || boldAt < codeAt)) { next = boldAt; kind = "bold"; }
         else if (codeAt >= 0) { next = codeAt; kind = "code"; }
         if (next < 0) { parent.appendChild(document.createTextNode(rest)); break; }
-        if (next > 0) parent.appendChild(document.createTextNode(rest.slice(0, next)));
+        if (next > 0) {
+          parent.appendChild(document.createTextNode(rest.slice(0, next)));
+          rest = rest.slice(next);
+        }
         if (kind === "bold") {
           const end = rest.indexOf("**", 2);
           if (end < 0) { parent.appendChild(document.createTextNode(rest)); break; }
