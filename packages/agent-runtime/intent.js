@@ -69,9 +69,12 @@ function isScaffoldOnlyRequest(goal) {
   const scaffold = /\b(?:file|folder|directory|project)\s+(?:and\s+(?:file|folder)\s+)?(?:layout|structure|tree)\b|\b(?:scaffold|skeleton)\b/.test(text)
     || /\bcreate\s+(?:this|the|a)\s+(?:folder|file|project)(?:\s+and\s+(?:folder|file))?\s+(?:layout|structure)\b/.test(text);
   if (!scaffold) return false;
-  const executableOutcome = /\b(?:run|start|launch|serve|preview|verify|test|working|functional|populate|deploy)\b/.test(text)
-    || /\bopen\s+(?:it\s+)?in\s+(?:the\s+)?browser\b/.test(text)
-    || /\bbuild\s+(?:the|a|an)\s+(?:site|website|app|application)\b/.test(text);
+  const executionText = text
+    .replace(/\b(?:do\s+not|don[\'’]?t|dont|never)\s+(?:run|start|launch|serve|preview|verify|test|deploy)(?:\s+it)?(?:\s+yet)?\b/g, " ")
+    .replace(/\bwithout\s+(?:running|starting|launching|serving|previewing|verifying|testing|deploying)\b/g, " ");
+  const executableOutcome = /\b(?:run|start|launch|serve|preview|verify|test|working|functional|populate|deploy)\b/.test(executionText)
+    || /\bopen\s+(?:it\s+)?in\s+(?:the\s+)?browser\b/.test(executionText)
+    || /\bbuild\s+(?:the|a|an)\s+(?:site|website|app|application)\b/.test(executionText);
   return !executableOutcome;
 }
 
