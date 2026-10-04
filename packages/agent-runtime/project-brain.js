@@ -61,6 +61,16 @@ function invalidateChangedFiles(brain, currentHashes = {}, now) {
   }
   brain.updatedAt = nowIso(now); return brain;
 }
+function recallableLesson(item) {
+  if (!item) return false;
+  const tags = Array.isArray(item.tags) ? item.tags.map(String) : [];
+  const isAutomaticRunAnswer = tags.some((tag) => tag.startsWith("run:"));
+  if (!isAutomaticRunAnswer) return true;
+  const evidence = new Set((Array.isArray(item.evidence) ? item.evidence : []).map(String));
+  return ["memory.save", "file.write", "file.patch", "tests.run", "browser.check", "browser.interact"]
+    .some((name) => evidence.has(name));
+}
+
 function retrieveProjectContext(brain, goal, options = {}) {
   if (!brain) return { identity:null, requirements:[], decisions:[], lessons:[], files:[], workState:null };
   const limit = Number.isFinite(options.limitPerType) ? options.limitPerType : 8;
@@ -72,7 +82,7 @@ function retrieveProjectContext(brain, goal, options = {}) {
     identity: brain.identity || null,
     requirements: rank(brain.requirements || []),
     decisions: rank(brain.decisions || []),
-    lessons: rank(brain.lessons || []),
+    lessons: rank((brain.lessons || []).filter(recallableLesson)),
     files: rank(Object.values(brain.files || {}).filter(x => x.status !== "stale")),
     workState: brain.workState || null,
   };
@@ -81,7 +91,7 @@ function projectBrainText(context) {
   if (!context) return "";
   const lines = [];
   if (context.identity) lines.push("Project identity: " + context.identity.purpose + (context.identity.domain ? " (" + context.identity.domain + ")" : ""));
-  if (context.requirements?.length) lines.push("Relevant requirements:\n" + context.requirements.map(x => "- [" + x.status + "] " + x.text).join("\n"));
+  if (context.requirements?.length) lines.push("Relevant background requirements (do not expand the current request; the latest user task is authoritative):\n" + context.requirements.map(x => "- [" + x.status + "] " + x.text).join("\n"));
   if (context.decisions?.length) lines.push("Relevant decisions:\n" + context.decisions.map(x => "- " + x.title + (x.rationale ? " — " + x.rationale : "")).join("\n"));
   if (context.lessons?.length) lines.push("Verified lessons:\n" + context.lessons.map(x => "- " + x.text).join("\n"));
   if (context.files?.length) lines.push("Relevant file knowledge (read current source before editing):\n" + context.files.map(x => "- " + x.path + ": " + x.summary).join("\n"));
