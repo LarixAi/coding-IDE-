@@ -990,6 +990,7 @@ function fileType(name) {
     svg: "image/svg+xml",
     bmp: "image/bmp",
     pdf: "application/pdf",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     txt: "text/plain",
     py: "text/x-python",
     html: "text/html",
@@ -1325,7 +1326,7 @@ class ComposerViewProvider {
       filters: [
         { name: "All files", extensions: ["*"] },
         { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
-        { name: "Documents", extensions: ["md", "txt", "pdf", "json", "html", "css", "js", "ts"] },
+        { name: "Documents", extensions: ["docx", "md", "txt", "pdf", "json", "html", "css", "js", "ts"] },
       ],
     });
     this.attachFiles((picked || []).map((uri) => ({ path: uri.toString() })));
