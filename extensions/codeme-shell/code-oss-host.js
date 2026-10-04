@@ -1,5 +1,6 @@
 const vscode = require("vscode");
 const cp = require("child_process");
+const path = require("path");
 const { execute, executeReadOnly } = require("../../packages/agent-tools");
 const { createPreviewRunner, resolveOwnedPreviewUrl } = require("./preview-runner");
 const { createPreviewSessionManager } = require("./preview-session-manager");
@@ -7,6 +8,7 @@ const { createBrowserInteractionRunner } = require("./browser-interaction-runner
 const { createSandboxRunner } = require("./sandbox-runner");
 const { describeFileRead } = require("./image-meta");
 const { inspectWorkspace } = require("./workspace-inspector");
+const { readDocument: decodeDocument, createDocument: buildDocument, editDocument: patchDocument } = require("./document-service");
 
 const preview = createPreviewRunner(vscode);
 const browserInteraction = createBrowserInteractionRunner();
@@ -102,6 +104,63 @@ async function patchFile(filePath, oldText, newText) {
     after: newText,
     changed,
     noOp: !changed,
+  };
+}
+
+async function readDocument(filePath) {
+  const uri = vscode.Uri.joinPath(workspaceFolder().uri, filePath);
+  const bytes = Buffer.from(await vscode.workspace.fs.readFile(uri));
+  return decodeDocument(filePath, bytes);
+}
+
+async function ensureDocumentParent(filePath) {
+  const normalized = String(filePath || "").replace(/\\/g, "/");
+  const parent = path.posix.dirname(normalized);
+  if (parent && parent !== ".") await createDirectory(parent);
+}
+
+async function createDocument(filePath, contents, options = {}) {
+  const uri = vscode.Uri.joinPath(workspaceFolder().uri, filePath);
+  let before = null;
+  try {
+    before = Buffer.from(await vscode.workspace.fs.readFile(uri));
+  } catch {
+    before = null;
+  }
+  if (before !== null && !options.overwrite) {
+    throw Object.assign(
+      new Error("Document already exists: " + filePath + ". Read it first, then use document.edit or set overwrite=true."),
+      { code: "document_exists" },
+    );
+  }
+  const built = buildDocument(filePath, contents, options);
+  await ensureDocumentParent(filePath);
+  const changed = before === null || !before.equals(built.bytes);
+  if (changed) await vscode.workspace.fs.writeFile(uri, built.bytes);
+  return {
+    path: filePath,
+    format: built.format,
+    type: built.type,
+    bytes: built.bytes.length,
+    changed,
+    noOp: !changed,
+    created: before === null,
+  };
+}
+
+async function editDocument(filePath, oldText, newText) {
+  const uri = vscode.Uri.joinPath(workspaceFolder().uri, filePath);
+  const before = Buffer.from(await vscode.workspace.fs.readFile(uri));
+  const edited = patchDocument(filePath, before, oldText, newText);
+  if (edited.changed) await vscode.workspace.fs.writeFile(uri, edited.bytes);
+  return {
+    path: filePath,
+    format: edited.format,
+    type: edited.type,
+    bytes: edited.bytes.length,
+    replacements: edited.replacements,
+    changed: edited.changed,
+    noOp: !edited.changed,
   };
 }
 
@@ -354,6 +413,9 @@ const host = {
   readFile,
   writeFile,
   patchFile,
+  readDocument,
+  createDocument,
+  editDocument,
   createDirectory,
   listDirectory,
   search,
