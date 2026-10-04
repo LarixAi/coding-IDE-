@@ -563,6 +563,116 @@ function renderComposer(nonce) {
       box-shadow: 0 10px 30px #000a;
     }
 
+
+    /* V19 composer toolbar refinement */
+    .composer {
+      border-radius: 11px;
+      box-shadow: 0 8px 24px #0006;
+    }
+    .composer textarea {
+      min-height: 62px;
+      padding: 12px 12px 9px;
+      line-height: 1.45;
+    }
+    .bar {
+      display: grid;
+      grid-template-columns: 32px 44px 44px 86px minmax(118px, 1fr) 30px 36px;
+      align-items: center;
+      gap: 5px;
+      padding: 7px 8px 8px;
+      border-top: 1px solid #333333;
+    }
+    .bar button,
+    .bar select {
+      width: 100%;
+      min-width: 0;
+      height: 30px;
+      padding: 0 8px;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      background: #292929;
+      color: #bdbdbd;
+      font-size: 10px;
+    }
+    #attach {
+      width: 32px;
+      padding: 0;
+      font-size: 17px;
+    }
+    #mic {
+      width: 44px;
+      padding: 0 6px;
+    }
+    #hub-tools-button {
+      width: 44px;
+      padding: 0 6px;
+    }
+    #mode {
+      width: 86px;
+      max-width: none;
+      padding-left: 10px;
+    }
+    #model {
+      width: 100%;
+      max-width: none;
+      min-width: 0;
+      padding-left: 10px;
+    }
+    #model-refresh {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      font-size: 15px;
+    }
+    #send,
+    #stop {
+      width: 36px;
+      height: 30px;
+      padding: 0;
+      margin: 0;
+    }
+    #send {
+      border-color: #e5e5e5;
+      border-radius: 7px;
+      background: #e5e5e5;
+      color: #111111;
+      font-size: 18px;
+      line-height: 1;
+    }
+    #send:hover {
+      background: #f2f2f2;
+      color: #111111;
+    }
+    #stop {
+      border-color: #454545;
+      background: #2c2c2c;
+    }
+
+    @media (max-width: 470px) {
+      .composer textarea {
+        min-height: 58px;
+      }
+      .bar {
+        grid-template-columns: 32px 42px 42px minmax(76px, 1fr) 30px 36px;
+        grid-template-rows: 30px 30px;
+        gap: 5px;
+      }
+      #attach { grid-column: 1; grid-row: 1; }
+      #mic { grid-column: 2; grid-row: 1; width: 42px; }
+      #hub-tools-button { grid-column: 3; grid-row: 1; width: 42px; }
+      #mode { grid-column: 4; grid-row: 1; width: 100%; }
+      #model-refresh { grid-column: 5; grid-row: 1; }
+      #send, #stop { grid-column: 6; grid-row: 1; }
+      #model {
+        grid-column: 1 / 7;
+        grid-row: 2;
+        width: 100%;
+      }
+      .hub-panel {
+        bottom: 72px;
+      }
+    }
+
     @media (max-width: 380px) {
       header {
         min-height: 42px;
