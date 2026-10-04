@@ -1062,8 +1062,16 @@ function renderComposer(nonce) {
       max-width: 92px;
       padding: 0 24px 0 12px;
       border-radius: 17px;
-      appearance: auto;
+      appearance: none;
       background-color: #343434;
+      background-image:
+        linear-gradient(45deg, transparent 50%, #a8a8a8 50%),
+        linear-gradient(135deg, #a8a8a8 50%, transparent 50%);
+      background-position:
+        calc(100% - 12px) 13px,
+        calc(100% - 8px) 13px;
+      background-size: 4px 4px, 4px 4px;
+      background-repeat: no-repeat;
       color: #d4d4d4;
       font-size: 11px;
       font-weight: 650;
@@ -1075,7 +1083,7 @@ function renderComposer(nonce) {
       min-width: 90px;
       max-width: 245px;
       padding: 0 20px 0 4px;
-      appearance: auto;
+      appearance: none;
       background-color: transparent;
       color: #d0d0d0;
       font-size: 11px;
@@ -1120,6 +1128,10 @@ function renderComposer(nonce) {
       stroke-linecap: round;
       stroke-linejoin: round;
       pointer-events: none;
+    }
+
+    .unified-composer #mic::before {
+      content: none;
     }
 
     .unified-composer #mic.on {
@@ -1436,7 +1448,7 @@ function renderComposer(nonce) {
       mic.classList.toggle("on", on);
       mic.setAttribute("aria-pressed", on ? "true" : "false");
       mic.title = on ? "Stop voice" : "Voice to text";
-      mic.textContent = on ? "Stop" : "Voice";
+      mic.setAttribute("aria-label", on ? "Stop voice" : "Voice to text");
     }
     function stopVoice() {
       if (rec) {
