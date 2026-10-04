@@ -431,6 +431,41 @@ async function testVerifierReplaysBrowserAfterLaterRealEdit() {
   assert.ok(run.verification.evidence.includes("browser.interact"));
 }
 
+async function testScaffoldOnlyBuildDoesNotRequirePreview() {
+  const registry = new FakeRegistry();
+  const provider = new ScriptedProvider([
+    {
+      text: "",
+      toolCalls: [{ name: "file.write", args: { path: "public/css/main.css", contents: "/* scaffold */\n" } }],
+    },
+    {
+      text: "",
+      toolCalls: [{ name: "file.write", args: { path: "views/index.html", contents: "<main></main>\n" } }],
+    },
+    { text: "Created the requested project file and folder layout.", toolCalls: [] },
+  ]);
+
+  const run = await startPipelineRun({
+    goal: "Create this folder and file layout for my website project structure: public/css/main.css and views/index.html.",
+    model: "fixture",
+    providerName: "fixture-local",
+    provider,
+    registry,
+    store: storeFor("scaffold-only"),
+    mode: "controlled",
+    composerMode: "code",
+    maxIterations: 8,
+  }).done;
+
+  assert.strictEqual(run.lifecycle, "completed");
+  assert.strictEqual(run.verification.status, "passed");
+  assert.match(run.verification.summary, /scaffold verified/i);
+  assert.ok(!run.toolCalls.some((call) => call.name === "process.start"));
+  assert.ok(!run.toolCalls.some((call) => call.name === "browser.check"));
+  assert.ok(!run.toolCalls.some((call) => call.name === "browser.interact"));
+  assert.ok(!run.toolCalls.some((call) => call.name === "diagnostics.run"));
+}
+
 async function testRunWebsiteRequiresRealPreview() {
   const registry = new FakeRegistry();
   const provider = new ScriptedProvider([
@@ -581,6 +616,7 @@ async function main() {
   await testVerificationRepair();
   await testNoOpAfterBrowserDoesNotInvalidateVerification();
   await testVerifierReplaysBrowserAfterLaterRealEdit();
+  await testScaffoldOnlyBuildDoesNotRequirePreview();
   await testRunWebsiteRequiresRealPreview();
   await testExternalToolsStayVisibleAndUntrusted();
   await testLiveFollowUp();
