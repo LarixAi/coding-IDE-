@@ -210,10 +210,10 @@ function applyIteration(state, input) {
     } else if (call.name === "dir.list") {
       const listed = String((call.args && call.args.path) || ".");
       if (rememberKey(state, `list:${listed}`)) categories.push("new_relevant_file");
-    } else if (call.name === "file.write" || call.name === "file.patch") {
+    } else if (["file.write", "file.patch", "document.create", "document.edit"].includes(call.name)) {
       if (!call.result || call.result.ok !== true) continue;
       const file = call.args && call.args.path;
-      const body = call.name === "file.patch" ? `${(call.args && call.args.oldText) || ""}=>${(call.args && call.args.newText) || ""}` : ((call.args && call.args.contents) || "");
+      const body = (call.name === "file.patch" || call.name === "document.edit") ? `${(call.args && call.args.oldText) || ""}=>${(call.args && call.args.newText) || ""}` : ((call.args && call.args.contents) || "");
       const key = `write:${file}:${digest(body)}`;
       if (file && rememberKey(state, key)) {
         categories.push("code_modification");
@@ -463,7 +463,7 @@ function compactObservation(call) {
 
 // After stagnation the runtime narrows the offered tools to the ones that can change
 // the outcome. Browsing and workaround tools are withheld until progress resumes.
-const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "dir.create", "dir.list", "sandbox.run", "process.start", "process.status", "process.logs", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check", "browser.interact"];
+const MATERIAL_TOOLS = ["file.write", "file.patch", "file.read", "document.create", "document.edit", "document.read", "dir.create", "dir.list", "sandbox.run", "process.start", "process.status", "process.logs", "tests.run", "diagnostics.run", "git.diff", "git.status", "browser.check", "browser.interact"];
 
 function focusTools(state, definitions) {
   if (!state) return definitions;
@@ -518,8 +518,8 @@ function hypothesisLabel(state) {
 function turnFingerprint(calls, cluster) {
   const parts = calls.map((call) => {
     if (call.name === "repo.search") return `search:${digest(searchPaths(call.result).join("|"))}`;
-    if (call.name === "file.read") return `read:${call.args && call.args.path}`;
-    if (call.name === "file.write" || call.name === "file.patch") return `write:${call.args && call.args.path}`;
+    if (call.name === "file.read" || call.name === "document.read") return `read:${call.args && call.args.path}`;
+    if (["file.write", "file.patch", "document.create", "document.edit"].includes(call.name)) return `write:${call.args && call.args.path}`;
     if (call.name === "tests.run" || call.name === "diagnostics.run") return call.name;
     if (call.name === "sandbox.run") return `sandbox:${digest(JSON.stringify(call.args || {}))}`;
     if (call.name === "capability.invoke") return `capability:${call.args && call.args.capability}`;
