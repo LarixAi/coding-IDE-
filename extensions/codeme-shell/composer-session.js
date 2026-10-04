@@ -2,12 +2,17 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { startAgentRun, startPipelineRun, resumePipelineRun } = require("../../packages/agent-runtime");
-const { stripNegatedEditing } = require("../../packages/agent-runtime/intent");
+const { stripNegatedEditing, isScaffoldOnlyRequest } = require("../../packages/agent-runtime/intent");
 const { composerStage, composerActivity, compactTools, compactRunStream, diffsByFile, formatGoal, normalizeComposerMode, agentModeFor, taskClassFor, looksLikeWorkspaceEdit, isProgressTalk } = require("./composer-client");
 
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const INBOX = ".codeme/inbox";
+
+function modelTurnBudget(composerMode, goal) {
+  if (composerMode !== "code") return 12;
+  return isScaffoldOnlyRequest(goal) ? 48 : 20;
+}
 
 async function listOllamaModels(baseUrl = "http://127.0.0.1:11434", provider = "ollama", sourceLabel = "", options = {}) {
   const { OllamaModelProvider } = require("../../packages/agent-runtime/model-provider");
@@ -858,7 +863,7 @@ class ComposerSession {
         skillsEnabled: !runtimeSettings.skills || runtimeSettings.skills.enabled !== false,
         timeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
         retryTimeoutMs: this.composerMode === "code" && looksLikeWorkspaceEdit(goal) ? 300000 : 180000,
-        maxIterations: this.composerMode === "code" ? 20 : 12,
+        maxIterations: modelTurnBudget(this.composerMode, goal),
         maxRepairRounds: 2,
         maxToolCallsPerTurn: 8,
         maxIdenticalActions: this.composerMode === "code" ? 12 : 4,
@@ -1203,5 +1208,6 @@ module.exports = {
   checkAttachment,
   importAttachment,
   finalAssistantText,
+  modelTurnBudget,
   ComposerSession,
 };

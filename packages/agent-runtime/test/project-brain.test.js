@@ -21,6 +21,26 @@ test("only verified lessons become durable lessons", () => {
   assert.equal(brain.lessons.length,1);
   assert.equal(brain.lessons[0].text,"Route Y passes tests");
 });
+test("legacy read-only run answers are not recalled as durable lessons", () => {
+  const brain=createProjectBrain({goal:"Website project"});
+  addVerifiedLesson(brain,{
+    text:"I cannot create files and folders directly. I can only read and inspect existing workspace content.",
+    verified:true,
+    evidence:["workspace.inspect"],
+    tags:["run:old-read-only"],
+  });
+  addVerifiedLesson(brain,{
+    text:"The header repair passed browser verification.",
+    verified:true,
+    evidence:["file.patch","browser.check"],
+    tags:["run:verified-code"],
+  });
+  const ctx=retrieveProjectContext(brain,"create the website files");
+  assert.equal(ctx.lessons.length,1);
+  assert.match(ctx.lessons[0].text,/passed browser verification/);
+  assert.doesNotMatch(projectBrainText(ctx),/cannot create files/i);
+  assert.match(projectBrainText(ctx),/do not expand the current request/i);
+});
 test("changed file hashes invalidate stale knowledge", () => {
   const brain=createProjectBrain({goal:"Dealership website"});
   rememberFile(brain,{path:"src/auth.js",hash:"old",summary:"Handles auth"});

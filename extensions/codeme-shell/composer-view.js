@@ -144,8 +144,14 @@ function renderComposer(nonce) {
     footer { flex-shrink: 0; padding: 0 7px 7px; background: linear-gradient(to bottom, #191c2100, #191c21 10px); }
     .changed-files { display: none; margin: 0 1px 6px; padding-top: 6px; border-top: 1px solid #272c33; }
     .changed-files.on { display: block; }
-    .changed-head { display: flex; align-items: center; justify-content: space-between; min-height: 20px; color: #909aa8; font-size: 10px; }
-    .changed-hint { color: #687382; }
+    .changed-head { display: flex; align-items: center; gap: 6px; min-height: 22px; padding: 0 2px; cursor: pointer; list-style: none; color: #909aa8; font-size: 10px; user-select: none; }
+    .changed-head::-webkit-details-marker { display: none; }
+    .changed-head:hover { color: #b8c0cb; }
+    .changed-chevron { display: inline-block; width: 12px; color: #687382; transform: rotate(0deg); transition: transform 90ms ease; }
+    .changed-files[open] .changed-chevron { transform: rotate(90deg); }
+    .changed-count { flex: 1; min-width: 0; }
+    .changed-hint { color: #687382; white-space: nowrap; }
+    .changed-body { max-height: min(42vh, 360px); overflow: auto; padding-top: 2px; }
     .changed-row { margin: 0; border-radius: 4px; }
     .changed-row summary { display: flex; align-items: center; gap: 5px; min-height: 22px; padding: 0 2px; list-style: none; cursor: pointer; color: #aeb7c3; font-size: 10px; }
     .changed-row summary::-webkit-details-marker { display: none; }
@@ -176,31 +182,55 @@ function renderComposer(nonce) {
     .shell.over .composer { outline: 1px solid #7fc9dd88; outline-offset: 2px; background: #7fc9dd0d; }
     textarea { width: 100%; min-height: 45px; max-height: 160px; box-sizing: border-box; border: 0; resize: none; background: transparent; color: #e0e4ea; font: inherit; font-size: 12px; line-height: 1.4; padding: 7px 5px 3px; outline: none; }
     textarea::placeholder { color: #697482; }
-    .bar { display: flex; align-items: center; gap: 3px; min-width: 0; }
+    .bar { display: flex; align-items: center; gap: 3px; width: 100%; min-width: 0; max-width: 100%; }
+    .bar > * { min-width: 0; }
     .bar button, .bar select { border: 0; background: transparent; color: #909aa8; height: 24px; padding: 0 5px; cursor: pointer; font: inherit; font-size: 10px; border-radius: 4px; }
     .bar button:hover, .bar select:hover { background: #2a2f36; color: #d6dbe3; }
     .bar button:disabled, .bar select:disabled { opacity: 0.4; cursor: default; }
-    #attach { flex: 0 0 auto; }
-    #mode { flex: 0 0 auto; max-width: 92px; color: #b8c0cb; }
-    #model { flex: 1 1 128px; min-width: 96px; max-width: 160px; color: #b8c0cb; text-overflow: ellipsis; overflow: hidden; }
-    #model-refresh { flex: 0 0 auto; width: 22px; padding: 0; font-size: 13px; }
+    #attach, #mic, #hub-tools-button { flex: 0 0 auto; }
+    #mode { flex: 0 1 auto; max-width: 92px; color: #b8c0cb; }
+    #model { flex: 1 1 128px; min-width: 0; max-width: 160px; color: #b8c0cb; text-overflow: ellipsis; overflow: hidden; }
+    #model-refresh { flex: 0 0 22px; width: 22px; padding: 0; font-size: 13px; }
     #model-refresh.loading { animation: codeme-spin 0.8s linear infinite; }
     @keyframes codeme-spin { to { transform: rotate(360deg); } }
-    #send { margin-left: auto; width: 24px; padding: 0; border-radius: 6px; background: #7fc9dd; color: #172027; font-size: 14px; font-weight: 700; }
+    #send { flex: 0 0 24px; margin-left: auto; width: 24px; padding: 0; border-radius: 6px; background: #7fc9dd; color: #172027; font-size: 14px; font-weight: 700; }
     #send:hover { background: #91d7e8; color: #172027; }
     #send:disabled { opacity: 0.35; }
-    #stop { width: 24px; padding: 0; color: #aab3bf; }
+    #stop { flex: 0 0 24px; width: 24px; padding: 0; color: #aab3bf; }
     #send[hidden], #stop[hidden] { display: none; }
     #mic.on { color: #ff918b; }
     .perm { display: none; }
 
-    @media (max-width: 310px) {
+    /* The chat view is a resizable Code - OSS sidebar. Mirror the V19 mock:
+       compact controls first, then move the model picker to its own row so
+       send/stop never disappear when the pane becomes narrow. */
+    @media (max-width: 380px) {
       .workspace-actions { display: none; }
+      #history-toggle { width: 22px; min-width: 22px; padding: 0; overflow: hidden; font-size: 0; }
+      #history-toggle::before { content: "☰"; font-size: 13px; }
+      .bar {
+        display: grid;
+        grid-template-columns: 26px 30px 30px minmax(0, 1fr) 24px 24px;
+        grid-template-rows: 24px 24px;
+        gap: 3px;
+        width: 100%;
+      }
+      #attach { grid-column: 1; grid-row: 1; width: 26px; padding: 0; overflow: hidden; font-size: 0; }
+      #attach::before { content: "＋"; font-size: 14px; }
+      #mic { grid-column: 2; grid-row: 1; width: 30px; padding: 0; overflow: hidden; font-size: 0; }
+      #mic::before { content: "●"; font-size: 9px; }
+      #mic.on::before { content: "■"; }
+      #hub-tools-button { grid-column: 3; grid-row: 1; width: 30px; padding: 0; }
+      #mode { grid-column: 4; grid-row: 1; width: 100%; max-width: none; }
+      #stop { grid-column: 5; grid-row: 1; margin: 0; }
+      #send { grid-column: 6; grid-row: 1; margin: 0; }
+      #model { grid-column: 1 / 6; grid-row: 2; width: 100%; min-width: 0; max-width: none; }
+      #model-refresh { grid-column: 6; grid-row: 2; }
+      .hub-panel { bottom: 59px; }
     }
     @media (max-width: 230px) {
       h1 { display: none; }
-      #model { max-width: 86px; }
-      #attach { width: 24px; overflow: hidden; white-space: nowrap; }
+      .history-panel { left: 4px; right: 4px; }
     }
   </style>
 </head>
@@ -239,7 +269,7 @@ function renderComposer(nonce) {
       <div class="result" id="result"></div>
     </div>
     <footer>
-      <div class="changed-files" id="changed-files"></div>
+      <details class="changed-files" id="changed-files"></details>
       <p class="notice" id="notice"></p>
       <div class="chips" id="chips"></div>
       <div class="composer" id="drop">
@@ -1203,16 +1233,26 @@ function renderComposer(nonce) {
       changedFiles.classList.toggle("on", files.length > 0);
       if (!files.length) return;
 
-      const head = document.createElement("div");
+      const head = document.createElement("summary");
       head.className = "changed-head";
+      const chevron = document.createElement("span");
+      chevron.className = "changed-chevron";
+      chevron.textContent = "›";
       const count = document.createElement("span");
+      count.className = "changed-count";
       count.textContent = files.length + (files.length === 1 ? " file changed" : " files changed");
       const hint = document.createElement("span");
       hint.className = "changed-hint";
-      hint.textContent = "Review here · open in editor";
+      hint.textContent = files.length > 6 ? "Expand · open in editor" : "Review · open in editor";
+      head.appendChild(chevron);
       head.appendChild(count);
       head.appendChild(hint);
       changedFiles.appendChild(head);
+      changedFiles.open = files.length <= 6;
+
+      const body = document.createElement("div");
+      body.className = "changed-body";
+      changedFiles.appendChild(body);
 
       for (const file of files) {
         const row = document.createElement("details");
@@ -1256,7 +1296,7 @@ function renderComposer(nonce) {
           pre.textContent = file.diff;
           row.appendChild(pre);
         }
-        changedFiles.appendChild(row);
+        body.appendChild(row);
       }
     }
     function appendInlineMarkdown(parent, value) {
@@ -1270,7 +1310,10 @@ function renderComposer(nonce) {
         if (boldAt >= 0 && (codeAt < 0 || boldAt < codeAt)) { next = boldAt; kind = "bold"; }
         else if (codeAt >= 0) { next = codeAt; kind = "code"; }
         if (next < 0) { parent.appendChild(document.createTextNode(rest)); break; }
-        if (next > 0) parent.appendChild(document.createTextNode(rest.slice(0, next)));
+        if (next > 0) {
+          parent.appendChild(document.createTextNode(rest.slice(0, next)));
+          rest = rest.slice(next);
+        }
         if (kind === "bold") {
           const end = rest.indexOf("**", 2);
           if (end < 0) { parent.appendChild(document.createTextNode(rest)); break; }
