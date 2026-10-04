@@ -83,8 +83,8 @@ function composerStage(run) {
 
 function stageForTool(name) {
   if (name === "repo.search") return "Searching";
-  if (name === "workspace.inspect" || name === "dir.list" || name === "file.read") return "Reading";
-  if (name === "file.write" || name === "file.patch" || name === "dir.create") return "Editing";
+  if (name === "workspace.inspect" || name === "dir.list" || name === "file.read" || name === "document.read") return "Reading";
+  if (name === "file.write" || name === "file.patch" || name === "document.create" || name === "document.edit" || name === "dir.create") return "Editing";
   if (name === "tests.run" || name === "terminal.run" || name === "process.start" || name === "process.status" || name === "process.logs") return "Testing";
   if (name === "capability.invoke" || name === "capability.list") return "Researching";
   if (name === "browser.check" || name === "browser.interact") return "Testing";
@@ -211,7 +211,7 @@ function compactRunStream(run) {
       emitted.add(index);
       const quietContext = item.directedBy === "context"
         && item.status === "done"
-        && ["workspace.inspect", "dir.list", "file.read"].includes(item.name);
+        && ["workspace.inspect", "dir.list", "file.read", "document.read"].includes(item.name);
       if (!quietContext) stream.push({ type: "tool", ...item });
     }
   };
@@ -235,7 +235,7 @@ function compactRunStream(run) {
     const item = tools[index];
     const quietContext = item.directedBy === "context"
       && item.status === "done"
-      && ["workspace.inspect", "dir.list", "file.read"].includes(item.name);
+      && ["workspace.inspect", "dir.list", "file.read", "document.read"].includes(item.name);
     if (!quietContext) stream.push({ type: "tool", ...item });
   }
 
@@ -274,6 +274,15 @@ function compactTool(run, call, index, status) {
     item.operation = fileWriteOperation(run, call, index);
     item.preview = fileWritePreview(run, call, index);
   } else if (call.name === "file.patch") {
+    item.operation = "edit";
+    item.preview = linePreview(
+      String(call.args && call.args.oldText || ""),
+      String(call.args && call.args.newText || ""),
+    );
+  } else if (call.name === "document.create") {
+    item.operation = "create";
+    item.preview = linePreview("", String(call.args && call.args.contents || ""));
+  } else if (call.name === "document.edit") {
     item.operation = "edit";
     item.preview = linePreview(
       String(call.args && call.args.oldText || ""),
