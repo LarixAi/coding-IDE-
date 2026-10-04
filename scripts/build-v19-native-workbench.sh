@@ -4,7 +4,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 
-"$root/scripts/apply-v19-code-oss.sh"
+sh "$root/scripts/apply-v19-code-oss.sh"
 
 node_bin="$root/.tools/node-v24.18.0-darwin-arm64/bin"
 if [ -d "$node_bin" ]; then
