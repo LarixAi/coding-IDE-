@@ -34,6 +34,12 @@ assert.ok(html.includes("border-radius: 9px"));
 assert.ok(html.includes("@media (max-width: 380px)"));
 assert.ok(html.includes("grid-template-columns: 28px 34px 34px minmax(0, 1fr) 28px 29px"));
 assert.ok(html.includes("#model { grid-column: 1 / 7; grid-row: 2;"));
+assert.ok(html.includes("V19 composer toolbar refinement"));
+assert.ok(html.includes("grid-template-columns: 32px 44px 44px 86px minmax(118px, 1fr) 30px 36px"));
+assert.ok(html.includes("@media (max-width: 470px)"));
+assert.ok(html.includes("#model {"));
+assert.ok(html.includes("grid-column: 1 / 7"));
+
 assert.ok(html.includes("function threadNearBottom(threshold = 48)"));
 assert.ok(html.includes("const stickThreadToBottom = forceThreadBottom || threadNearBottom()"));
 assert.ok(html.includes("restoreThreadScroll(stickThreadToBottom, previousThreadTop)"));
