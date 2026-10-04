@@ -232,6 +232,364 @@ function renderComposer(nonce) {
       h1 { display: none; }
       .history-panel { left: 4px; right: 4px; }
     }
+  
+    /* V19 native Composer skin
+       Keep the real Composer DOM/runtime and match the approved V19 chat design. */
+    body {
+      background: #1e1e1e;
+      color: #cccccc;
+    }
+    .shell {
+      background: #1e1e1e;
+    }
+    header {
+      min-height: 46px;
+      padding: 0 10px 0 14px;
+      border-bottom: 1px solid #292929;
+      background: #1e1e1e;
+    }
+    .title-tools {
+      gap: 4px;
+    }
+    h1 {
+      margin-right: auto;
+      color: #dddddd;
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+    .workspace-actions {
+      display: none;
+    }
+    .header-action {
+      width: 30px;
+      height: 30px;
+      min-width: 30px;
+      padding: 0;
+      border-radius: 5px;
+      color: #999999;
+      font-size: 16px;
+    }
+    .header-action:hover {
+      background: #292929;
+      color: #dddddd;
+    }
+    #new-chat {
+      font-size: 18px;
+    }
+    #history-toggle {
+      font-size: 0;
+    }
+    #history-toggle::before {
+      content: "☰";
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    .history-panel {
+      top: 43px;
+      left: auto;
+      right: 8px;
+      width: min(285px, calc(100% - 16px));
+      max-height: 420px;
+      border: 1px solid #414141;
+      border-radius: 8px;
+      background: #242424;
+      box-shadow: 0 12px 32px #000a;
+    }
+    .history-head {
+      min-height: 34px;
+      border-bottom-color: #343434;
+      color: #aaaaaa;
+      font-size: 10px;
+    }
+    .history-list {
+      padding: 6px;
+    }
+    .history-item {
+      padding: 8px;
+      border-radius: 5px;
+    }
+    .history-item:hover {
+      background: #303030;
+    }
+
+    .thread {
+      padding: 16px 16px 210px;
+      scroll-padding-bottom: 210px;
+      background: #1e1e1e;
+    }
+    .empty {
+      margin: 36px 0;
+      color: #888888;
+      font-size: 12px;
+      line-height: 1.55;
+      text-align: center;
+    }
+    .empty strong {
+      display: block;
+      margin-bottom: 3px;
+      color: #dddddd;
+      font-size: 17px;
+      font-weight: 650;
+    }
+    .bubble {
+      line-height: 1.5;
+    }
+    .bubble.user {
+      width: fit-content;
+      max-width: 92%;
+      margin: 0 0 18px auto;
+      padding: 10px 12px;
+      border: 1px solid #373737;
+      border-radius: 9px;
+      background: #292929;
+      color: #eeeeee;
+      font-size: 12px;
+      font-weight: 400;
+    }
+    .bubble.assistant {
+      margin: 5px 0 18px;
+      color: #d0d0d0;
+    }
+    .bubble.assistant code {
+      background: #252525;
+    }
+    .bubble.assistant pre,
+    .tool-detail,
+    .code-preview {
+      background: #181818;
+      border-left-color: #3a3a3a;
+    }
+
+    .activity.on {
+      margin: 5px 0 10px;
+      color: #cfcfcf;
+    }
+    .activity.on::before {
+      color: #d2aa66;
+    }
+    .work-panel > summary {
+      color: #858585;
+    }
+    .tool-card summary:hover {
+      background: #252525;
+    }
+
+    footer {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 12;
+      padding: 28px 13px 13px;
+      background: linear-gradient(transparent, #1e1e1e 24%);
+    }
+    .v19-compose-status {
+      min-height: 25px;
+      display: flex;
+      align-items: center;
+      margin: 0 0 2px 1px;
+      color: #999999;
+      font-size: 10px;
+    }
+    .v19-state-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 7px;
+      border: 1px solid #383838;
+      border-radius: 10px;
+      background: #222222;
+    }
+    .v19-state-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #858585;
+    }
+    .v19-compose-status.reading .v19-state-pill {
+      color: #a9c5e6;
+      border-color: #34465a;
+    }
+    .v19-compose-status.reading .v19-state-dot {
+      background: #86afe0;
+    }
+    .v19-compose-status.editing .v19-state-pill {
+      color: #cbb7e9;
+      border-color: #493d5b;
+    }
+    .v19-compose-status.editing .v19-state-dot {
+      background: #b89ae5;
+    }
+    .v19-compose-status.running .v19-state-pill {
+      color: #ddbd86;
+      border-color: #57492f;
+    }
+    .v19-compose-status.running .v19-state-dot {
+      background: #d2aa66;
+      animation: codeme-pulse 1.1s ease-in-out infinite;
+    }
+    .v19-compose-status.verified .v19-state-pill {
+      color: #91d2a4;
+      border-color: #34513d;
+    }
+    .v19-compose-status.verified .v19-state-dot {
+      background: #72c58b;
+    }
+    .v19-compose-status.error .v19-state-pill {
+      color: #e1a0a0;
+      border-color: #593737;
+    }
+    .v19-compose-status.error .v19-state-dot {
+      background: #dc7e7e;
+    }
+    .v19-compose-status.waiting .v19-state-pill {
+      color: #e1c889;
+      border-color: #5a4c30;
+    }
+    .v19-compose-status.waiting .v19-state-dot {
+      background: #e0bc67;
+    }
+
+    .composer {
+      overflow: visible;
+      padding: 0;
+      border: 1px solid #3b3b3b;
+      border-radius: 9px;
+      background: #242424;
+      box-shadow: 0 8px 22px #0007;
+    }
+    .composer textarea {
+      min-height: 72px;
+      max-height: 180px;
+      padding: 11px;
+      color: #eeeeee;
+      font-size: 12px;
+    }
+    .composer textarea::placeholder {
+      color: #777777;
+    }
+    .bar {
+      gap: 6px;
+      padding: 7px;
+      border-top: 1px solid #323232;
+    }
+    .bar button,
+    .bar select {
+      height: 28px;
+      padding: 0 8px;
+      border: 1px solid #3a3a3a;
+      border-radius: 5px;
+      background: #292929;
+      color: #bbbbbb;
+      font-size: 10px;
+    }
+    .bar button:hover,
+    .bar select:hover {
+      border-color: #4a4a4a;
+      background: #303030;
+      color: #dddddd;
+    }
+    #attach {
+      width: 28px;
+      flex: 0 0 28px;
+      padding: 0;
+      font-size: 15px;
+    }
+    #mic,
+    #hub-tools-button {
+      width: auto;
+      flex: 0 0 auto;
+    }
+    #mode {
+      flex: 0 0 auto;
+      width: auto;
+      max-width: 82px;
+      color: #cccccc;
+    }
+    #model {
+      flex: 1 1 120px;
+      max-width: none;
+      color: #aaaaaa;
+    }
+    #model-refresh {
+      width: 28px;
+      flex: 0 0 28px;
+      padding: 0;
+    }
+    #send {
+      width: 29px;
+      height: 29px;
+      flex: 0 0 29px;
+      margin-left: 0;
+      padding: 0;
+      border-color: #e5e5e5;
+      background: #e5e5e5;
+      color: #111111;
+      font-size: 15px;
+      font-weight: 700;
+    }
+    #send:hover {
+      background: #f2f2f2;
+      color: #111111;
+    }
+    #stop {
+      width: 29px;
+      flex: 0 0 29px;
+      padding: 0;
+    }
+    .notice {
+      color: #c9a45c;
+    }
+    .chips {
+      margin-bottom: 6px;
+    }
+    .chip {
+      padding: 5px 7px;
+      border: 1px solid #3b3b3b;
+      border-radius: 5px;
+      background: #2b2b2b;
+      color: #bbbbbb;
+    }
+    .changed-files {
+      border-top-color: #303030;
+    }
+
+    .hub-panel {
+      bottom: 42px;
+      border-color: #414141;
+      background: #242424;
+      box-shadow: 0 10px 30px #000a;
+    }
+
+    @media (max-width: 380px) {
+      header {
+        min-height: 42px;
+        padding-left: 10px;
+      }
+      .thread {
+        padding: 12px 11px 250px;
+        scroll-padding-bottom: 250px;
+      }
+      footer {
+        padding: 24px 8px 8px;
+      }
+      .bar {
+        display: grid;
+        grid-template-columns: 28px 34px 34px minmax(0, 1fr) 28px 29px;
+        grid-template-rows: 28px 28px;
+        gap: 5px;
+      }
+      #attach { grid-column: 1; grid-row: 1; }
+      #mic { grid-column: 2; grid-row: 1; width: 34px; padding: 0; font-size: 0; }
+      #mic::before { content: "Mic"; font-size: 9px; }
+      #hub-tools-button { grid-column: 3; grid-row: 1; width: 34px; padding: 0; }
+      #mode { grid-column: 4; grid-row: 1; width: 100%; max-width: none; }
+      #model-refresh { grid-column: 5; grid-row: 1; }
+      #send, #stop { grid-column: 6; grid-row: 1; }
+      #model { grid-column: 1 / 7; grid-row: 2; width: 100%; max-width: none; }
+    }
   </style>
 </head>
 <body>
@@ -256,7 +614,7 @@ function renderComposer(nonce) {
       <div class="history-list" id="history-list"></div>
     </div>
     <div class="thread" id="thread">
-      <p class="empty" id="empty">Ask about this workspace.</p>
+      <p class="empty" id="empty"><strong>CodeMe AI</strong><span>Build, edit and verify your project.</span></p>
       <div id="messages"></div>
       <div class="clarification" id="clarification" hidden></div>
       <div class="project-decision" id="project-decision"></div>
@@ -272,7 +630,7 @@ function renderComposer(nonce) {
       <details class="changed-files" id="changed-files"></details>
       <p class="notice" id="notice"></p>
       <div class="chips" id="chips"></div>
-      <div class="composer" id="drop">
+      <div class="v19-compose-status" id="v19-compose-status"><span class="v19-state-pill"><span class="v19-state-dot"></span><span id="v19-compose-status-text">Ready</span></span></div>\n      <div class="composer" id="drop">
         <div class="hub-panel" id="hub-panel">
           <div class="hub-head">
             <strong>n8n MCP tools</strong>
@@ -283,7 +641,7 @@ function renderComposer(nonce) {
         </div>
         <textarea id="prompt" placeholder="Ask CodeMe anything, @ files or type /" rows="2"></textarea>
         <div class="bar">
-          <button type="button" id="attach" title="Add context">＋ Context</button>
+          <button type="button" id="attach" title="Add context" aria-label="Add context">＋</button>
           <button type="button" id="mic" title="Voice to text" aria-pressed="false">Mic</button>
           <button type="button" id="hub-tools-button" title="n8n MCP tools" aria-expanded="false">n8n</button>
           <select id="mode" aria-label="Mode">${modeHtml}</select>
@@ -300,7 +658,7 @@ function renderComposer(nonce) {
   <script nonce="${escapeHtml(nonce)}">
     ${client}
     const vscode = acquireVsCodeApi();
-    const prompt = document.getElementById("prompt");
+    const prompt = document.getElementById("prompt");\n    const v19ComposeStatus = document.getElementById("v19-compose-status");\n    const v19ComposeStatusText = document.getElementById("v19-compose-status-text");
     const send = document.getElementById("send");
     const stop = document.getElementById("stop");
     const model = document.getElementById("model");
@@ -613,6 +971,34 @@ function renderComposer(nonce) {
       prompt.disabled = false;
       if (!sending) notice.textContent = state.notice || "";
       const picked = normalizeComposerMode(state.composerMode || state.mode);
+      if (v19ComposeStatus && v19ComposeStatusText) {
+        const stageName = String(state.stage || "").toLowerCase();
+        const v19StatusKind = state.error
+          ? "error"
+          : !running && state.outcome && state.outcome.status === "completed"
+            ? "verified"
+            : stageName.includes("edit") || stageName.includes("fix")
+              ? "editing"
+              : stageName.includes("read") || stageName.includes("research") || stageName.includes("understand")
+                ? "reading"
+                : running
+                  ? "running"
+                  : stageName.includes("wait")
+                    ? "waiting"
+                    : "ready";
+        const readyText = picked === "code" || picked === "debug" || picked === "test"
+          ? "Ready · can edit"
+          : "Ready · read-only";
+        const statusText = state.error
+          ? "Error · check technical activity"
+          : running
+            ? (state.activity || state.stage || "Working…")
+            : v19StatusKind === "verified"
+              ? "Verified · run complete"
+              : readyText;
+        v19ComposeStatus.className = "v19-compose-status " + v19StatusKind;
+        v19ComposeStatusText.textContent = statusText;
+      }
       document.getElementById("perm").textContent = composerModeLabel(picked);
       mode.value = picked;
       model.innerHTML = "";
