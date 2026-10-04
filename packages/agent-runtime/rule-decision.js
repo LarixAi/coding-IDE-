@@ -23,6 +23,8 @@ const STATIC_SCAFFOLD_TOOLS = new Set([
 const READ_ONLY_BLOCKED_TOOLS = new Set([
   "file.write",
   "file.patch",
+  "document.create",
+  "document.edit",
   "dir.create",
   "terminal.run",
   "sandbox.run",
@@ -34,6 +36,7 @@ const READ_ONLY_BLOCKED_TOOLS = new Set([
 const INSPECTION_ALLOWED_TOOLS = new Set([
   "workspace.inspect",
   "file.read",
+  "document.read",
   "repo.search",
   "dir.list",
   "git.status",
@@ -44,6 +47,8 @@ const INSPECTION_ALLOWED_TOOLS = new Set([
 const WORKSPACE_MUTATION_TOOLS = new Set([
   "file.write",
   "file.patch",
+  "document.create",
+  "document.edit",
   "dir.create",
 ]);
 
