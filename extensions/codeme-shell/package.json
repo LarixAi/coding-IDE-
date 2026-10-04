@@ -1,7 +1,7 @@
 {
   "name": "codeme-shell",
   "displayName": "CodeMe",
-  "description": "Minimal CodeMe shell on Code - OSS: identity, theme, Composer, and model connection status.",
+  "description": "CodeMe native V19 workbench on Code - OSS.",
   "version": "0.1.0",
   "publisher": "codeme",
   "engines": {
@@ -19,7 +19,7 @@
     "themes": [
       {
         "id": "CodeMe Dark",
-        "label": "CodeMe Dark",
+        "label": "CodeMe V19",
         "uiTheme": "vs-dark",
         "path": "./themes/codeme-dark-color-theme.json"
       }
@@ -87,10 +87,22 @@
         "title": "CodeMe: Open Workspace File",
         "category": "CodeMe",
         "icon": "$(go-to-file)"
+      },
+      {
+        "command": "codeme.v19.applyLayout",
+        "title": "CodeMe: Apply V19 Native Layout",
+        "category": "CodeMe",
+        "icon": "$(layout)"
+      },
+      {
+        "command": "codeme.v19.clearChangeMarkers",
+        "title": "CodeMe: Clear AI Change Markers",
+        "category": "CodeMe",
+        "icon": "$(clear-all)"
       }
     ],
     "configurationDefaults": {
-      "workbench.colorTheme": "CodeMe Dark",
+      "workbench.colorTheme": "CodeMe V19",
       "workbench.startupEditor": "none",
       "window.commandCenter": false,
       "window.title": "${dirty}${activeEditorShort}${separator}CodeMe",
@@ -106,7 +118,15 @@
       "explorer.decorations.badges": true,
       "explorer.decorations.colors": true,
       "workbench.tree.indent": 12,
-      "workbench.tree.renderIndentGuides": "always"
+      "workbench.tree.renderIndentGuides": "always",
+      "workbench.layoutControl.enabled": false,
+      "workbench.activityBar.location": "default",
+      "workbench.sideBar.location": "left",
+      "workbench.statusBar.visible": true,
+      "explorer.openEditors.visible": 0,
+      "breadcrumbs.enabled": true,
+      "editor.minimap.enabled": true,
+      "terminal.integrated.tabs.enabled": true
     },
     "configuration": {
       "title": "CodeMe",
