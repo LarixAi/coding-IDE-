@@ -20,6 +20,7 @@ const { DebugToolProvider } = require("./debug-tool-provider");
 const { VerificationToolProvider } = require("./verification-tool-provider");
 const { MultitaskController } = require("./multitask-controller");
 const { SettingsPanel } = require("./settings-panel");
+const { V19FullIdePanel } = require("./v19-full-ide-panel");
 const { CodeMeSettingsStore } = require("./settings-store");
 const { UniversalMcpRegistry } = require("./universal-mcp");
 const { loadProjectBrain, brainPath } = require("../../packages/agent-runtime/project-brain-store");
@@ -180,6 +181,36 @@ function activate(context) {
     },
   });
   context.subscriptions.push(settingsPanel);
+
+  const v19FullIde = new V19FullIdePanel(context, {
+    composer,
+    openSettings: () => settingsPanel.open(),
+    openPreview: () => openIntegratedPreview(),
+    openExplorer: () => vscode.commands.executeCommand("workbench.view.explorer"),
+    openTerminal: () => openTerminalPanel(),
+  });
+  context.subscriptions.push(v19FullIde);
+
+  const originalComposerPost = composer.post.bind(composer);
+  composer.post = (snapshot) => {
+    originalComposerPost(snapshot);
+    v19FullIde.post(snapshot);
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codeme.openV19FullIde", () => v19FullIde.open()),
+  );
+
+  const v19FullIdeEnabled = vscode.workspace
+    .getConfiguration("codeme.v19FullIde")
+    .get("enabled", true);
+  if (v19FullIdeEnabled) {
+    setTimeout(() => {
+      v19FullIde.open().catch((error) => {
+        console.error("Could not open CodeMe V19 full IDE test shell", error);
+      });
+    }, 450);
+  }
 
   const modelTimer = setInterval(refreshModels, 15000);
   const hubTimer = setInterval(refreshHub, 15000);
