@@ -34,6 +34,16 @@ assert.ok(html.includes("border-radius: 9px"));
 assert.ok(html.includes("@media (max-width: 380px)"));
 assert.ok(html.includes("grid-template-columns: 28px 34px 34px minmax(0, 1fr) 28px 29px"));
 assert.ok(html.includes("#model { grid-column: 1 / 7; grid-row: 2;"));
+assert.ok(html.includes("function threadNearBottom(threshold = 48)"));
+assert.ok(html.includes("const stickThreadToBottom = forceThreadBottom || threadNearBottom()"));
+assert.ok(html.includes("restoreThreadScroll(stickThreadToBottom, previousThreadTop)"));
+assert.ok(html.includes("forceThreadBottom = true"));
+assert.equal(
+  (html.match(/thread\.scrollTop = thread\.scrollHeight/g) || []).length,
+  1,
+  "scroll-to-bottom should only exist inside the sticky-scroll helper",
+);
+
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const view = manifest.contributes.views.codemeAgent.find((item) => item.id === "codeme.agent");
