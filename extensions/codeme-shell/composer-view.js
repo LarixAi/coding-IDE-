@@ -705,6 +705,20 @@ function renderComposer(nonce) {
     let shownRun = "";
     let deferredFinal = "";
     let draft = "";
+    let forceThreadBottom = true;
+
+    function threadNearBottom(threshold = 48) {
+      const remaining = thread.scrollHeight - thread.clientHeight - thread.scrollTop;
+      return remaining <= threshold;
+    }
+
+    function restoreThreadScroll(stickToBottom, previousTop) {
+      if (stickToBottom) {
+        thread.scrollTop = thread.scrollHeight;
+        return;
+      }
+      thread.scrollTop = previousTop;
+    }
 
     function clearSendPending() {
       sending = false;
@@ -717,6 +731,7 @@ function renderComposer(nonce) {
       if (!text.trim() && !chips.childElementCount) return;
       sending = true;
       draft = text;
+      forceThreadBottom = true;
       epoch += 1;
       send.disabled = true;
       notice.textContent = "Understanding your request…";
@@ -757,6 +772,7 @@ function renderComposer(nonce) {
     });
     newChat.addEventListener("click", () => {
       historyPanel.classList.remove("on");
+      forceThreadBottom = true;
       vscode.postMessage({ type: "new-chat" });
       prompt.focus();
     });
@@ -941,6 +957,9 @@ function renderComposer(nonce) {
     }
     function applyState(state) {
       if (!current(state)) return;
+      const previousThreadTop = thread.scrollTop;
+      const stickThreadToBottom = forceThreadBottom || threadNearBottom();
+      forceThreadBottom = false;
       if (state.requestId) requestId = state.requestId;
       running = Boolean(state.running);
       if (running && sending) {
@@ -1114,7 +1133,7 @@ function renderComposer(nonce) {
         renderResult(state);
       }
       empty.hidden = Boolean(messages.childElementCount || state.clarification || running);
-      thread.scrollTop = thread.scrollHeight;
+      restoreThreadScroll(stickThreadToBottom, previousThreadTop);
     }
 
     function renderClarification(data) {
