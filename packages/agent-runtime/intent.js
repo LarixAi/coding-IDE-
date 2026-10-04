@@ -63,10 +63,23 @@ function isResearchOnlyRequest(goal) {
   return hasResearchIntent(goal) && !hasEditIntent(goal);
 }
 
+function isScaffoldOnlyRequest(goal) {
+  const text = normalize(goal).toLowerCase();
+  if (!text) return false;
+  const scaffold = /\b(?:file|folder|directory|project)\s+(?:and\s+(?:file|folder)\s+)?(?:layout|structure|tree)\b|\b(?:scaffold|skeleton)\b/.test(text)
+    || /\bcreate\s+(?:this|the|a)\s+(?:folder|file|project)(?:\s+and\s+(?:folder|file))?\s+(?:layout|structure)\b/.test(text);
+  if (!scaffold) return false;
+  const executableOutcome = /\b(?:run|start|launch|serve|preview|verify|test|working|functional|populate|deploy)\b/.test(text)
+    || /\bopen\s+(?:it\s+)?in\s+(?:the\s+)?browser\b/.test(text)
+    || /\bbuild\s+(?:the|a|an)\s+(?:site|website|app|application)\b/.test(text);
+  return !executableOutcome;
+}
+
 module.exports = {
   hasNoEditDirective,
   stripNegatedEditing,
   hasEditIntent,
   hasResearchIntent,
   isResearchOnlyRequest,
+  isScaffoldOnlyRequest,
 };
