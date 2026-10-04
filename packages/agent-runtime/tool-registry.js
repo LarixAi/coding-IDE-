@@ -9,6 +9,35 @@ const DEFINITIONS = {
     description: "Read a workspace-relative text file.",
     parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
   },
+  "document.read": {
+    description: "Read a workspace document as text. Use this for Word .docx documents; .md, .txt, and .html are also supported.",
+    parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+  },
+  "document.create": {
+    description: "Create a workspace document. Supports .docx, .md, .txt, and .html. Word documents preserve simple headings, paragraphs, and bullet lines. Use only in Code mode.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        contents: { type: "string" },
+        title: { type: "string" },
+        overwrite: { type: "boolean" },
+      },
+      required: ["path", "contents"],
+    },
+  },
+  "document.edit": {
+    description: "Edit a workspace document by replacing exactly one occurrence of oldText with newText. Supports .docx, .md, .txt, and .html while preserving the rest of the document. Use only in Code mode.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        oldText: { type: "string" },
+        newText: { type: "string" },
+      },
+      required: ["path", "oldText", "newText"],
+    },
+  },
   "repo.search": {
     description: "Search workspace files for a text query.",
     parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
@@ -176,6 +205,9 @@ function availableTools(names, host) {
   return names.filter((name) => {
     if (name === "workspace.inspect") return Boolean(host && typeof host.inspectWorkspace === "function");
     if (name === "file.patch") return Boolean(host && typeof host.patchFile === "function");
+    if (name === "document.read") return Boolean(host && typeof host.readDocument === "function");
+    if (name === "document.create") return Boolean(host && typeof host.createDocument === "function");
+    if (name === "document.edit") return Boolean(host && typeof host.editDocument === "function");
     if (name === "sandbox.run") return Boolean(host && typeof host.runSandbox === "function");
     if (name === "process.start") return Boolean(host && typeof host.startProcess === "function");
     if (name === "process.status") return Boolean(host && typeof host.processStatus === "function");
