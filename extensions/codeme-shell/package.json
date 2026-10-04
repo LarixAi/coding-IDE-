@@ -38,7 +38,7 @@
         {
           "type": "webview",
           "id": "codeme.agent",
-          "name": "CodeMe Agent"
+          "name": "CodeMe"
         }
       ]
     },
