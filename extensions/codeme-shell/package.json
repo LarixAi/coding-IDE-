@@ -104,7 +104,7 @@
       "chat.commandCenter.enabled": false,
       "chat.titleBar.signIn.enabled": false,
       "chat.titleBar.openInAgentsWindow.enabled": false,
-      "workbench.secondarySideBar.defaultVisibility": "visible",
+      "workbench.secondarySideBar.defaultVisibility": "hidden",
       "workbench.tips.enabled": false,
       "workbench.editor.empty.hint": "hidden",
       "workbench.panel.defaultLocation": "bottom",
@@ -112,7 +112,10 @@
       "explorer.decorations.badges": true,
       "explorer.decorations.colors": true,
       "workbench.tree.indent": 12,
-      "workbench.tree.renderIndentGuides": "always"
+      "workbench.tree.renderIndentGuides": "always",
+      "workbench.activityBar.location": "hidden",
+      "workbench.statusBar.visible": false,
+      "workbench.layoutControl.enabled": false
     },
     "configuration": {
       "title": "CodeMe",
